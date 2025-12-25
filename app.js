@@ -4,13 +4,13 @@ import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "http
 import { getFirestore, initializeFirestore, doc, setDoc, getDoc, collection, getDocs, query, where, setLogLevel } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAbEhCa6tWPIuwo_Z9n48dWUa-pj6TQx30",
-  authDomain: "nw-app-2026.firebaseapp.com",
-  projectId: "nw-app-2026",
-  storageBucket: "nw-app-2026.appspot.com",
-  messagingSenderId: "327412929502",
-  appId: "1:327412929502:web:bb55add417a3939193834f",
-  measurementId: "G-9L1LK58BR2"
+  apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+  authDomain: "nw-app-all.firebaseapp.com",
+  projectId: "nw-app-all",
+  storageBucket: "nw-app-all.firebasestorage.app",
+  messagingSenderId: "205108931232",
+  appId: "1:205108931232:web:ee7868f73ed883253577c5",
+  measurementId: "G-8F1WD772LP"
 };
 
 const app = initializeApp(firebaseConfig);
