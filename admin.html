@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <title>西北e生活｜後台登入</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="admin">
+  <div id="orientation-tip">
+    <div class="tip-card">
+      <div class="brand">西北e生活</div>
+      <div class="tip-title">建議以橫屏使用</div>
+      <div class="tip-desc">平板與電腦使用者以橫屏獲得最佳體驗</div>
+    </div>
+  </div>
+
+  <main class="container">
+    <section class="left">
+      <div class="brand-wrap">
+        <div class="brand-logo">西北e生活</div>
+        <div class="brand-sub">物業與社區後台管理</div>
+      </div>
+    </section>
+    <section class="right">
+      <div class="card" id="auth-card">
+        <h1 class="card-title">後台登入</h1>
+        <form id="login-form" autocomplete="on">
+          <label class="field">
+            <div class="field-head">
+              <span>電子郵件</span>
+              <label class="remember"><input id="remember-me" type="checkbox"> 記住我</label>
+            </div>
+            <div class="input-wrap">
+              <input id="email" type="email" inputmode="email" autocomplete="email" required>
+            </div>
+          </label>
+          <label class="field">
+            <div class="field-head">
+              <span>密碼</span>
+            </div>
+            <div class="input-wrap">
+              <input id="password" type="password" autocomplete="current-password" required>
+              <button type="button" class="toggle-password" id="btn-toggle-password" aria-label="顯示密碼"></button>
+            </div>
+          </label>
+          <button type="submit" class="btn primary" id="btn-login">登入</button>
+          <div class="hint" id="auth-hint"></div>
+        </form>
+      </div>
+
+      <div class="card hidden" id="profile-card">
+        <h1 class="card-title">已登入</h1>
+        <div class="profile-row">
+          <span class="label">使用者</span>
+          <span id="profile-email"></span>
+        </div>
+        <div class="profile-row">
+          <span class="label">角色</span>
+          <span id="profile-role"></span>
+        </div>
+        <button type="button" class="btn primary" id="btn-signout">登出</button>
+      </div>
+      <button type="button" class="btn corner" id="btn-admin-secret" aria-label="系統管理員入口"></button>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
