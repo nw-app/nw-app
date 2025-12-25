@@ -426,12 +426,16 @@ select:focus {
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  overflow-x: auto;
+  overflow-x: visible;
 }
 .table {
   width: 100%;
   border-collapse: collapse;
   table-layout: auto;
+}
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
 }
 .table th, .table td {
   padding: 10px 12px;
@@ -516,10 +520,13 @@ select:focus {
   position: relative;
   width: 92%;
   max-width: 520px;
+  max-height: 92svh;
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.2);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .modal-head {
   display: flex;
@@ -536,6 +543,10 @@ select:focus {
   padding: 16px 20px;
   display: grid;
   gap: 12px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .avatar-preview {
   width: 64px;

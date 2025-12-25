@@ -22,6 +22,38 @@ setLogLevel("error");
 const createApp = initializeApp(firebaseConfig, "create-admin");
 const createAuth = getAuth(createApp);
 
+const communityConfigs = {
+  default: firebaseConfig
+};
+const tenantApps = {};
+function ensureTenant(slug) {
+  const key = slug || "default";
+  const cfg = communityConfigs[key] || communityConfigs.default;
+  if (!tenantApps[key]) {
+    const tapp = initializeApp(cfg, "tenant-" + key);
+    tenantApps[key] = {
+      app: tapp,
+      db: getFirestore(tapp),
+      storage: getStorage(tapp)
+    };
+  }
+  return tenantApps[key];
+}
+function getQueryParam(name) {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(name);
+}
+async function getUserCommunity(uid) {
+  try {
+    const snap = await getDoc(doc(db, "users", uid));
+    if (snap.exists()) {
+      const d = snap.data();
+      return d.community || "default";
+    }
+  } catch {}
+  return "default";
+}
+
 const el = {
   authCard: document.getElementById("auth-card"),
   profileCard: document.getElementById("profile-card"),
@@ -96,13 +128,29 @@ function toggleAuth(showAuth) {
 
 async function getOrCreateUserRole(uid, email) {
   const ref = doc(db, "users", uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const data = snap.data();
-    return data.role || "住戶";
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const data = snap.data();
+      // Superadmin by email override
+      if (email === "nwapp.eason@gmail.com") {
+        if (data.role !== "系統管理員") {
+          try {
+            await setDoc(ref, { role: "系統管理員", status: "啟用" }, { merge: true });
+          } catch {}
+        }
+        return "系統管理員";
+      }
+      return data.role || "住戶";
+    }
+    try {
+      const base = { email, role: email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶", status: "啟用", createdAt: Date.now() };
+      await setDoc(ref, base, { merge: true });
+    } catch {}
+    return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
+  } catch {
+    return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
   }
-  await setDoc(ref, { email, role: "住戶", createdAt: Date.now() });
-  return "住戶";
 }
 
 const loginForm = document.getElementById("login-form");
@@ -161,7 +209,10 @@ onAuthStateChanged(auth, async (user) => {
     if (el.authCard) el.authCard.classList.add("hidden");
     // If we are on specific pages, handle display
     if (window.location.pathname.includes("sys.html")) {
-        const role = await getOrCreateUserRole(user.uid, user.email);
+        let role = "住戶";
+        try {
+          role = await getOrCreateUserRole(user.uid, user.email);
+        } catch {}
         if (role === "系統管理員") {
            if (sysStack) sysStack.classList.remove("hidden");
            if (mainContainer) mainContainer.classList.add("hidden");
@@ -171,7 +222,12 @@ onAuthStateChanged(auth, async (user) => {
             if (sysStack) sysStack.classList.add("hidden");
              showHint("權限不足", "error");
         }
-    } else if (window.location.pathname.includes("front.html")) {
+  } else if (window.location.pathname.includes("front.html")) {
+        const qp = getQueryParam("c");
+        const slug = qp || await getUserCommunity(user.uid);
+        const t = ensureTenant(slug);
+        window.currentTenantSlug = slug;
+        window.tenant = t;
         if (frontStack) frontStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
     } else if (window.location.pathname.includes("admin.html")) {
@@ -289,31 +345,33 @@ if (sysNav.subContainer) {
           <h1 class="card-title">系統管理員帳號列表</h1>
           <button id="btn-create-admin" class="btn small action-btn">新增</button>
         </div>
-        <table class="table">
-          <colgroup>
-            <col>
-            <col>
-            <col>
-            <col>
-            <col>
-            <col>
-            <col>
-            <col>
-          </colgroup>
-          <thead>
-            <tr>
-              <th>大頭照</th>
-              <th>姓名</th>
-              <th>手機號碼</th>
-              <th>密碼</th>
-              <th>電子郵件</th>
-              <th>角色</th>
-              <th>狀態</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="table">
+            <colgroup>
+              <col>
+              <col>
+              <col>
+              <col>
+              <col>
+              <col>
+              <col>
+              <col>
+            </colgroup>
+            <thead>
+              <tr>
+                <th>大頭照</th>
+                <th>姓名</th>
+                <th>手機號碼</th>
+                <th>密碼</th>
+                <th>電子郵件</th>
+                <th>角色</th>
+                <th>狀態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       </div>
     `;
     // Bind actions for each row
@@ -372,6 +430,150 @@ if (sysNav.subContainer) {
     if (btnCreate) {
       btnCreate.addEventListener("click", () => openCreateModal());
     }
+  }
+  
+  async function renderSettingsCommunity() {
+    if (!sysNav.content) return;
+    let list = [];
+    try {
+      const snap = await getDocs(collection(db, "communities"));
+      list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    list.forEach(c => {
+      communityConfigs[c.id] = {
+        apiKey: c.apiKey,
+        authDomain: c.authDomain,
+        projectId: c.projectId,
+        storageBucket: c.storageBucket,
+        messagingSenderId: c.messagingSenderId,
+        appId: c.appId,
+        measurementId: c.measurementId
+      };
+    });
+    const rows = list.map(c => `
+      <tr data-slug="${c.id}">
+        <td>${c.id}</td>
+        <td>${c.name || ""}</td>
+        <td>${c.projectId || ""}</td>
+        <td>${c.status || "啟用"}</td>
+        <td class="actions">
+          <button class="btn small action-btn btn-edit-community">編輯</button>
+          <button class="btn small action-btn btn-apply-community">設為我的社區</button>
+        </td>
+      </tr>
+    `).join("");
+    sysNav.content.innerHTML = `
+      <div class="card data-card">
+        <div class="card-head">
+          <h1 class="card-title">社區設定</h1>
+          <button id="btn-create-community" class="btn small action-btn">新增</button>
+        </div>
+        <table class="table">
+          <colgroup><col><col><col><col><col></colgroup>
+          <thead>
+            <tr>
+              <th>社區代碼</th>
+              <th>名稱</th>
+              <th>Firebase 專案ID</th>
+              <th>狀態</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+    const btnCreate = document.getElementById("btn-create-community");
+    btnCreate && btnCreate.addEventListener("click", () => openCommunityModal());
+    const btnEdits = sysNav.content.querySelectorAll(".btn-edit-community");
+    btnEdits.forEach(b => b.addEventListener("click", () => {
+      const tr = b.closest("tr");
+      const slug = tr && tr.getAttribute("data-slug");
+      const found = list.find(x => x.id === slug);
+      openCommunityModal(found || { id: slug });
+    }));
+    const btnApplys = sysNav.content.querySelectorAll(".btn-apply-community");
+    btnApplys.forEach(b => b.addEventListener("click", async () => {
+      const tr = b.closest("tr");
+      const slug = tr && tr.getAttribute("data-slug");
+      const u = auth.currentUser;
+      if (!u) return;
+      try {
+        await setDoc(doc(db, "users", u.uid), { community: slug }, { merge: true });
+        showHint("已更新我的社區", "success");
+      } catch {
+        showHint("更新社區失敗", "error");
+      }
+    }));
+  }
+  
+  function openCommunityModal(comm) {
+    const data = comm || {};
+    const title = data.id ? "編輯社區" : "新增社區";
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+          <div class="modal-row">
+            <label>社區代碼</label>
+            <input type="text" id="c-slug" value="${data.id || ""}" placeholder="如：north">
+          </div>
+          <div class="modal-row">
+            <label>名稱</label>
+            <input type="text" id="c-name" value="${data.name || ""}">
+          </div>
+          <div class="modal-row"><label>apiKey</label><input type="text" id="c-apiKey" value="${data.apiKey || ""}"></div>
+          <div class="modal-row"><label>authDomain</label><input type="text" id="c-authDomain" value="${data.authDomain || ""}"></div>
+          <div class="modal-row"><label>projectId</label><input type="text" id="c-projectId" value="${data.projectId || ""}"></div>
+          <div class="modal-row"><label>storageBucket</label><input type="text" id="c-storageBucket" value="${data.storageBucket || ""}"></div>
+          <div class="modal-row"><label>messagingSenderId</label><input type="text" id="c-msgId" value="${data.messagingSenderId || ""}"></div>
+          <div class="modal-row"><label>appId</label><input type="text" id="c-appId" value="${data.appId || ""}"></div>
+          <div class="modal-row"><label>measurementId</label><input type="text" id="c-measurementId" value="${data.measurementId || ""}"></div>
+          <div class="modal-row"><label>狀態</label>
+            <select id="c-status">
+              <option value="啟用"${(data.status || "啟用")==="啟用" ? " selected" : ""}>啟用</option>
+              <option value="停用"${(data.status || "啟用")==="停用" ? " selected" : ""}>停用</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="c-cancel" class="btn action-btn danger">取消</button>
+          <button id="c-save" class="btn action-btn">儲存</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+    const btnCancel = document.getElementById("c-cancel");
+    const btnSave = document.getElementById("c-save");
+    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+    btnSave && btnSave.addEventListener("click", async () => {
+      const slug = document.getElementById("c-slug").value.trim();
+      const name = document.getElementById("c-name").value.trim();
+      const apiKey = document.getElementById("c-apiKey").value.trim();
+      const authDomain = document.getElementById("c-authDomain").value.trim();
+      const projectId = document.getElementById("c-projectId").value.trim();
+      const storageBucket = document.getElementById("c-storageBucket").value.trim();
+      const messagingSenderId = document.getElementById("c-msgId").value.trim();
+      const appId = document.getElementById("c-appId").value.trim();
+      const measurementId = document.getElementById("c-measurementId").value.trim();
+      const status = document.getElementById("c-status").value;
+      if (!slug || !apiKey || !authDomain || !projectId || !appId) {
+        showHint("請填入必要欄位（slug/apiKey/authDomain/projectId/appId）", "error");
+        return;
+      }
+      try {
+        const payload = { name, apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId, measurementId, status, updatedAt: Date.now() };
+        await setDoc(doc(db, "communities", slug), payload, { merge: true });
+        communityConfigs[slug] = {
+          apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId, measurementId
+        };
+        closeModal();
+        await renderSettingsCommunity();
+        showHint("社區設定已儲存", "success");
+      } catch (e) {
+        showHint("儲存失敗", "error");
+      }
+    });
   }
   
   function openModal(html) {
@@ -652,6 +854,10 @@ if (sysNav.subContainer) {
     if (!sysNav.content) return;
     if (mainKey === 'settings' && subLabel === '一般') {
       renderSettingsGeneral();
+      return;
+    }
+    if (mainKey === 'settings' && subLabel === '社區') {
+      renderSettingsCommunity();
       return;
     }
     sysNav.content.innerHTML = '';
