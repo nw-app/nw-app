@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+const db = getFirestore(app);
 const storage = getStorage(app);
 setLogLevel("error");
 // Secondary app for admin account creation to avoid switching current session
@@ -33,7 +33,7 @@ function ensureTenant(slug) {
     const tapp = initializeApp(cfg, "tenant-" + key);
     tenantApps[key] = {
       app: tapp,
-      db: initializeFirestore(tapp, { experimentalForceLongPolling: true, useFetchStreams: true }),
+      db: getFirestore(tapp),
       storage: getStorage(tapp)
     };
   }
@@ -87,7 +87,7 @@ const frontStack = document.getElementById("front-stack");
 const adminStack = document.getElementById("admin-stack");
 const sysStack = document.getElementById("sys-stack");
 const mainContainer = document.querySelector("main.container");
-const btnSignoutFront = document.getElementById("btn-signout-front");
+const btnSignoutFront = null;
 const btnSignoutAdmin = document.getElementById("btn-signout-admin");
 const btnSignoutSys = document.getElementById("btn-signout-sys");
 const btnAdminSecret = document.getElementById("btn-admin-secret");
@@ -481,6 +481,23 @@ function handleRoleRedirect(role) {
         if (titleEl) titleEl.textContent = `${cname} 社區`;
         if (frontStack) frontStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
+
+        const btnAvatar = document.getElementById("btn-avatar-front");
+        if (btnAvatar) {
+           const u = auth.currentUser;
+           let photo = (u && u.photoURL) || "";
+           let name = (u && u.displayName) || "";
+           try {
+             const snap = await getDoc(doc(db, "users", u.uid));
+             if (snap.exists()) {
+               const d = snap.data();
+               photo = photo || d.photoURL || "";
+               name = name || d.displayName || "";
+             }
+           } catch {}
+           btnAvatar.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
+           btnAvatar.addEventListener("click", () => openUserProfileModal());
+        }
     } else if (window.location.pathname.includes("admin.html")) {
          // admin logic
     }
