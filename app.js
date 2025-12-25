@@ -714,6 +714,49 @@ if (sysNav.subContainer) {
         </td>
       </tr>
     `).join("");
+    // 準備社區後台帳號（以目前使用者所在社區為基準）
+    const u = auth.currentUser;
+    let mySlug = u ? await getUserCommunity(u.uid) : "default";
+    
+    // 使用 window 變數記錄目前選擇的社區，若無則預設為使用者的社區
+    let selectedSlug = window.currentAdminCommunitySlug || mySlug;
+
+    if (selectedSlug === "default" && list.length > 0) {
+      selectedSlug = list[0].id;
+    }
+    let cname = selectedSlug;
+    const foundC = list.find(x => x.id === selectedSlug);
+    if (foundC) cname = foundC.name || selectedSlug;
+    
+    let admins = [];
+    try {
+      const qAdmins = query(collection(db, "users"), where("community", "==", selectedSlug), where("role", "in", ["管理員", "總幹事"]));
+      const snapAdmins = await getDocs(qAdmins);
+      admins = snapAdmins.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    const adminRows = admins.map(a => {
+      const nm = a.displayName || (a.email || "").split("@")[0] || "管理員";
+      const av = a.photoURL
+        ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
+        : `<span class="avatar">${(nm || a.email || "管")[0]}</span>`;
+      return `
+        <tr data-uid="${a.id}">
+          <td class="avatar-cell">${av}</td>
+          <td>${nm}</td>
+          <td>${a.phone || ""}</td>
+          <td>${a.email || ""}</td>
+          <td>${a.role || "管理員"}</td>
+          <td class="status">${a.status || "啟用"}</td>
+        </tr>
+      `;
+    }).join("");
+    const adminEmpty = adminRows ? "" : "目前沒有後台帳號";
+    
+    // 建立社區選擇器的選項
+    const adminCommunityOptions = list.map(c => 
+      `<option value="${c.id}"${c.id === selectedSlug ? " selected" : ""}>${c.name || c.id}</option>`
+    ).join("");
+
     sysNav.content.innerHTML = `
       <div class="card data-card">
         <div class="card-head">
@@ -736,7 +779,41 @@ if (sysNav.subContainer) {
           </table>
         </div>
       </div>
+      <div class="card data-card mt-24">
+        <div class="card-filters">
+          <label for="admin-community-select">社區</label>
+          <select id="admin-community-select">${adminCommunityOptions}</select>
+        </div>
+        <div class="card-head">
+          <h1 class="card-title">社區後台帳號（${cname}）</h1>
+          <button id="btn-create-community-admin" class="btn small action-btn">新增</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <colgroup><col><col><col><col><col><col></colgroup>
+            <thead>
+              <tr>
+                <th>大頭照</th>
+                <th>姓名</th>
+                <th>手機號碼</th>
+                <th>電子郵件</th>
+                <th>角色</th>
+                <th>狀態</th>
+              </tr>
+            </thead>
+            <tbody>${adminRows}</tbody>
+          </table>
+          ${adminEmpty ? `<div class="empty-hint">${adminEmpty}</div>` : ""}
+        </div>
+      </div>
     `;
+    
+    const adminSel = document.getElementById("admin-community-select");
+    adminSel && adminSel.addEventListener("change", async () => {
+      window.currentAdminCommunitySlug = adminSel.value;
+      await renderSettingsCommunity();
+    });
+
     const btnCreate = document.getElementById("btn-create-community");
     btnCreate && btnCreate.addEventListener("click", () => openCommunityModal());
     const btnEdits = sysNav.content.querySelectorAll(".btn-edit-community");
@@ -775,6 +852,8 @@ if (sysNav.subContainer) {
       }
       location.href = `front.html?c=${encodeURIComponent(slug)}`;
     }));
+    const btnCreateAdmin = document.getElementById("btn-create-community-admin");
+    btnCreateAdmin && btnCreateAdmin.addEventListener("click", () => openCreateCommunityAdminModal(selectedSlug));
   }
   
   function openCommunityModal(comm) {
@@ -846,6 +925,136 @@ if (sysNav.subContainer) {
     });
   }
   
+  function openCreateCommunityAdminModal(slug) {
+    const title = "新增社區後台帳號";
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+          <div class="modal-row">
+            <label>電子郵件</label>
+            <input type="text" id="create-ca-email" placeholder="example@domain.com">
+          </div>
+          <div class="modal-row">
+            <label>密碼</label>
+            <input type="password" id="create-ca-password" placeholder="至少6字元">
+          </div>
+          <div class="modal-row">
+            <label>姓名</label>
+            <input type="text" id="create-ca-name">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼</label>
+            <input type="tel" id="create-ca-phone">
+          </div>
+          <div class="modal-row">
+            <label>大頭照</label>
+            <input type="file" id="create-ca-photo-file" accept="image/png,image/jpeg">
+          </div>
+          <div class="modal-row">
+            <label>預覽</label>
+            <img id="create-ca-photo-preview" class="avatar-preview">
+          </div>
+          <div class="hint" id="create-ca-hint"></div>
+        </div>
+        <div class="modal-foot">
+          <button id="create-ca-cancel" class="btn action-btn danger">取消</button>
+          <button id="create-ca-save" class="btn action-btn">建立</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+    const btnCancel = document.getElementById("create-ca-cancel");
+    const btnSave = document.getElementById("create-ca-save");
+    const createFile = document.getElementById("create-ca-photo-file");
+    const createPreview = document.getElementById("create-ca-photo-preview");
+    const hintEl = document.getElementById("create-ca-hint");
+
+    const showModalHint = (msg, type="error") => {
+        if(hintEl) {
+            hintEl.textContent = msg;
+            hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
+        }
+    };
+
+    createFile && createFile.addEventListener("change", () => {
+      const f = createFile.files[0];
+      if (f) {
+        createPreview.src = URL.createObjectURL(f);
+      }
+    });
+    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+    btnSave && btnSave.addEventListener("click", async () => {
+      try {
+        showModalHint("");
+        const email = document.getElementById("create-ca-email").value.trim();
+        const password = document.getElementById("create-ca-password").value;
+        const displayName = document.getElementById("create-ca-name").value.trim();
+        const phone = document.getElementById("create-ca-phone").value.trim();
+        const photoFile = document.getElementById("create-ca-photo-file").files[0];
+        let photoURL = "";
+        if (!email || !password || password.length < 6) {
+          showModalHint("請填寫有效的信箱與至少6字元密碼", "error");
+          return;
+        }
+
+        btnSave.disabled = true;
+        btnSave.textContent = "建立中...";
+
+        const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+        if (photoFile) {
+          try {
+            const ext = photoFile.type === "image/png" ? "png" : "jpg";
+            const path = `avatars/${cred.user.uid}.${ext}`;
+            const ref = storageRef(storage, path);
+            await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+            photoURL = await getDownloadURL(ref);
+          } catch (err) {
+            try {
+              const b64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(photoFile);
+              });
+              photoURL = b64;
+              showModalHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+            } catch {
+              showModalHint("上傳大頭照失敗，帳號仍已建立", "error");
+            }
+          }
+        }
+        await setDoc(doc(db, "users", cred.user.uid), {
+          email,
+          role: "管理員",
+          status: "啟用",
+          displayName,
+          phone,
+          photoURL,
+          community: slug,
+          createdAt: Date.now()
+        }, { merge: true });
+        await updateProfile(cred.user, { displayName, photoURL });
+        closeModal();
+        await renderSettingsCommunity();
+        showHint("已建立社區後台帳號", "success");
+      } catch (e) {
+        console.error(e);
+        let msg = "建立失敗";
+        if (e.code === 'auth/email-already-in-use') msg = "該 Email 已被使用";
+        else if (e.code === 'auth/invalid-email') msg = "Email 格式不正確";
+        else if (e.code === 'auth/weak-password') msg = "密碼強度不足";
+        else if (e.message) msg += ": " + e.message;
+        
+        showModalHint(msg, "error");
+      } finally {
+        if(btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = "建立";
+        }
+      }
+    });
+  }
   function openEditModal(target, isSelf) {
     const title = "編輯系統管理員";
     const body = `
@@ -1139,6 +1348,7 @@ if (sysNav.subContainer) {
             <label>預覽</label>
             <img id="create-r-photo-preview" class="avatar-preview">
           </div>
+          <div class="hint" id="create-r-hint"></div>
         </div>
         <div class="modal-foot">
           <button id="create-r-cancel" class="btn action-btn danger">取消</button>
@@ -1151,6 +1361,15 @@ if (sysNav.subContainer) {
     const btnSave = document.getElementById("create-r-save");
     const createFile = document.getElementById("create-r-photo-file");
     const createPreview = document.getElementById("create-r-photo-preview");
+    const hintEl = document.getElementById("create-r-hint");
+    
+    const showModalHint = (msg, type="error") => {
+        if(hintEl) {
+            hintEl.textContent = msg;
+            hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
+        }
+    };
+
     createFile && createFile.addEventListener("change", () => {
       const f = createFile.files[0];
       if (f) {
@@ -1160,6 +1379,7 @@ if (sysNav.subContainer) {
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
       try {
+        showModalHint(""); 
         const email = document.getElementById("create-r-email").value.trim();
         const password = document.getElementById("create-r-password").value;
         const displayName = document.getElementById("create-r-name").value.trim();
@@ -1167,9 +1387,13 @@ if (sysNav.subContainer) {
         const photoFile = document.getElementById("create-r-photo-file").files[0];
         let photoURL = "";
         if (!email || !password || password.length < 6) {
-          showHint("請填寫有效的信箱與至少6字元密碼", "error");
+          showModalHint("請填寫有效的信箱與至少6字元密碼", "error");
           return;
         }
+        
+        btnSave.disabled = true;
+        btnSave.textContent = "建立中...";
+        
         const cred = await createUserWithEmailAndPassword(createAuth, email, password);
         if (photoFile) {
           try {
@@ -1187,9 +1411,9 @@ if (sysNav.subContainer) {
                 reader.readAsDataURL(photoFile);
               });
               photoURL = b64;
-              showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+              showModalHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
             } catch {
-              showHint("上傳大頭照失敗，帳號仍已建立", "error");
+              showModalHint("上傳大頭照失敗，帳號仍已建立", "error");
             }
           }
         }
@@ -1209,7 +1433,18 @@ if (sysNav.subContainer) {
         showHint("已建立住戶帳號", "success");
       } catch (e) {
         console.error(e);
-        showHint("建立失敗，可能權限不足或輸入無效", "error");
+        let msg = "建立失敗";
+        if (e.code === 'auth/email-already-in-use') msg = "該 Email 已被使用";
+        else if (e.code === 'auth/invalid-email') msg = "Email 格式不正確";
+        else if (e.code === 'auth/weak-password') msg = "密碼強度不足";
+        else if (e.message) msg += ": " + e.message;
+        
+        showModalHint(msg, "error");
+      } finally {
+        if(btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = "建立";
+        }
       }
     });
   }
@@ -1225,6 +1460,10 @@ if (sysNav.subContainer) {
       const snap = await getDocs(collection(db, "communities"));
       communities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch {}
+    if (selectedSlug === "default" && communities.length > 0) {
+      selectedSlug = communities[0].id;
+      cname = communities[0].name || selectedSlug;
+    }
     if (!communities.length) {
       communities = [{ id: selectedSlug, name: selectedSlug }];
     }
