@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { getFirestore, initializeFirestore, doc, setDoc, getDoc, collection, getDocs, query, where, setLogLevel } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { getFirestore, initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: true });
+const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 const storage = getStorage(app);
 setLogLevel("error");
 // Secondary app for admin account creation to avoid switching current session
@@ -107,9 +107,102 @@ window.addEventListener('online', () => {
   showHint("網路已恢復連線", "success");
 });
 
+function openModal(html) {
+  const root = document.getElementById("sys-modal");
+  if (!root) return;
+  root.innerHTML = html;
+  root.classList.remove("hidden");
+}
+function closeModal() {
+  const root = document.getElementById("sys-modal");
+  if (!root) return;
+  root.classList.add("hidden");
+  root.innerHTML = "";
+}
+async function openUserProfileModal() {
+  const u = auth.currentUser;
+  const title = "個人資訊";
+  const email = (u && u.email) || "";
+  let name = (u && u.displayName) || "";
+  let photo = (u && u.photoURL) || "";
+  let phone = "";
+  let status = "啟用";
+  let role = "住戶";
+  if (u) {
+    try {
+      const snap = await getDoc(doc(db, "users", u.uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        name = name || d.displayName || "";
+        photo = photo || d.photoURL || "";
+        phone = d.phone || "";
+        status = d.status || status;
+        role = d.role || role;
+      }
+    } catch {}
+  }
+  const body = `
+    <div class="modal-dialog">
+      <div class="modal-head"><div class="modal-title">${title}</div></div>
+      <div class="modal-body">
+        <div class="modal-row">
+          <label>大頭照</label>
+          <img class="avatar-preview" src="${photo || ""}">
+        </div>
+        <div class="modal-row">
+          <label>姓名</label>
+          <input type="text" value="${name || ""}" disabled>
+        </div>
+        <div class="modal-row">
+          <label>電子郵件</label>
+          <input type="text" value="${email}" disabled>
+        </div>
+        <div class="modal-row">
+          <label>手機號碼</label>
+          <input type="text" value="${phone}" disabled>
+        </div>
+        <div class="modal-row">
+          <label>角色</label>
+          <input type="text" value="${role}" disabled>
+        </div>
+        <div class="modal-row">
+          <label>狀態</label>
+          <input type="text" value="${status}" disabled>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button id="profile-close" class="btn action-btn danger">關閉</button>
+        <button id="profile-signout" class="btn action-btn">登出</button>
+      </div>
+    </div>
+  `;
+  openModal(body);
+  const btnClose = document.getElementById("profile-close");
+  const btnSignout = document.getElementById("profile-signout");
+  btnClose && btnClose.addEventListener("click", () => closeModal());
+  btnSignout && btnSignout.addEventListener("click", async () => {
+    try {
+      await signOut(auth);
+    } finally {
+      redirectAfterSignOut();
+    }
+  });
+}
+
 function showHint(text, type = "info") {
   el.hint.textContent = text;
   el.hint.style.color = type === "error" ? "#b71c1c" : type === "success" ? "#0ea5e9" : "#6b7280";
+}
+
+function redirectAfterSignOut() {
+  const p = window.location.pathname;
+  if (p.includes("sys.html")) {
+    location.href = "sys.html";
+  } else if (p.includes("admin.html")) {
+    location.href = "admin.html";
+  } else {
+    location.href = "index.html";
+  }
 }
 
 function toggleAuth(showAuth) {
@@ -194,6 +287,129 @@ function handleRoleRedirect(role) {
       return;
   }
   
+  async function renderSettingsResidents() {
+    if (!sysNav.content) return;
+    const u = auth.currentUser;
+    const slug = u ? await getUserCommunity(u.uid) : "default";
+    let cname = slug;
+    let loadError = false;
+    try {
+      const csnap = await getDoc(doc(db, "communities", slug));
+      if (csnap.exists()) {
+        const c = csnap.data();
+        cname = c.name || slug;
+      }
+    } catch {
+      loadError = true;
+    }
+    let residents = [];
+    try {
+      const q = query(collection(db, "users"), where("community", "==", slug));
+      const snapList = await getDocs(q);
+      residents = snapList.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(a => (a.role || "住戶") === "住戶");
+    } catch {
+      loadError = true;
+    }
+    const rows = residents.map(a => {
+      const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
+      const av = a.photoURL
+        ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
+        : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
+      return `
+        <tr data-uid="${a.id}">
+          <td class="avatar-cell">${av}</td>
+          <td>${nm}</td>
+          <td>${a.phone || ""}</td>
+          <td>••••••</td>
+          <td>${a.email || ""}</td>
+          <td>${a.role || "住戶"}</td>
+          <td class="status">${a.status || "啟用"}</td>
+          <td class="actions">
+            <button class="btn small action-btn btn-edit-resident">編輯</button>
+            <button class="btn small action-btn danger btn-delete-resident">刪除</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    sysNav.content.innerHTML = `
+      <div class="card data-card">
+        <div class="card-head">
+          <h1 class="card-title">住戶帳號列表（${cname}）</h1>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <colgroup>
+              <col><col><col><col><col><col><col><col>
+            </colgroup>
+            <thead>
+              <tr>
+                <th>大頭照</th>
+                <th>姓名</th>
+                <th>手機號碼</th>
+                <th>密碼</th>
+                <th>電子郵件</th>
+                <th>角色</th>
+                <th>狀態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          ${(!rows || rows === "") ? `<div class="empty-hint">${loadError ? "讀取失敗，請重新整理或稍後再試" : "目前沒有住戶資料"}</div>` : ""}
+        </div>
+      </div>
+    `;
+    const btnEdits = sysNav.content.querySelectorAll(".btn-edit-resident");
+    const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-resident");
+    btnEdits.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!sysNav.content) return;
+        const tr = btn.closest("tr");
+        const targetUid = tr && tr.getAttribute("data-uid");
+        const currentUser = auth.currentUser;
+        const isSelf = currentUser && currentUser.uid === targetUid;
+        let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "住戶", status: "啟用" };
+        try {
+          const snap = await getDoc(doc(db, "users", targetUid));
+          if (snap.exists()) {
+            const d = snap.data();
+            target.displayName = d.displayName || target.displayName;
+            target.email = d.email || target.email;
+            target.phone = d.phone || target.phone;
+            target.photoURL = d.photoURL || target.photoURL;
+            target.status = d.status || target.status;
+          }
+        } catch {}
+        openEditModal(target, isSelf);
+      });
+    });
+    btnDeletes.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
+        if (!ok) return;
+        try {
+          const tr = btn.closest("tr");
+          const targetUid = tr && tr.getAttribute("data-uid");
+          const curr = auth.currentUser;
+          if (curr && curr.uid === targetUid) {
+            await curr.delete();
+            showHint("已刪除目前帳號", "success");
+            redirectAfterSignOut();
+          } else {
+            await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+            showHint("已標記該帳號為停用", "success");
+            await renderSettingsResidents();
+          }
+        } catch (err) {
+          console.error(err);
+          showHint("刪除失敗，可能需要重新登入驗證", "error");
+        }
+      });
+    });
+  }
+  
   if (role === "系統管理員") {
     location.href = "sys.html";
   } else if (role === "管理員" || role === "總幹事") {
@@ -216,6 +432,22 @@ function handleRoleRedirect(role) {
           if (role === "系統管理員") {
              if (sysStack) sysStack.classList.remove("hidden");
              if (mainContainer) mainContainer.classList.add("hidden");
+             const btn = document.getElementById("btn-avatar-sys");
+             if (btn) {
+               const u = auth.currentUser;
+               let photo = (u && u.photoURL) || "";
+               let name = (u && u.displayName) || "";
+               try {
+                 const snap = await getDoc(doc(db, "users", u.uid));
+                 if (snap.exists()) {
+                   const d = snap.data();
+                   photo = photo || d.photoURL || "";
+                   name = name || d.displayName || "";
+                 }
+               } catch {}
+               btn.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
+               btn.addEventListener("click", () => openUserProfileModal());
+             }
           } else {
               // Not authorized for this page
               if (el.authCard) el.authCard.classList.remove("hidden");
@@ -225,6 +457,7 @@ function handleRoleRedirect(role) {
   } else if (window.location.pathname.includes("front.html")) {
         const qp = getQueryParam("c");
         const slug = qp || await getUserCommunity(user.uid);
+        let cname = slug;
         try {
           const csnap = await getDoc(doc(db, "communities", slug));
           if (csnap.exists()) {
@@ -238,11 +471,14 @@ function handleRoleRedirect(role) {
               appId: c.appId,
               measurementId: c.measurementId
             };
+            cname = c.name || slug;
           }
         } catch {}
         const t = ensureTenant(slug);
         window.currentTenantSlug = slug;
         window.tenant = t;
+        const titleEl = document.querySelector(".sys-title");
+        if (titleEl) titleEl.textContent = `${cname} 社區`;
         if (frontStack) frontStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
     } else if (window.location.pathname.includes("admin.html")) {
@@ -257,11 +493,11 @@ function handleRoleRedirect(role) {
 });
 
 // Sign out handlers
-[btnSignoutFront, btnSignoutAdmin, btnSignoutSys, el.btnSignout].forEach(btn => {
+[btnSignoutFront, btnSignoutAdmin, el.btnSignout].forEach(btn => {
   if (btn) {
     btn.addEventListener("click", async () => {
       await signOut(auth);
-      location.href = "index.html";
+      redirectAfterSignOut();
     });
   }
 });
@@ -428,7 +664,7 @@ if (sysNav.subContainer) {
           if (curr && curr.uid === targetUid) {
             await curr.delete();
             showHint("已刪除目前帳號", "success");
-            location.href = "index.html";
+            redirectAfterSignOut();
           } else {
             // Client SDK無法刪除其他用戶，這裡僅更新標記狀態
             await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
@@ -473,7 +709,7 @@ if (sysNav.subContainer) {
         <td>${c.status || "啟用"}</td>
         <td class="actions">
           <button class="btn small action-btn btn-edit-community">編輯</button>
-          <button class="btn small action-btn btn-apply-community">設為我的社區</button>
+          <button class="btn small action-btn danger btn-delete-community">刪除</button>
           <button class="btn small action-btn btn-go-community">進入社區</button>
         </td>
       </tr>
@@ -484,19 +720,21 @@ if (sysNav.subContainer) {
           <h1 class="card-title">社區設定</h1>
           <button id="btn-create-community" class="btn small action-btn">新增</button>
         </div>
-        <table class="table">
-          <colgroup><col><col><col><col><col></colgroup>
-          <thead>
-            <tr>
-              <th>社區代碼</th>
-              <th>名稱</th>
-              <th>Firebase 專案ID</th>
-              <th>狀態</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <div class="table-wrap">
+          <table class="table">
+            <colgroup><col><col><col><col><col></colgroup>
+            <thead>
+              <tr>
+                <th>社區代碼</th>
+                <th>名稱</th>
+                <th>Firebase 專案ID</th>
+                <th>狀態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
       </div>
     `;
     const btnCreate = document.getElementById("btn-create-community");
@@ -508,17 +746,21 @@ if (sysNav.subContainer) {
       const found = list.find(x => x.id === slug);
       openCommunityModal(found || { id: slug });
     }));
-    const btnApplys = sysNav.content.querySelectorAll(".btn-apply-community");
-    btnApplys.forEach(b => b.addEventListener("click", async () => {
+    const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-community");
+    btnDeletes.forEach(b => b.addEventListener("click", async () => {
+      const ok = window.confirm("確定要刪除此社區設定嗎？此操作不可恢復。");
+      if (!ok) return;
       const tr = b.closest("tr");
       const slug = tr && tr.getAttribute("data-slug");
-      const u = auth.currentUser;
-      if (!u) return;
+      if (!slug) return;
       try {
-        await setDoc(doc(db, "users", u.uid), { community: slug }, { merge: true });
-        showHint("已更新我的社區", "success");
-      } catch {
-        showHint("更新社區失敗", "error");
+        await deleteDoc(doc(db, "communities", slug));
+        delete communityConfigs[slug];
+        showHint("已刪除該社區設定", "success");
+        await renderSettingsCommunity();
+      } catch (e) {
+        console.error(e);
+        showHint("刪除社區失敗，請稍後再試", "error");
       }
     }));
     const btnGos = sysNav.content.querySelectorAll(".btn-go-community");
@@ -604,18 +846,6 @@ if (sysNav.subContainer) {
     });
   }
   
-  function openModal(html) {
-    const root = document.getElementById("sys-modal");
-    if (!root) return;
-    root.innerHTML = html;
-    root.classList.remove("hidden");
-  }
-  function closeModal() {
-    const root = document.getElementById("sys-modal");
-    if (!root) return;
-    root.classList.add("hidden");
-    root.innerHTML = "";
-  }
   function openEditModal(target, isSelf) {
     const title = "編輯系統管理員";
     const body = `
@@ -761,7 +991,7 @@ if (sysNav.subContainer) {
           if (newStatus === "停用") {
             showHint("已標記為停用，將登出目前帳號", "success");
             await signOut(auth);
-            location.href = "index.html";
+            redirectAfterSignOut();
             return;
           }
         }
@@ -773,6 +1003,7 @@ if (sysNav.subContainer) {
       }
     });
   }
+  
   function openCreateModal() {
     const title = "新增系統管理員";
     const body = `
@@ -878,14 +1109,266 @@ if (sysNav.subContainer) {
     });
   }
   
+  function openCreateResidentModal(slug) {
+    const title = "新增住戶";
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+          <div class="modal-row">
+            <label>電子郵件</label>
+            <input type="text" id="create-r-email" placeholder="example@domain.com">
+          </div>
+          <div class="modal-row">
+            <label>密碼</label>
+            <input type="password" id="create-r-password" placeholder="至少6字元">
+          </div>
+          <div class="modal-row">
+            <label>姓名</label>
+            <input type="text" id="create-r-name">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼</label>
+            <input type="tel" id="create-r-phone">
+          </div>
+          <div class="modal-row">
+            <label>大頭照</label>
+            <input type="file" id="create-r-photo-file" accept="image/png,image/jpeg">
+          </div>
+          <div class="modal-row">
+            <label>預覽</label>
+            <img id="create-r-photo-preview" class="avatar-preview">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button id="create-r-cancel" class="btn action-btn danger">取消</button>
+          <button id="create-r-save" class="btn action-btn">建立</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+    const btnCancel = document.getElementById("create-r-cancel");
+    const btnSave = document.getElementById("create-r-save");
+    const createFile = document.getElementById("create-r-photo-file");
+    const createPreview = document.getElementById("create-r-photo-preview");
+    createFile && createFile.addEventListener("change", () => {
+      const f = createFile.files[0];
+      if (f) {
+        createPreview.src = URL.createObjectURL(f);
+      }
+    });
+    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+    btnSave && btnSave.addEventListener("click", async () => {
+      try {
+        const email = document.getElementById("create-r-email").value.trim();
+        const password = document.getElementById("create-r-password").value;
+        const displayName = document.getElementById("create-r-name").value.trim();
+        const phone = document.getElementById("create-r-phone").value.trim();
+        const photoFile = document.getElementById("create-r-photo-file").files[0];
+        let photoURL = "";
+        if (!email || !password || password.length < 6) {
+          showHint("請填寫有效的信箱與至少6字元密碼", "error");
+          return;
+        }
+        const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+        if (photoFile) {
+          try {
+            const ext = photoFile.type === "image/png" ? "png" : "jpg";
+            const path = `avatars/${cred.user.uid}.${ext}`;
+            const ref = storageRef(storage, path);
+            await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+            photoURL = await getDownloadURL(ref);
+          } catch (err) {
+            try {
+              const b64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(photoFile);
+              });
+              photoURL = b64;
+              showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+            } catch {
+              showHint("上傳大頭照失敗，帳號仍已建立", "error");
+            }
+          }
+        }
+        await setDoc(doc(db, "users", cred.user.uid), {
+          email,
+          role: "住戶",
+          status: "啟用",
+          displayName,
+          phone,
+          photoURL,
+          community: slug,
+          createdAt: Date.now()
+        }, { merge: true });
+        await updateProfile(cred.user, { displayName, photoURL });
+        closeModal();
+        await renderSettingsResidents();
+        showHint("已建立住戶帳號", "success");
+      } catch (e) {
+        console.error(e);
+        showHint("建立失敗，可能權限不足或輸入無效", "error");
+      }
+    });
+  }
+  
+  async function renderSettingsResidents() {
+    if (!sysNav.content) return;
+    const u = auth.currentUser;
+    const slug = u ? await getUserCommunity(u.uid) : "default";
+    let selectedSlug = window.currentResidentsSlug || slug;
+    let cname = selectedSlug;
+    let communities = [];
+    try {
+      const snap = await getDocs(collection(db, "communities"));
+      communities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    if (!communities.length) {
+      communities = [{ id: selectedSlug, name: selectedSlug }];
+    }
+    try {
+      const csnap = await getDoc(doc(db, "communities", selectedSlug));
+      if (csnap.exists()) {
+        const c = csnap.data();
+        cname = c.name || selectedSlug;
+      }
+    } catch {}
+    let residents = [];
+    try {
+      const q = query(collection(db, "users"), where("community", "==", selectedSlug));
+      const snapList = await getDocs(q);
+      residents = snapList.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(a => (a.role || "住戶") === "住戶");
+    } catch {}
+    const rows = residents.map(a => {
+      const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
+      const av = a.photoURL
+        ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
+        : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
+      return `
+        <tr data-uid="${a.id}">
+          <td class="avatar-cell">${av}</td>
+          <td>${nm}</td>
+          <td>${a.phone || ""}</td>
+          <td>••••••</td>
+          <td>${a.email || ""}</td>
+          <td>${a.role || "住戶"}</td>
+          <td class="status">${a.status || "啟用"}</td>
+          <td class="actions">
+            <button class="btn small action-btn btn-edit-resident">編輯</button>
+            <button class="btn small action-btn danger btn-delete-resident">刪除</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    const emptyText = rows ? "" : "目前沒有住戶資料";
+    const options = communities.map(c => `<option value="${c.id}"${c.id === selectedSlug ? " selected" : ""}>${c.name || c.id}</option>`).join("");
+    sysNav.content.innerHTML = `
+      <div class="card data-card">
+        <div class="card-filters">
+          <label for="resident-community-select">社區</label>
+          <select id="resident-community-select">${options}</select>
+        </div>
+        <div class="card-head">
+          <h1 class="card-title">住戶帳號列表（${cname}）</h1>
+          <button id="btn-create-resident" class="btn small action-btn">新增</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <colgroup>
+              <col><col><col><col><col><col><col><col>
+            </colgroup>
+            <thead>
+              <tr>
+                <th>大頭照</th>
+                <th>姓名</th>
+                <th>手機號碼</th>
+                <th>密碼</th>
+                <th>電子郵件</th>
+                <th>角色</th>
+                <th>狀態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          ${emptyText ? `<div class="empty-hint">${emptyText}</div>` : ""}
+        </div>
+      </div>
+    `;
+    const sel = document.getElementById("resident-community-select");
+    sel && sel.addEventListener("change", async () => {
+      window.currentResidentsSlug = sel.value;
+      await renderSettingsResidents();
+    });
+    const btnCreate = document.getElementById("btn-create-resident");
+    btnCreate && btnCreate.addEventListener("click", () => openCreateResidentModal(selectedSlug));
+    const btnEdits = sysNav.content.querySelectorAll(".btn-edit-resident");
+    const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-resident");
+    btnEdits.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!sysNav.content) return;
+        const tr = btn.closest("tr");
+        const targetUid = tr && tr.getAttribute("data-uid");
+        const currentUser = auth.currentUser;
+        const isSelf = currentUser && currentUser.uid === targetUid;
+        let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "住戶", status: "啟用" };
+        try {
+          const snap = await getDoc(doc(db, "users", targetUid));
+          if (snap.exists()) {
+            const d = snap.data();
+            target.displayName = d.displayName || target.displayName;
+            target.email = d.email || target.email;
+            target.phone = d.phone || target.phone;
+            target.photoURL = d.photoURL || target.photoURL;
+            target.status = d.status || target.status;
+          }
+        } catch {}
+        openEditModal(target, isSelf);
+      });
+    });
+    btnDeletes.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
+        if (!ok) return;
+        try {
+          const tr = btn.closest("tr");
+          const targetUid = tr && tr.getAttribute("data-uid");
+          const curr = auth.currentUser;
+          if (curr && curr.uid === targetUid) {
+            await curr.delete();
+            showHint("已刪除目前帳號", "success");
+            redirectAfterSignOut();
+          } else {
+            await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+            showHint("已標記該帳號為停用", "success");
+            await renderSettingsResidents();
+          }
+        } catch (err) {
+          console.error(err);
+          showHint("刪除失敗，可能需要重新登入驗證", "error");
+        }
+      });
+    });
+  }
+  
   function renderContentFor(mainKey, subLabel) {
     if (!sysNav.content) return;
-    if (mainKey === 'settings' && subLabel === '一般') {
+    sysNav.content.innerHTML = '';
+    const sub = (subLabel || '').replace(/\u200B/g, '').trim();
+    if (mainKey === 'settings' && sub === '一般') {
       renderSettingsGeneral();
       return;
     }
-    if (mainKey === 'settings' && subLabel === '社區') {
+    if (mainKey === 'settings' && sub === '社區') {
       renderSettingsCommunity();
+      return;
+    }
+    if (mainKey === 'settings' && sub === '住戶') {
+      renderSettingsResidents();
       return;
     }
     sysNav.content.innerHTML = '';
@@ -895,7 +1378,7 @@ if (sysNav.subContainer) {
     if (!sysNav.subContainer) return;
     const items = sysSubMenus[key] || [];
     sysNav.subContainer.innerHTML = items.map((item, index) => 
-      `<button class="sub-nav-item ${index === 0 ? 'active' : ''}">${item}</button>`
+      `<button class="sub-nav-item ${index === 0 ? 'active' : ''}" data-label="${item}">${item}</button>`
     ).join('');
     
     const buttons = sysNav.subContainer.querySelectorAll('.sub-nav-item');
@@ -903,9 +1386,14 @@ if (sysNav.subContainer) {
       btn.addEventListener('click', () => {
         buttons.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        renderContentFor(key, btn.textContent);
+        const label = (btn.getAttribute('data-label') || btn.textContent || '').replace(/\u200B/g, '').trim();
+        renderContentFor(key, label);
       });
     });
+    const firstBtn = sysNav.subContainer.querySelector('.sub-nav-item');
+    const first = firstBtn && (firstBtn.getAttribute('data-label') || firstBtn.textContent || '').replace(/\u200B/g, '').trim();
+    if (first) renderContentFor(key, first);
+  
     if (items.length) renderContentFor(key, items[0]);
   }
 
