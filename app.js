@@ -15,7 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true, useFetchStreams: true });
+const db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: true });
 const storage = getStorage(app);
 setLogLevel("error");
 // Secondary app for admin account creation to avoid switching current session
@@ -33,7 +33,7 @@ function ensureTenant(slug) {
     const tapp = initializeApp(cfg, "tenant-" + key);
     tenantApps[key] = {
       app: tapp,
-      db: getFirestore(tapp),
+      db: initializeFirestore(tapp, { experimentalForceLongPolling: true, useFetchStreams: true }),
       storage: getStorage(tapp)
     };
   }
@@ -203,28 +203,43 @@ function handleRoleRedirect(role) {
   }
 }
 
-// Auto login check
-onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    if (el.authCard) el.authCard.classList.add("hidden");
-    // If we are on specific pages, handle display
-    if (window.location.pathname.includes("sys.html")) {
-        let role = "住戶";
-        try {
-          role = await getOrCreateUserRole(user.uid, user.email);
-        } catch {}
-        if (role === "系統管理員") {
-           if (sysStack) sysStack.classList.remove("hidden");
-           if (mainContainer) mainContainer.classList.add("hidden");
-        } else {
-            // Not authorized for this page
-            if (el.authCard) el.authCard.classList.remove("hidden");
-            if (sysStack) sysStack.classList.add("hidden");
-             showHint("權限不足", "error");
-        }
+  // Auto login check
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      if (el.authCard) el.authCard.classList.add("hidden");
+      // If we are on specific pages, handle display
+      if (window.location.pathname.includes("sys.html")) {
+          let role = "住戶";
+          try {
+            role = await getOrCreateUserRole(user.uid, user.email);
+          } catch {}
+          if (role === "系統管理員") {
+             if (sysStack) sysStack.classList.remove("hidden");
+             if (mainContainer) mainContainer.classList.add("hidden");
+          } else {
+              // Not authorized for this page
+              if (el.authCard) el.authCard.classList.remove("hidden");
+              if (sysStack) sysStack.classList.add("hidden");
+               showHint("權限不足", "error");
+          }
   } else if (window.location.pathname.includes("front.html")) {
         const qp = getQueryParam("c");
         const slug = qp || await getUserCommunity(user.uid);
+        try {
+          const csnap = await getDoc(doc(db, "communities", slug));
+          if (csnap.exists()) {
+            const c = csnap.data();
+            communityConfigs[slug] = {
+              apiKey: c.apiKey,
+              authDomain: c.authDomain,
+              projectId: c.projectId,
+              storageBucket: c.storageBucket,
+              messagingSenderId: c.messagingSenderId,
+              appId: c.appId,
+              measurementId: c.measurementId
+            };
+          }
+        } catch {}
         const t = ensureTenant(slug);
         window.currentTenantSlug = slug;
         window.tenant = t;
@@ -459,6 +474,7 @@ if (sysNav.subContainer) {
         <td class="actions">
           <button class="btn small action-btn btn-edit-community">編輯</button>
           <button class="btn small action-btn btn-apply-community">設為我的社區</button>
+          <button class="btn small action-btn btn-go-community">進入社區</button>
         </td>
       </tr>
     `).join("");
@@ -504,6 +520,18 @@ if (sysNav.subContainer) {
       } catch {
         showHint("更新社區失敗", "error");
       }
+    }));
+    const btnGos = sysNav.content.querySelectorAll(".btn-go-community");
+    btnGos.forEach(b => b.addEventListener("click", () => {
+      const tr = b.closest("tr");
+      const slug = tr && tr.getAttribute("data-slug");
+      const found = list.find(x => x.id === slug);
+      const status = (found && found.status) || "啟用";
+      if (status === "停用") {
+        showHint("該社區已停用，無法進入", "error");
+        return;
+      }
+      location.href = `front.html?c=${encodeURIComponent(slug)}`;
     }));
   }
   

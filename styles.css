@@ -222,6 +222,11 @@ select:focus {
   grid-template-rows: 8% 8% 76% 8%;
   height: 100svh;
 }
+.stack.front {
+  display: grid;
+  grid-template-rows: 8% 8% 76% 8%;
+  height: 100svh;
+}
 .row {
   width: 100%;
   display: flex;
@@ -415,6 +420,27 @@ select:focus {
   padding-top: 24px;
   overflow: auto;
   min-height: 0;
+}
+.row.A3 {
+  align-items: flex-start;
+  padding-top: 24px;
+  overflow: auto;
+  min-height: 0;
+}
+.row.A1 {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.row.A2 {
+  position: sticky;
+  top: 8svh;
+  z-index: 19;
+}
+.row.A4 {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
 }
 .content-wrap {
   width: 100%;
