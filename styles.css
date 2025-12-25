@@ -22,6 +22,7 @@ body {
 .container {
   display: grid;
   grid-template-columns: 1fr;
+  grid-template-rows: 20vh 1fr;
   min-height: 100vh;
 }
 @media (max-width: 920px) {
