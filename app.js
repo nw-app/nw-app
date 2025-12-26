@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { getFirestore, initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
@@ -15,7 +15,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+  useFetchStreams: false
+});
 const storage = getStorage(app);
 setLogLevel("error");
 // Secondary app for admin account creation to avoid switching current session
@@ -33,7 +36,10 @@ function ensureTenant(slug) {
     const tapp = initializeApp(cfg, "tenant-" + key);
     tenantApps[key] = {
       app: tapp,
-      db: getFirestore(tapp),
+      db: initializeFirestore(tapp, {
+        experimentalAutoDetectLongPolling: true,
+        useFetchStreams: false
+      }),
       storage: getStorage(tapp)
     };
   }
@@ -42,6 +48,26 @@ function ensureTenant(slug) {
 function getQueryParam(name) {
   const url = new URL(window.location.href);
   return url.searchParams.get(name);
+}
+function getSlugFromPath() {
+  try {
+    const p = window.location.pathname;
+    const m = p.match(/(?:front|admin)_([^.]+)\.html$/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+function checkPagePermission(role, path) {
+  const p = path || window.location.pathname;
+  if (p.includes("sys")) {
+    return role === "系統管理員";
+  } else if (p.includes("admin")) {
+    return role === "系統管理員" || role === "管理員" || role === "總幹事";
+  } else if (p.includes("front")) {
+    return role === "系統管理員" || role === "住戶";
+  }
+  return true;
 }
 async function getUserCommunity(uid) {
   try {
@@ -87,7 +113,7 @@ const frontStack = document.getElementById("front-stack");
 const adminStack = document.getElementById("admin-stack");
 const sysStack = document.getElementById("sys-stack");
 const mainContainer = document.querySelector("main.container");
-const btnSignoutFront = null;
+const btnSignoutFront = document.getElementById("btn-signout-front");
 const btnSignoutAdmin = document.getElementById("btn-signout-admin");
 const btnSignoutSys = document.getElementById("btn-signout-sys");
 const btnAdminSecret = document.getElementById("btn-admin-secret");
@@ -196,10 +222,10 @@ function showHint(text, type = "info") {
 
 function redirectAfterSignOut() {
   const p = window.location.pathname;
-  if (p.includes("sys.html")) {
+  if (p.includes("sys")) {
     location.href = "sys.html";
-  } else if (p.includes("admin.html")) {
-    location.href = "admin.html";
+  } else if (p.includes("admin")) {
+    location.reload();
   } else {
     location.href = "index.html";
   }
@@ -258,8 +284,18 @@ if (loginForm) {
     el.btnLogin.textContent = "登入中...";
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
-      showHint("登入成功", "success");
       const role = await getOrCreateUserRole(cred.user.uid, cred.user.email);
+      showHint("登入成功", "success");
+      // Strict Login Check based on Page
+      if (!checkPagePermission(role, window.location.pathname)) {
+         showHint("權限不足", "error");
+         await signOut(auth);
+         el.btnLogin.disabled = false;
+         el.btnLogin.textContent = "登入";
+         // Stay on login page, do not redirect
+         return;
+      }
+
       handleRoleRedirect(role);
     } catch (err) {
       console.error(err);
@@ -273,7 +309,7 @@ if (loginForm) {
   });
 }
 
-function handleRoleRedirect(role) {
+async function handleRoleRedirect(role) {
   // Simple role based redirect logic
   if (window.location.pathname.includes("sys.html")) {
       if (role === "系統管理員") {
@@ -282,7 +318,8 @@ function handleRoleRedirect(role) {
         if (mainContainer) mainContainer.classList.add("hidden");
       } else {
          showHint("權限不足", "error");
-         auth.signOut();
+         await signOut(auth);
+         // Stay on login page
       }
       return;
   }
@@ -410,12 +447,15 @@ function handleRoleRedirect(role) {
     });
   }
   
+  const u = auth.currentUser;
+  const slug = u ? await getUserCommunity(u.uid) : "default";
+
   if (role === "系統管理員") {
     location.href = "sys.html";
   } else if (role === "管理員" || role === "總幹事") {
-    location.href = "admin.html"; // Assume admin.html exists and handles its logic
+    location.href = (slug && slug !== "default") ? `admin.html?c=${slug}` : "admin.html";
   } else {
-    location.href = "front.html";
+    location.href = (slug && slug !== "default") ? `front.html?c=${slug}` : "front.html";
   }
 }
 
@@ -423,40 +463,63 @@ function handleRoleRedirect(role) {
   onAuthStateChanged(auth, async (user) => {
     if (user) {
       if (el.authCard) el.authCard.classList.add("hidden");
+      
+      let role = "住戶";
+      try {
+        role = await getOrCreateUserRole(user.uid, user.email);
+      } catch {}
+
+      // Strict Page Access Check
+      if (!checkPagePermission(role, window.location.pathname)) {
+          if (el.authCard) el.authCard.classList.remove("hidden");
+          if (sysStack) sysStack.classList.add("hidden");
+          if (adminStack) adminStack.classList.add("hidden");
+          if (frontStack) frontStack.classList.add("hidden");
+          if (mainContainer) mainContainer.classList.remove("hidden");
+          showHint("權限不足，已自動登出", "error");
+          await signOut(auth);
+          return; 
+      }
+
       // If we are on specific pages, handle display
       if (window.location.pathname.includes("sys.html")) {
-          let role = "住戶";
-          try {
-            role = await getOrCreateUserRole(user.uid, user.email);
-          } catch {}
-          if (role === "系統管理員") {
-             if (sysStack) sysStack.classList.remove("hidden");
-             if (mainContainer) mainContainer.classList.add("hidden");
-             const btn = document.getElementById("btn-avatar-sys");
-             if (btn) {
-               const u = auth.currentUser;
-               let photo = (u && u.photoURL) || "";
-               let name = (u && u.displayName) || "";
-               try {
-                 const snap = await getDoc(doc(db, "users", u.uid));
-                 if (snap.exists()) {
-                   const d = snap.data();
-                   photo = photo || d.photoURL || "";
-                   name = name || d.displayName || "";
-                 }
-               } catch {}
-               btn.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
-               btn.addEventListener("click", () => openUserProfileModal());
-             }
-          } else {
-              // Not authorized for this page
-              if (el.authCard) el.authCard.classList.remove("hidden");
-              if (sysStack) sysStack.classList.add("hidden");
-               showHint("權限不足", "error");
-          }
-  } else if (window.location.pathname.includes("front.html")) {
+          // Role check passed (System Admin)
+          toggleAuth(false);
+         if (sysStack) sysStack.classList.remove("hidden");
+         if (mainContainer) mainContainer.classList.add("hidden");
+            const btn = document.getElementById("btn-avatar-sys");
+            if (btn) {
+              const u = auth.currentUser;
+              let photo = (u && u.photoURL) || "";
+              let name = (u && u.displayName) || "";
+              try {
+                const snap = await getDoc(doc(db, "users", u.uid));
+                if (snap.exists()) {
+                  const d = snap.data();
+                  photo = photo || d.photoURL || "";
+                  name = name || d.displayName || "";
+                }
+              } catch {}
+              const w = document.getElementById("welcome-sys");
+              if (w) {
+                const emailPart = (u && u.email && u.email.split("@")[0]) || "";
+                w.textContent = `歡迎~${name || emailPart || "使用者"}`;
+              }
+              btn.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
+              btn.addEventListener("click", () => openUserProfileModal());
+            }
+  } else if (window.location.pathname.includes("front")) {
+        // Role check passed (Resident or System Admin)
+        const pathSlug = getSlugFromPath();
         const qp = getQueryParam("c");
-        const slug = qp || await getUserCommunity(user.uid);
+        const userSlug = await getUserCommunity(user.uid);
+        const reqSlug = pathSlug || qp || null;
+        const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
+        if (role !== "系統管理員" && reqSlug && reqSlug !== userSlug) {
+          location.replace(`front.html?c=${userSlug}`);
+          return;
+        }
+        
         let cname = slug;
         try {
           const csnap = await getDoc(doc(db, "communities", slug));
@@ -478,7 +541,27 @@ function handleRoleRedirect(role) {
         window.currentTenantSlug = slug;
         window.tenant = t;
         const titleEl = document.querySelector(".sys-title");
-        if (titleEl) titleEl.textContent = `${cname} 社區`;
+        if (titleEl) {
+           titleEl.textContent = `${cname} 社區`;
+           if (role === "系統管理員") {
+             titleEl.style.cursor = "pointer";
+             titleEl.style.textDecoration = "underline";
+             titleEl.title = "點擊切換社區";
+             titleEl.addEventListener("click", () => openCommunitySwitcher("front"));
+           }
+        }
+        const wFront = document.getElementById("welcome-front");
+        if (wFront) {
+          const u = auth.currentUser;
+          const emailPart = (u && u.email && u.email.split("@")[0]) || "";
+          const snap = await getDoc(doc(db, "users", u.uid));
+          let name = "";
+          if (snap.exists()) {
+            const d = snap.data();
+            name = d.displayName || "";
+          }
+          wFront.textContent = `歡迎~${name || emailPart || "使用者"}`;
+        }
         if (frontStack) frontStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
 
@@ -496,10 +579,67 @@ function handleRoleRedirect(role) {
              }
            } catch {}
            btnAvatar.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
-           btnAvatar.addEventListener("click", () => openUserProfileModal());
+            btnAvatar.addEventListener("click", () => openUserProfileModal());
         }
-    } else if (window.location.pathname.includes("admin.html")) {
-         // admin logic
+         loadFrontAds(slug);
+         subscribeFrontAds(slug);
+    } else if (window.location.pathname.includes("admin")) {
+        // Role check passed (Community Admin or System Admin)
+          const pathSlug = getSlugFromPath();
+          const qp = getQueryParam("c");
+          const userSlug = await getUserCommunity(user.uid);
+          const reqSlug = pathSlug || qp || null;
+          if (role !== "系統管理員" && reqSlug && reqSlug !== userSlug) {
+            location.replace(`admin.html?c=${userSlug}`);
+            return;
+          }
+          const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
+          
+          if (adminStack) adminStack.classList.remove("hidden");
+          if (mainContainer) mainContainer.classList.add("hidden");
+
+          let cname = slug;
+          try {
+             if(slug && slug !== "default") {
+               const csnap = await getDoc(doc(db, "communities", slug));
+               if (csnap.exists()) {
+                 const c = csnap.data();
+                 cname = c.name || slug;
+               }
+             }
+          } catch {}
+          const titleEl = adminStack.querySelector(".sys-title");
+          if (titleEl && cname && cname !== "default") {
+             titleEl.textContent = `${cname} 社區管理後台`;
+             if (role === "系統管理員") {
+                titleEl.style.cursor = "pointer";
+                titleEl.style.textDecoration = "underline";
+                titleEl.title = "點擊切換社區";
+                titleEl.addEventListener("click", () => openCommunitySwitcher("admin"));
+             }
+          }
+          
+          const btnAvatarAdmin = document.getElementById("btn-avatar-admin");
+          if (btnAvatarAdmin) {
+            const u = auth.currentUser;
+            let photo = (u && u.photoURL) || "";
+            let name = (u && u.displayName) || "";
+            try {
+              const snap = await getDoc(doc(db, "users", u.uid));
+              if (snap.exists()) {
+                const d = snap.data();
+                photo = photo || d.photoURL || "";
+                name = name || d.displayName || "";
+              }
+            } catch {}
+            const wAdmin = document.getElementById("welcome-admin");
+            if (wAdmin) {
+              const emailPart = (u && u.email && u.email.split("@")[0]) || "";
+              wAdmin.textContent = `歡迎~${name || emailPart || "使用者"}`;
+            }
+            btnAvatarAdmin.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "管")[0]}</span>`;
+            btnAvatarAdmin.addEventListener("click", () => openUserProfileModal());
+          }
     }
     
     if (el.profileEmail) el.profileEmail.textContent = user.email;
@@ -509,8 +649,45 @@ function handleRoleRedirect(role) {
   }
 });
 
+async function openCommunitySwitcher(type) {
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  
+  let communities = [];
+  try {
+    const q = query(collection(db, "communities"));
+    const snap = await getDocs(q);
+    communities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    console.error(e);
+    return alert("無法載入社區列表");
+  }
+
+  const listHtml = communities.map(c => `
+    <div class="modal-row" style="cursor:pointer; padding: 10px; border-bottom: 1px solid #eee;" onclick="location.href='${type}.html?c=${c.id}'">
+      <strong>${c.name || c.id}</strong> <span style="color:#888">(${c.id})</span>
+    </div>
+  `).join("");
+
+  modal.innerHTML = `
+    <div class="modal-dialog" style="max-height: 80vh; overflow-y: auto;">
+      <div class="modal-head">
+        <div class="modal-title">切換社區 (${type === 'admin' ? '後台' : '前台'})</div>
+      </div>
+      <div class="modal-body">
+         ${listHtml || '<div style="padding:20px;text-align:center">無社區資料</div>'}
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn" onclick="this.closest('.modal').remove()">關閉</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+
 // Sign out handlers
-[btnSignoutFront, btnSignoutAdmin, el.btnSignout].forEach(btn => {
+[btnSignoutFront, btnSignoutAdmin, btnSignoutSys, el.btnSignout].forEach(btn => {
   if (btn) {
     btn.addEventListener("click", async () => {
       await signOut(auth);
@@ -518,6 +695,18 @@ function handleRoleRedirect(role) {
     });
   }
 });
+
+// Admin signout specifically needs to find the button again if it was added dynamically or just ensure it works
+if (!btnSignoutAdmin) {
+    // If it wasn't found initially (maybe because it was in hidden section?), try to bind it if it exists now
+    const retryBtn = document.getElementById("btn-signout-admin");
+    if (retryBtn) {
+        retryBtn.addEventListener("click", async () => {
+          await signOut(auth);
+          redirectAfterSignOut();
+        });
+    }
+}
 
 // Password toggle
 if (btnTogglePassword) {
@@ -538,6 +727,7 @@ const sysNav = {
   home: document.getElementById("sys-nav-home"),
   notify: document.getElementById("sys-nav-notify"),
   settings: document.getElementById("sys-nav-settings"),
+  app: document.getElementById("sys-nav-app"),
   subContainer: document.getElementById("sys-sub-nav"),
   content: document.getElementById("sys-content")
 };
@@ -545,7 +735,8 @@ const sysNav = {
 const sysSubMenus = {
   home: ["總覽", "社區"],
   notify: ["系統", "社區", "住戶"],
-  settings: ["一般", "社區", "住戶", "系統"]
+  settings: ["一般", "社區", "住戶", "系統"],
+  app: ["廣告", "按鈕", "監控", "區大"]
 };
 
 if (sysNav.subContainer) {
@@ -769,6 +960,11 @@ if (sysNav.subContainer) {
           <td>${a.email || ""}</td>
           <td>${a.role || "管理員"}</td>
           <td class="status">${a.status || "啟用"}</td>
+          <td class="actions">
+            <button class="btn small action-btn btn-edit-community-admin">編輯</button>
+            <button class="btn small action-btn danger btn-delete-community-admin">刪除</button>
+            <button class="btn small action-btn btn-go-community-admin">進入後台</button>
+          </td>
         </tr>
       `;
     }).join("");
@@ -812,7 +1008,7 @@ if (sysNav.subContainer) {
         </div>
         <div class="table-wrap">
           <table class="table">
-            <colgroup><col><col><col><col><col><col></colgroup>
+            <colgroup><col><col><col><col><col><col><col></colgroup>
             <thead>
               <tr>
                 <th>大頭照</th>
@@ -821,6 +1017,7 @@ if (sysNav.subContainer) {
                 <th>電子郵件</th>
                 <th>角色</th>
                 <th>狀態</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>${adminRows}</tbody>
@@ -872,10 +1069,62 @@ if (sysNav.subContainer) {
         showHint("該社區已停用，無法進入", "error");
         return;
       }
-      location.href = `front.html?c=${encodeURIComponent(slug)}`;
+      const url = `front.html?c=${slug}`;
+      const w = window.open(url, "_blank");
+      if (w) w.opener = null;
     }));
     const btnCreateAdmin = document.getElementById("btn-create-community-admin");
     btnCreateAdmin && btnCreateAdmin.addEventListener("click", () => openCreateCommunityAdminModal(selectedSlug));
+    const btnEditAdmins = sysNav.content.querySelectorAll(".btn-edit-community-admin");
+    btnEditAdmins.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!sysNav.content) return;
+        const tr = btn.closest("tr");
+        const targetUid = tr && tr.getAttribute("data-uid");
+        const currentUser = auth.currentUser;
+        const isSelf = currentUser && currentUser.uid === targetUid;
+        let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "管理員", status: "啟用" };
+        try {
+          const snap = await getDoc(doc(db, "users", targetUid));
+          if (snap.exists()) {
+            const d = snap.data();
+            target.displayName = d.displayName || target.displayName;
+            target.email = d.email || target.email;
+            target.phone = d.phone || target.phone;
+            target.photoURL = d.photoURL || target.photoURL;
+            target.status = d.status || target.status;
+          }
+        } catch {}
+        openEditModal(target, isSelf);
+      });
+    });
+    const btnDeleteAdmins = sysNav.content.querySelectorAll(".btn-delete-community-admin");
+    btnDeleteAdmins.forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const ok = window.confirm("確定要刪除此後台帳號嗎？此操作不可恢復。");
+        if (!ok) return;
+        try {
+          const tr = btn.closest("tr");
+          const targetUid = tr && tr.getAttribute("data-uid");
+          if (!targetUid) return;
+          await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+          showHint("已標記該後台帳號為停用", "success");
+          await renderSettingsCommunity();
+        } catch (e) {
+          console.error(e);
+          showHint("刪除失敗，請稍後再試", "error");
+        }
+      });
+    });
+    const btnGoAdmins = sysNav.content.querySelectorAll(".btn-go-community-admin");
+    btnGoAdmins.forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (!selectedSlug) return;
+        const url = `admin.html?c=${selectedSlug}`;
+        const w = window.open(url, "_blank");
+        if (w) w.opener = null;
+      });
+    });
   }
   
   function openCommunityModal(comm) {
@@ -1077,12 +1326,23 @@ if (sysNav.subContainer) {
       }
     });
   }
-  function openEditModal(target, isSelf) {
-    const title = "編輯系統管理員";
+  async function openEditModal(target, isSelf) {
+    const title = (target.role === "系統管理員") ? "編輯系統管理員" : "編輯社區管理員";
+    let commList = [];
+    try {
+      const snapC = await getDocs(collection(db, "communities"));
+      commList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    const selectedCommunity = target.community || window.currentAdminCommunitySlug || "default";
+    const optionsHtml = commList.map(c => `<option value="${c.id}"${c.id === selectedCommunity ? " selected" : ""}>${c.name || c.id}</option>`).join("");
     const body = `
       <div class="modal-dialog">
         <div class="modal-head"><div class="modal-title">${title}</div></div>
         <div class="modal-body">
+          <div class="modal-row">
+            <label>所屬社區</label>
+            <select id="modal-community">${optionsHtml}</select>
+          </div>
           <div class="modal-row">
             <label>大頭照</label>
             <input type="file" id="modal-photo-file" accept="image/png,image/jpeg">
@@ -1139,6 +1399,7 @@ if (sysNav.subContainer) {
         const photoFile = document.getElementById("modal-photo-file").files[0];
         const newPassword = document.getElementById("modal-password").value;
         const newStatus = document.getElementById("modal-status").value;
+        const newCommunity = (document.getElementById("modal-community") && document.getElementById("modal-community").value) || selectedCommunity;
         let newPhotoURL = target.photoURL || "";
         if (photoFile) {
           try {
@@ -1167,7 +1428,8 @@ if (sysNav.subContainer) {
           displayName: newName || target.displayName,
           phone: newPhone || target.phone,
           photoURL: newPhotoURL,
-          status: newStatus || target.status
+          status: newStatus || target.status,
+          community: newCommunity
         }, { merge: true });
         // If editing self, update profile and password where applicable
         const curr = auth.currentUser;
@@ -1352,7 +1614,7 @@ if (sysNav.subContainer) {
           </div>
           <div class="modal-row">
             <label>密碼</label>
-            <input type="password" id="create-r-password" placeholder="至少6字元">
+            <input type="password" id="create-r-password" placeholder="至少6字元" value="123456">
           </div>
           <div class="modal-row">
             <label>姓名</label>
@@ -1442,7 +1704,7 @@ if (sysNav.subContainer) {
         await setDoc(doc(db, "users", cred.user.uid), {
           email,
           role: "住戶",
-          status: "啟用",
+          status: "停用",
           displayName,
           phone,
           photoURL,
@@ -1451,7 +1713,12 @@ if (sysNav.subContainer) {
         }, { merge: true });
         await updateProfile(cred.user, { displayName, photoURL });
         closeModal();
-        await renderSettingsResidents();
+        // 重新整理列表（後台）
+        if (adminNav && adminNav.residents) {
+          setActiveAdminNav("residents");
+        } else {
+          await renderSettingsResidents();
+        }
         showHint("已建立住戶帳號", "success");
       } catch (e) {
         console.error(e);
@@ -1632,7 +1899,480 @@ if (sysNav.subContainer) {
       renderSettingsResidents();
       return;
     }
+    if (mainKey === 'app') {
+      renderAppSubContent(sub || '廣告');
+      return;
+    }
     sysNav.content.innerHTML = '';
+  }
+  
+  async function renderAppSubContent(sub) {
+    if (!sysNav.content) return;
+    let options = [`<option value="all">全部</option>`];
+    let communities = [];
+    try {
+      const snap = await getDocs(collection(db, "communities"));
+      communities = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    const current = window.currentAppCommunitySlug || "all";
+    const opts = communities.map(c => {
+      const name = c.name || c.id;
+      const sel = c.id === current ? " selected" : "";
+      return `<option value="${c.id}"${sel}>${name}</option>`;
+    }).join("");
+    options = [`<option value="all"${current === "all" ? " selected" : ""}>全部</option>`, opts].filter(Boolean);
+    
+    // Content Logic based on 'sub'
+    let contentHtml = `<div class="empty-hint">尚未建立內容</div>`;
+    let adsConfig = { interval: 3, effect: 'slide', loop: 'infinite', nav: true };
+    
+    if (sub === '廣告') {
+      // Fetch data
+      let adsData = [];
+      
+      try {
+        const targetSlug = current === 'all' ? 'default' : current;
+        const snap = await getDoc(doc(db, `communities/${targetSlug}/app_modules/ads`));
+        if (snap.exists()) {
+          const d = snap.data();
+          adsData = d.items || [];
+          if (d.config) adsConfig = d.config;
+        }
+      } catch (e) {
+        console.log("Fetch ads failed", e);
+      }
+      
+      // Ensure 10 rows
+      const rows = [];
+      for (let i = 1; i <= 10; i++) {
+        const item = adsData.find(x => x.idx === i) || { idx: i, url: '', type: 'image', autoplay: false };
+        const isYoutube = item.type === 'youtube';
+        rows.push(`
+          <tr data-idx="${i}">
+            <td>${i}</td>
+            <td>
+              <input type="text" class="ad-url-input" value="${item.url}" placeholder="圖片連結或 YouTube 網址">
+            </td>
+            <td>
+              <span class="ad-type-badge ${item.type}">${item.type === 'youtube' ? 'YouTube' : '圖片'}</span>
+            </td>
+            <td>
+              <label class="checkbox-label">
+                <input type="checkbox" class="ad-autoplay" ${item.autoplay ? 'checked' : ''} ${!isYoutube ? 'disabled' : ''}>
+                <span>自動播放</span>
+              </label>
+            </td>
+          </tr>
+        `);
+      }
+
+      // Preview HTML (Simulate A3)
+      const validItems = adsData.filter(x => x.url).sort((a, b) => a.idx - b.idx);
+      let previewContent = '';
+      if (validItems.length === 0) {
+        previewContent = `<div class="preview-placeholder">A3 輪播預覽區 (目前無內容)</div>`;
+      } else {
+        const slides = validItems.map((item, idx) => {
+          let content = '';
+          if (item.type === 'youtube') {
+             let vidId = '';
+             try {
+               const u = new URL(item.url);
+               if (u.hostname.includes('youtube.com')) {
+                 vidId = u.searchParams.get('v');
+                 if (!vidId && u.pathname.startsWith('/embed/')) {
+                   vidId = u.pathname.split('/')[2];
+                 } else if (!vidId && u.pathname.startsWith('/live/')) {
+                    vidId = u.pathname.split('/')[2];
+                 }
+               }
+               else if (u.hostname.includes('youtu.be')) vidId = u.pathname.slice(1);
+             } catch {}
+             const origin = window.location.origin;
+             const embedUrl = vidId ? `https://www.youtube.com/embed/${vidId}?autoplay=${item.autoplay?1:0}&mute=1&enablejsapi=1&origin=${origin}` : item.url;
+             content = `<iframe src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+          } else {
+             content = `<img src="${item.url}" alt="Slide ${idx+1}">`;
+          }
+          return `<div class="preview-slide ${idx===0?'active':''}">${content}</div>`;
+        }).join('');
+        previewContent = `
+          <div class="preview-carousel">
+            ${slides}
+            <button class="preview-nav-btn preview-nav-prev" style="display: ${adsConfig.nav ? 'block' : 'none'}">❮</button>
+            <button class="preview-nav-btn preview-nav-next" style="display: ${adsConfig.nav ? 'block' : 'none'}">❯</button>
+          </div>`;
+      }
+
+      contentHtml = `
+        <div class="card data-card preview-card" style="margin-bottom: 24px;">
+           <div class="card-head"><h2 class="card-title">A3 輪播預覽</h2></div>
+           <div class="a3-preview-container effect-${adsConfig.effect}">
+             ${previewContent}
+           </div>
+        </div>
+        <div class="card data-card">
+          <div class="card-head">
+            <h2 class="card-title" style="white-space: nowrap;">輪播內容設定</h2>
+            <button id="btn-save-ads" class="btn primary action-btn">儲存設定</button>
+          </div>
+          
+          <div class="card-filters" style="margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 24px;">
+            <div class="filter-group">
+              <label for="ads-interval" style="display: block; margin-bottom: 4px; font-weight: 500;">輪播秒數</label>
+              <input type="number" id="ads-interval" value="${adsConfig.interval}" min="1" max="60" style="padding: 6px; border: 1px solid var(--border); border-radius: 4px; width: 80px;">
+            </div>
+            <div class="filter-group">
+              <label for="ads-effect" style="display: block; margin-bottom: 4px; font-weight: 500;">圖片轉場動畫方式</label>
+              <select id="ads-effect" style="padding: 6px; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="slide" ${adsConfig.effect === 'slide' ? 'selected' : ''}>滑動 (Slide)</option>
+                <option value="fade" ${adsConfig.effect === 'fade' ? 'selected' : ''}>淡入淡出 (Fade)</option>
+                <option value="none" ${adsConfig.effect === 'none' ? 'selected' : ''}>無動畫 (None)</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="ads-loop" style="display: block; margin-bottom: 4px; font-weight: 500;">循環方式</label>
+              <select id="ads-loop" style="padding: 6px; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="infinite" ${adsConfig.loop === 'infinite' ? 'selected' : ''}>無限循環</option>
+                <option value="rewind" ${adsConfig.loop === 'rewind' ? 'selected' : ''}>來回播放</option>
+                <option value="once" ${adsConfig.loop === 'once' ? 'selected' : ''}>播放一次停止</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label style="display: block; margin-bottom: 4px; font-weight: 500;">導航</label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="ads-nav" ${adsConfig.nav ? 'checked' : ''}>
+                <span>顯示左右導航箭頭</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <colgroup><col width="60"><col><col width="100"><col width="120"></colgroup>
+              <thead>
+                <tr>
+                  <th>序號</th>
+                  <th>圖片或影片位置</th>
+                  <th>類型</th>
+                  <th>設定</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    sysNav.content.innerHTML = `
+      <div class="card-wrapper">
+        <div class="card data-card" style="margin-bottom: 16px;">
+          <div class="card-filters">
+            <label for="app-community-select">社區選擇</label>
+            <select id="app-community-select">${options.join("")}</select>
+          </div>
+        </div>
+        ${contentHtml}
+      </div>
+    `;
+
+    // Start Preview Carousel
+    if (sub === '廣告') {
+        // Need to define startCarousel function or include it here.
+        // For simplicity, I'll inline a simple starter or call a global one if I append it.
+        // But since I'm appending 'loadFrontAds' and 'startFrontCarousel' later, I can reuse 'startFrontCarousel' logic?
+        // No, 'startFrontCarousel' is for front.
+        // Let's rely on 'renderAppSubContent' refreshing the DOM, but we need JS to run the carousel.
+        // I will add the JS logic inside 'if (sub === "廣告")' block below.
+    }
+
+    const sel = document.getElementById("app-community-select");
+    if (sel) {
+      if (!window.currentAppCommunitySlug) {
+        window.currentAppCommunitySlug = "all";
+        sel.value = "all";
+      }
+      sel.addEventListener("change", () => {
+        window.currentAppCommunitySlug = sel.value;
+        renderAppSubContent(sub);
+      });
+    }
+    
+    if (sub === '廣告') {
+      const btnSave = document.getElementById("btn-save-ads");
+      if (btnSave) {
+        btnSave.addEventListener("click", async () => {
+           const trs = sysNav.content.querySelectorAll("tbody tr");
+           const items = [];
+           trs.forEach(tr => {
+             const idx = parseInt(tr.getAttribute("data-idx"));
+             const url = tr.querySelector(".ad-url-input").value.trim();
+             const typeEl = tr.querySelector(".ad-type-badge");
+             const type = typeEl.textContent === 'YouTube' ? 'youtube' : 'image';
+             const autoplay = tr.querySelector(".ad-autoplay").checked;
+             if (url) {
+               items.push({ idx, url, type, autoplay });
+             }
+           });
+           
+           // Get Config
+           const config = {
+             interval: parseInt(document.getElementById("ads-interval").value) || 3,
+             effect: document.getElementById("ads-effect").value,
+             loop: document.getElementById("ads-loop").value,
+             nav: document.getElementById("ads-nav").checked
+           };
+           
+           try {
+             const targetSlug = current === 'all' ? 'default' : current;
+             await setDoc(doc(db, `communities/${targetSlug}/app_modules/ads`), { items, config }, { merge: true });
+             showHint("設定已儲存", "success");
+             // Don't re-render to avoid race conditions and UI reset
+             updatePreview();
+           } catch(e) {
+             console.error(e);
+             showHint("儲存失敗", "error");
+           }
+        });
+      }
+      
+      // Function to refresh preview based on current DOM inputs
+      const updatePreview = () => {
+         // Gather current inputs
+         const trs = sysNav.content.querySelectorAll("tbody tr");
+         const items = [];
+         trs.forEach(tr => {
+           const idx = parseInt(tr.getAttribute("data-idx"));
+           const url = tr.querySelector(".ad-url-input").value.trim();
+           const typeEl = tr.querySelector(".ad-type-badge");
+           const type = typeEl.textContent === 'YouTube' ? 'youtube' : 'image';
+           const autoplay = tr.querySelector(".ad-autoplay").checked;
+           if (url) {
+             items.push({ idx, url, type, autoplay });
+           }
+         });
+         
+         // Gather config
+         const currentConfig = {
+             interval: parseInt(document.getElementById("ads-interval")?.value) || 3,
+             effect: document.getElementById("ads-effect")?.value || 'slide',
+             loop: document.getElementById("ads-loop")?.value || 'infinite',
+             nav: document.getElementById("ads-nav")?.checked || false
+         };
+
+         const previewContainer = sysNav.content.querySelector(".a3-preview-container");
+         if (!previewContainer) return;
+
+         // Capture current active index
+         let currentIdx = 0;
+         const currentSlides = previewContainer.querySelectorAll(".preview-slide");
+         if (currentSlides.length > 0) {
+             currentSlides.forEach((s, i) => {
+                 if (s.classList.contains('active')) currentIdx = i;
+             });
+         }
+
+         // Update Effect Class
+         previewContainer.className = `a3-preview-container effect-${currentConfig.effect}`;
+
+         // Generate Slides HTML
+         const validItems = items.sort((a, b) => a.idx - b.idx);
+         let previewContent = '';
+         
+         if (validItems.length === 0) {
+            previewContent = `<div class="preview-placeholder">A3 輪播預覽區 (目前無內容)</div>`;
+         } else {
+            // Adjust currentIdx if out of bounds
+            if (currentIdx >= validItems.length) currentIdx = 0;
+
+            const slidesHtml = validItems.map((item, idx) => {
+              let content = '';
+              if (item.type === 'youtube') {
+                 let vidId = '';
+                 try {
+                   const u = new URL(item.url);
+                   if (u.hostname.includes('youtube.com')) {
+                     vidId = u.searchParams.get('v');
+                     if (!vidId && u.pathname.startsWith('/embed/')) {
+                       vidId = u.pathname.split('/')[2];
+                     } else if (!vidId && u.pathname.startsWith('/live/')) {
+                        vidId = u.pathname.split('/')[2];
+                     }
+                   }
+                   else if (u.hostname.includes('youtu.be')) vidId = u.pathname.slice(1);
+                 } catch {}
+                 const origin = window.location.origin;
+                 const embedUrl = vidId ? `https://www.youtube.com/embed/${vidId}?autoplay=${item.autoplay?1:0}&mute=1&enablejsapi=1&origin=${origin}` : item.url;
+                 content = `<iframe src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+              } else {
+                 content = `<img src="${item.url}" alt="Slide ${idx+1}">`;
+              }
+              const isActive = idx === currentIdx;
+              return `<div class="preview-slide ${isActive?'active':''}">${content}</div>`;
+            }).join('');
+            
+            previewContent = `
+              <div class="preview-carousel">
+                ${slidesHtml}
+                <button class="preview-nav-btn preview-nav-prev" style="display: ${currentConfig.nav ? 'block' : 'none'}">❮</button>
+                <button class="preview-nav-btn preview-nav-next" style="display: ${currentConfig.nav ? 'block' : 'none'}">❯</button>
+              </div>`;
+         }
+         
+         previewContainer.innerHTML = previewContent;
+         
+         // Restart Carousel Logic
+         restartCarousel(currentConfig);
+      };
+
+      const restartCarousel = (config) => {
+          if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+          
+          const previewContainer = sysNav.content.querySelector(".a3-preview-container");
+          if (!previewContainer) return;
+
+          const slides = previewContainer.querySelectorAll(".preview-slide");
+          const btnPrev = previewContainer.querySelector(".preview-nav-prev");
+          const btnNext = previewContainer.querySelector(".preview-nav-next");
+          
+          if (slides.length <= 1) return;
+
+          let idx = 0;
+          // Try to maintain current active slide if possible, or start from 0
+          slides.forEach((s, i) => {
+             if (s.classList.contains('active')) idx = i;
+          });
+          
+          let direction = 1; 
+          const intervalTime = Math.max((parseInt(config.interval) || 3) * 1000, 1000);
+          
+          const showSlide = (i) => {
+              slides.forEach(s => s.classList.remove('active'));
+              if (slides[i]) slides[i].classList.add('active');
+          };
+          
+          // Ensure initial state
+          showSlide(idx);
+
+          const next = () => {
+              if (config.loop === 'rewind') {
+                  if (slides.length <= 1) return;
+                  if (idx >= slides.length - 1) direction = -1;
+                  if (idx <= 0) direction = 1;
+                  idx += direction;
+              } else if (config.loop === 'once') {
+                  if (idx < slides.length - 1) idx++;
+                  else {
+                      if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+                      return;
+                  }
+              } else { 
+                  // infinite
+                  idx = (idx + 1) % slides.length;
+              }
+              showSlide(idx);
+          };
+
+          const prev = () => {
+              if (config.loop === 'once') {
+                  if (idx > 0) idx--;
+              } else { 
+                  idx = (idx - 1 + slides.length) % slides.length;
+              }
+              showSlide(idx);
+          };
+
+          if (btnNext) {
+             // Remove old listeners by cloning or just re-adding (careful with dupes)
+             // Simple way: replace element to strip listeners, or just handle it. 
+             // Since updatePreview re-creates HTML, listeners are gone. 
+             // But if restartCarousel is called without HTML update (not the case here), it might duplicate.
+             // In current flow, restartCarousel is always called after updatePreview (HTML rebuild).
+             // EXCEPT initial load. Initial load renders HTML then calls restartCarousel.
+             btnNext.onclick = (e) => {
+                e.preventDefault();
+                next();
+                resetTimer();
+             };
+          }
+          if (btnPrev) {
+             btnPrev.onclick = (e) => {
+                e.preventDefault();
+                prev();
+                resetTimer();
+             };
+          }
+
+          const startTimer = () => {
+              if (config.loop === 'once' && idx >= slides.length - 1) return;
+              window.adsPreviewInterval = setInterval(next, intervalTime);
+          };
+          
+          const resetTimer = () => {
+              if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+              startTimer();
+          };
+
+          startTimer();
+      };
+
+      // Auto-detect inputs logic (same as before)
+      const inputs = sysNav.content.querySelectorAll(".ad-url-input");
+      inputs.forEach(input => {
+        input.addEventListener("input", (e) => {
+           const val = e.target.value.trim();
+           const tr = e.target.closest("tr");
+           const badge = tr.querySelector(".ad-type-badge");
+           const autoCheck = tr.querySelector(".ad-autoplay");
+           
+           let isYt = false;
+           if (val) {
+             try {
+               const u = new URL(val);
+               if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) isYt = true;
+             } catch {}
+           }
+           
+           if (isYt) {
+             badge.textContent = 'YouTube';
+             badge.className = 'ad-type-badge youtube';
+             autoCheck.disabled = false;
+           } else {
+             badge.textContent = '圖片';
+             badge.className = 'ad-type-badge image';
+             autoCheck.disabled = true;
+             autoCheck.checked = false;
+           }
+           
+           // Update Preview Realtime
+           updatePreview();
+        });
+      });
+      
+      // Also update on checkbox change
+      const checks = sysNav.content.querySelectorAll(".ad-autoplay");
+      checks.forEach(c => c.addEventListener("change", updatePreview));
+
+      // Also update on config change
+      const configInputs = [
+          document.getElementById("ads-interval"),
+          document.getElementById("ads-effect"),
+          document.getElementById("ads-loop"),
+          document.getElementById("ads-nav")
+      ];
+      configInputs.forEach(el => {
+          if(el) el.addEventListener("change", updatePreview);
+          if(el && el.tagName === 'INPUT' && el.type === 'number') el.addEventListener("input", updatePreview);
+      });
+      
+      // Start Carousel Logic for Admin Preview
+      if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+      
+      restartCarousel(adsConfig);
+    }
   }
   
   function renderSubNav(key) {
@@ -1659,7 +2399,7 @@ if (sysNav.subContainer) {
   }
 
   function setActiveNav(activeKey) {
-    ['home', 'notify', 'settings'].forEach(key => {
+    ['home', 'notify', 'settings', 'app'].forEach(key => {
       if (sysNav[key]) {
         if (key === activeKey) {
           sysNav[key].classList.add('active');
@@ -1675,7 +2415,469 @@ if (sysNav.subContainer) {
   if (sysNav.home) sysNav.home.addEventListener('click', () => setActiveNav('home'));
   if (sysNav.notify) sysNav.notify.addEventListener('click', () => setActiveNav('notify'));
   if (sysNav.settings) sysNav.settings.addEventListener('click', () => setActiveNav('settings'));
+  if (sysNav.app) sysNav.app.addEventListener('click', () => setActiveNav('app'));
 
   // Initialize with Home
   renderSubNav('home');
+}
+
+const adminNav = {
+  shortcuts: document.getElementById("admin-tab-shortcuts"),
+  mail: document.getElementById("admin-tab-mail"),
+  facility: document.getElementById("admin-tab-facility"),
+  announce: document.getElementById("admin-tab-announce"),
+  residents: document.getElementById("admin-tab-residents"),
+  others: document.getElementById("admin-tab-others"),
+  subContainer: document.getElementById("admin-sub-nav"),
+  content: adminStack ? adminStack.querySelector(".row.B3") : null
+};
+
+const adminSubMenus = {
+  shortcuts: ["通知跑馬燈"],
+  mail: ["收件", "取件", "寄放", "設定"],
+  facility: ["設定"],
+  announce: ["公告", "財報", "修繕", "APP", "設定"],
+  residents: ["住戶", "設定"],
+  others: ["日誌", "班表", "通訊", "巡邏", "設定"]
+};
+
+function renderAdminContent(mainKey, subLabel) {
+  if (!adminNav.content) return;
+  const sub = (subLabel || "").replace(/\u200B/g, "").trim();
+  if (mainKey === "shortcuts" && sub === "通知跑馬燈") {
+    adminNav.content.innerHTML = `
+      <div class="card marquee-card">
+        <div class="marquee">
+          <div class="marquee-track">
+            <span>系統通知：請於本週完成電力設備巡檢。</span>
+            <span>住戶公告：元旦活動報名開放中。</span>
+            <span>包裹提醒：B棟管理室今日18:00前可領取。</span>
+          </div>
+        </div>
+      </div>
+    `;
+    const track = adminNav.content.querySelector(".marquee-track");
+    if (track) {
+      const clone = track.cloneNode(true);
+      track.parentNode.appendChild(clone);
+    }
+    return;
+  }
+  if (mainKey === "mail") {
+    if (sub === "收件") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">收件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      return;
+    }
+    if (sub === "取件") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">取件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      return;
+    }
+    if (sub === "寄放") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">寄放</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      return;
+    }
+    if (sub === "設定") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">郵件包裹設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      return;
+    }
+  }
+  if (mainKey === "facility") {
+    adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">設施預約設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+    return;
+  }
+  if (mainKey === "announce") {
+    if (sub === "公告") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">社區公告</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "財報") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">財報</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "修繕") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">修繕</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "APP") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">APP</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "設定") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">公告設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      return;
+    }
+  }
+  if (mainKey === "residents") {
+    if (sub === "住戶") {
+      adminNav.content.innerHTML = `
+        <div class="card data-card">
+          <div class="card-head">
+            <h1 class="card-title">住戶列表</h1>
+            <button id="btn-create-resident-admin" class="btn small action-btn">新增</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <colgroup>
+                <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>大頭照</th>
+                  <th>序號</th>
+                  <th>戶號</th>
+                  <th>子戶號</th>
+                  <th>QR code</th>
+                  <th>姓名</th>
+                  <th>地址</th>
+                  <th>手機號碼</th>
+                  <th>電子郵件</th>
+                  <th>密碼</th>
+                  <th>狀態</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="empty-hint hidden">目前沒有住戶資料</div>
+          </div>
+        </div>
+      `;
+      (async () => {
+        let slug = getSlugFromPath() || getQueryParam("c") || "default";
+        if (slug === "default" && auth.currentUser) {
+          slug = await getUserCommunity(auth.currentUser.uid);
+        }
+        const btnCreate = adminNav.content.querySelector("#btn-create-resident-admin");
+        if (btnCreate) {
+          btnCreate.addEventListener("click", () => openCreateResidentModal(slug));
+        }
+        let residents = [];
+        try {
+          const q = query(collection(db, "users"), where("community", "==", slug));
+          const snapList = await getDocs(q);
+          residents = snapList.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => (a.role || "住戶") === "住戶");
+        } catch {}
+        const tbody = adminNav.content.querySelector("tbody");
+        const empty = adminNav.content.querySelector(".empty-hint");
+        if (!residents.length) {
+          if (empty) empty.classList.remove("hidden");
+          return;
+        } else {
+          if (empty) empty.classList.add("hidden");
+        }
+        const rows = residents.map((a, idx) => {
+          const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
+          const av = a.photoURL ? `<img class="avatar" src="${a.photoURL}" alt="avatar">` : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
+          const qr = a.qrCodeUrl ? `<img src="${a.qrCodeUrl}" alt="QR" style="width:40px;height:40px;border-radius:4px;object-fit:cover">` : `—`;
+          return `
+            <tr data-uid="${a.id}">
+              <td class="avatar-cell">${av}</td>
+              <td>${idx + 1}</td>
+              <td>${a.houseNo || ""}</td>
+              <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
+              <td>${qr}</td>
+              <td>${nm}</td>
+              <td>${a.address || ""}</td>
+              <td>${a.phone || ""}</td>
+              <td>${a.email || ""}</td>
+              <td>••••••</td>
+              <td class="status">${a.status || "停用"}</td>
+              <td class="actions">
+                <button class="btn small action-btn btn-edit-resident">編輯</button>
+                <button class="btn small action-btn danger btn-delete-resident">刪除</button>
+              </td>
+            </tr>
+          `;
+        }).join("");
+        if (tbody) tbody.innerHTML = rows;
+        const btnEdits = adminNav.content.querySelectorAll(".btn-edit-resident");
+        const btnDeletes = adminNav.content.querySelectorAll(".btn-delete-resident");
+        btnEdits.forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const tr = btn.closest("tr");
+            const targetUid = tr && tr.getAttribute("data-uid");
+            const currentUser = auth.currentUser;
+            const isSelf = currentUser && currentUser.uid === targetUid;
+            let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "住戶", status: "停用" };
+            try {
+              const snap = await getDoc(doc(db, "users", targetUid));
+              if (snap.exists()) {
+                const d = snap.data();
+                target.displayName = d.displayName || target.displayName;
+                target.email = d.email || target.email;
+                target.phone = d.phone || target.phone;
+                target.photoURL = d.photoURL || target.photoURL;
+                target.status = d.status || target.status;
+              }
+            } catch {}
+            openEditModal(target, isSelf);
+          });
+        });
+        btnDeletes.forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
+            if (!ok) return;
+            try {
+              const tr = btn.closest("tr");
+              const targetUid = tr && tr.getAttribute("data-uid");
+              const curr = auth.currentUser;
+              if (curr && curr.uid === targetUid) {
+                await curr.delete();
+                showHint("已刪除目前帳號", "success");
+                redirectAfterSignOut();
+              } else {
+                await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+                showHint("已標記該帳號為停用", "success");
+                setActiveAdminNav("residents");
+              }
+            } catch (err) {
+              showHint("刪除失敗，可能需要重新登入驗證", "error");
+            }
+          });
+        });
+      })();
+      return;
+    }
+    if (sub === "通知") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶通知</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "設定") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      return;
+    }
+  }
+  if (mainKey === "others") {
+    if (sub === "日誌") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">日誌</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "班表") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">班表</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "通訊") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">通訊</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "巡邏") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">巡邏</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "設定") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">其他設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      return;
+    }
+  }
+  adminNav.content.innerHTML = "";
+}
+
+function renderAdminSubNav(key) {
+  if (!adminNav.subContainer) return;
+  const items = adminSubMenus[key] || [];
+  adminNav.subContainer.innerHTML = items.map((item, index) => 
+    `<button class="sub-nav-item ${index === 0 ? "active" : ""}" data-label="${item}">${item}</button>`
+  ).join("");
+  const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item");
+  buttons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      buttons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const label = (btn.getAttribute("data-label") || btn.textContent || "").replace(/\u200B/g, "").trim();
+      localStorage.setItem("adminActiveSub", label);
+      renderAdminContent(key, label);
+    });
+  });
+  const savedSub = localStorage.getItem("adminActiveSub");
+  const initial = savedSub && items.includes(savedSub) ? savedSub : (items[0] || "");
+  if (initial) {
+    const targetBtn = Array.from(buttons).find(b => (b.getAttribute("data-label") || b.textContent || "").trim() === initial);
+    if (targetBtn) {
+      buttons.forEach(b => b.classList.remove("active"));
+      targetBtn.classList.add("active");
+    }
+    renderAdminContent(key, initial);
+  } else {
+    adminNav.content && (adminNav.content.innerHTML = "");
+  }
+}
+
+function setActiveAdminNav(activeKey) {
+  ["shortcuts", "mail", "facility", "announce", "residents", "others"].forEach(key => {
+    const el = adminNav[key];
+    if (el) {
+      if (key === activeKey) {
+        el.classList.add("active");
+      } else {
+        el.classList.remove("active");
+      }
+    }
+  });
+  localStorage.setItem("adminActiveMain", activeKey);
+  renderAdminSubNav(activeKey);
+}
+
+if (adminNav.subContainer) {
+  if (adminNav.shortcuts) adminNav.shortcuts.addEventListener("click", () => setActiveAdminNav("shortcuts"));
+  if (adminNav.mail) adminNav.mail.addEventListener("click", () => setActiveAdminNav("mail"));
+  if (adminNav.facility) adminNav.facility.addEventListener("click", () => setActiveAdminNav("facility"));
+  if (adminNav.announce) adminNav.announce.addEventListener("click", () => setActiveAdminNav("announce"));
+  if (adminNav.residents) adminNav.residents.addEventListener("click", () => setActiveAdminNav("residents"));
+  if (adminNav.others) adminNav.others.addEventListener("click", () => setActiveAdminNav("others"));
+  const savedMain = localStorage.getItem("adminActiveMain");
+  const initialMain = savedMain && adminSubMenus[savedMain] ? savedMain : "shortcuts";
+  setActiveAdminNav(initialMain);
+}
+
+// Front-end Ads Logic
+async function loadFrontAds(slug) {
+  const container = document.querySelector(".row.A3");
+  if (!container) return;
+  
+  try {
+    let data = null;
+    let snap = await getDoc(doc(db, `communities/${slug}/app_modules/ads`));
+    if (!snap.exists()) {
+       const def = await getDoc(doc(db, `communities/default/app_modules/ads`));
+       if (!def.exists()) {
+         container.innerHTML = `<div class="section-text">尚無廣告內容</div>`;
+         return;
+       }
+       data = def.data();
+    } else {
+       data = snap.data();
+    }
+    const items = data.items || [];
+    const config = data.config || { interval: 3, effect: 'slide', loop: 'infinite', nav: true };
+    
+    const validItems = items.filter(x => x.url).sort((a, b) => a.idx - b.idx);
+    
+    if (validItems.length === 0) {
+      container.innerHTML = `<div class="section-text">尚無廣告內容</div>`;
+      return;
+    }
+    
+    const slides = validItems.map((item, idx) => {
+      let content = '';
+      if (item.type === 'youtube') {
+         let vidId = '';
+         try {
+           const u = new URL(item.url);
+           if (u.hostname.includes('youtube.com')) {
+             vidId = u.searchParams.get('v');
+             if (!vidId && u.pathname.startsWith('/embed/')) {
+               vidId = u.pathname.split('/')[2];
+             } else if (!vidId && u.pathname.startsWith('/live/')) {
+                vidId = u.pathname.split('/')[2];
+             }
+           }
+           else if (u.hostname.includes('youtu.be')) vidId = u.pathname.slice(1);
+         } catch {}
+         const origin = window.location.origin;
+         const embedUrl = vidId ? `https://www.youtube.com/embed/${vidId}?autoplay=${item.autoplay?1:0}&mute=1&enablejsapi=1&origin=${origin}` : item.url;
+         content = `<iframe src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+      } else {
+         content = `<img src="${item.url}" alt="Slide ${idx+1}">`;
+      }
+      return `<div class="preview-slide ${idx===0?'active':''}">${content}</div>`;
+    }).join('');
+    
+    const showNav = (config.nav === true) || (validItems.length > 1);
+    container.innerHTML = `
+      <div class="a3-preview-container effect-${config.effect}">
+        ${slides}
+        <button class="preview-nav-btn preview-nav-prev" style="display: ${showNav ? 'block' : 'none'}">❮</button>
+        <button class="preview-nav-btn preview-nav-next" style="display: ${showNav ? 'block' : 'none'}">❯</button>
+      </div>
+    `;
+    
+    startFrontCarousel(config);
+    
+  } catch (e) {
+    console.error("Load front ads failed", e);
+  }
+}
+
+function startFrontCarousel(config) {
+    if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+    
+    const frontContainer = document.querySelector(".row.A3 .a3-preview-container");
+    if (!frontContainer) return;
+
+    const slides = frontContainer.querySelectorAll(".preview-slide");
+    const btnPrev = frontContainer.querySelector(".preview-nav-prev");
+    const btnNext = frontContainer.querySelector(".preview-nav-next");
+    
+    if (slides.length <= 1) return;
+
+    let idx = 0;
+    slides.forEach((s, i) => { if (s.classList.contains('active')) idx = i; });
+    
+    let direction = 1; 
+    const intervalTime = Math.max((parseInt(config.interval) || 3) * 1000, 1000);
+    
+    const showSlide = (i) => {
+        slides.forEach(s => s.classList.remove('active'));
+        if (slides[i]) slides[i].classList.add('active');
+    };
+    
+    const next = () => {
+        if (config.loop === 'rewind') {
+            if (slides.length <= 1) return;
+            if (idx >= slides.length - 1) direction = -1;
+            if (idx <= 0) direction = 1;
+            idx += direction;
+        } else if (config.loop === 'once') {
+            if (idx < slides.length - 1) idx++;
+            else {
+                if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+                return;
+            }
+        } else { 
+            idx = (idx + 1) % slides.length;
+        }
+        showSlide(idx);
+    };
+
+    const prev = () => {
+        if (config.loop === 'once') {
+            if (idx > 0) idx--;
+        } else { 
+            idx = (idx - 1 + slides.length) % slides.length;
+        }
+        showSlide(idx);
+    };
+
+    if (btnNext) {
+       btnNext.onclick = (e) => { e.preventDefault(); next(); resetTimer(); };
+    }
+    if (btnPrev) {
+       btnPrev.onclick = (e) => { e.preventDefault(); prev(); resetTimer(); };
+    }
+
+    const startTimer = () => {
+        if (config.loop === 'once' && idx >= slides.length - 1) return;
+        window.frontAdsInterval = setInterval(next, intervalTime);
+    };
+    
+    const resetTimer = () => {
+        if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+        startTimer();
+    };
+
+    startTimer();
+}
+
+let unsubscribeFrontAds = null;
+function subscribeFrontAds(slug) {
+  if (unsubscribeFrontAds) {
+    try { unsubscribeFrontAds(); } catch {}
+    unsubscribeFrontAds = null;
+  }
+  const ref = doc(db, `communities/${slug}/app_modules/ads`);
+  unsubscribeFrontAds = onSnapshot(ref, () => {
+    loadFrontAds(slug);
+  }, (err) => {
+    console.error("Front ads subscribe error", err);
+  });
 }

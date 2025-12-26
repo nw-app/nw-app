@@ -72,6 +72,54 @@
     </section>
   </main>
 
+  <main class="stack admin hidden" id="admin-stack">
+    <section class="row B1">
+      <div class="bar">
+        <div class="sys-brand">
+          <svg class="sys-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
+          </svg>
+          <span class="sys-title">西北e生活 社區後台</span>
+        </div>
+        <span class="welcome-text" id="welcome-admin"></span>
+        <button type="button" class="btn top" id="btn-avatar-admin"></button>
+      </div>
+    </section>
+    <section class="row B2">
+      <div id="admin-sub-nav" class="sub-nav"></div>
+    </section>
+    <section class="row B3"></section>
+    <section class="row B4">
+      <nav class="nav-bar">
+        <button class="nav-item active" id="admin-tab-shortcuts" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+          <span class="nav-text">快速捷徑</span>
+        </button>
+        <button class="nav-item" id="admin-tab-mail" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"></path><path d="M22 6l-10 7L2 6"></path></svg>
+          <span class="nav-text">郵件包裹</span>
+        </button>
+        <button class="nav-item" id="admin-tab-facility" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+          <span class="nav-text">設施預約</span>
+        </button>
+        <button class="nav-item" id="admin-tab-announce" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v4H3z"></path><path d="M7 7v14"></path><path d="M17 7v10"></path></svg>
+          <span class="nav-text">社區公告</span>
+        </button>
+        <button class="nav-item" id="admin-tab-residents" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M20 8v6"></path><path d="M23 8v6"></path></svg>
+          <span class="nav-text">住戶管理</span>
+        </button>
+        <button class="nav-item" id="admin-tab-others" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3"></path></svg>
+          <span class="nav-text">其他功能</span>
+        </button>
+      </nav>
+    </section>
+  </main>
+
+  <div id="sys-modal" class="modal hidden"></div>
   <script type="module" src="app.js"></script>
 </body>
 </html>
