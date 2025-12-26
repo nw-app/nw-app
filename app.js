@@ -16,11 +16,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
   useFetchStreams: false
 });
 const storage = getStorage(app);
-setLogLevel("error");
+setLogLevel("silent");
 // Secondary app for admin account creation to avoid switching current session
 const createApp = initializeApp(firebaseConfig, "create-admin");
 const createAuth = getAuth(createApp);
@@ -37,7 +37,7 @@ function ensureTenant(slug) {
     tenantApps[key] = {
       app: tapp,
       db: initializeFirestore(tapp, {
-        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
         useFetchStreams: false
       }),
       storage: getStorage(tapp)
@@ -134,8 +134,13 @@ window.addEventListener('online', () => {
 });
 
 function openModal(html) {
-  const root = document.getElementById("sys-modal");
-  if (!root) return;
+  let root = document.getElementById("sys-modal");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "sys-modal";
+    root.className = "modal hidden";
+    document.body.appendChild(root);
+  }
   root.innerHTML = html;
   root.classList.remove("hidden");
 }
@@ -362,7 +367,7 @@ async function handleRoleRedirect(role) {
           <td>••••••</td>
           <td>${a.email || ""}</td>
           <td>${a.role || "住戶"}</td>
-          <td class="status">${a.status || "啟用"}</td>
+          <td class="status">${a.status || "停用"}</td>
           <td class="actions">
             <button class="btn small action-btn btn-edit-resident">編輯</button>
             <button class="btn small action-btn danger btn-delete-resident">刪除</button>
@@ -581,8 +586,8 @@ async function handleRoleRedirect(role) {
            btnAvatar.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "用")[0]}</span>`;
             btnAvatar.addEventListener("click", () => openUserProfileModal());
         }
-         loadFrontAds(slug);
-         subscribeFrontAds(slug);
+        loadFrontAds(slug);
+        startFrontPolling(slug);
     } else if (window.location.pathname.includes("admin")) {
         // Role check passed (Community Admin or System Admin)
           const pathSlug = getSlugFromPath();
@@ -1713,12 +1718,7 @@ if (sysNav.subContainer) {
         }, { merge: true });
         await updateProfile(cred.user, { displayName, photoURL });
         closeModal();
-        // 重新整理列表（後台）
-        if (adminNav && adminNav.residents) {
-          setActiveAdminNav("residents");
-        } else {
-          await renderSettingsResidents();
-        }
+        await renderSettingsResidents();
         showHint("已建立住戶帳號", "success");
       } catch (e) {
         console.error(e);
@@ -1737,6 +1737,7 @@ if (sysNav.subContainer) {
       }
     });
   }
+  window.openCreateResidentModal = openCreateResidentModal;
   
   async function renderSettingsResidents() {
     if (!sysNav.content) return;
@@ -2542,14 +2543,22 @@ function renderAdminContent(mainKey, subLabel) {
           </div>
         </div>
       `;
+      const btnCreate = adminNav.content.querySelector("#btn-create-resident-admin");
+      if (btnCreate) {
+        btnCreate.addEventListener("click", async () => {
+          let slug = getSlugFromPath() || getQueryParam("c") || "default";
+          if (slug === "default" && auth.currentUser) {
+            slug = await getUserCommunity(auth.currentUser.uid);
+          }
+          if (window.openCreateResidentModal) {
+            window.openCreateResidentModal(slug);
+          }
+        });
+      }
       (async () => {
         let slug = getSlugFromPath() || getQueryParam("c") || "default";
         if (slug === "default" && auth.currentUser) {
           slug = await getUserCommunity(auth.currentUser.uid);
-        }
-        const btnCreate = adminNav.content.querySelector("#btn-create-resident-admin");
-        if (btnCreate) {
-          btnCreate.addEventListener("click", () => openCreateResidentModal(slug));
         }
         let residents = [];
         try {
@@ -2868,6 +2877,17 @@ function startFrontCarousel(config) {
     startTimer();
 }
 
+function startFrontPolling(slug, interval=5000) {
+  if (window.frontAdsPolling) {
+    clearInterval(window.frontAdsPolling);
+    window.frontAdsPolling = null;
+  }
+  const ms = Math.max(parseInt(interval) || 5000, 2000);
+  window.frontAdsPolling = setInterval(() => {
+    loadFrontAds(slug);
+  }, ms);
+}
+
 let unsubscribeFrontAds = null;
 function subscribeFrontAds(slug) {
   if (unsubscribeFrontAds) {
@@ -2881,3 +2901,28 @@ function subscribeFrontAds(slug) {
     console.error("Front ads subscribe error", err);
   });
 }
+
+window.addEventListener("beforeunload", () => {
+  if (unsubscribeFrontAds) {
+    try { unsubscribeFrontAds(); } catch {}
+    unsubscribeFrontAds = null;
+  }
+  if (window.frontAdsPolling) {
+    try { clearInterval(window.frontAdsPolling); } catch {}
+    window.frontAdsPolling = null;
+  }
+});
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target && e.target.closest && e.target.closest("#btn-create-resident-admin");
+  if (!btn) return;
+  const root = document.getElementById("sys-modal");
+  if (root && !root.classList.contains("hidden")) return;
+  let slug = getSlugFromPath() || getQueryParam("c") || "default";
+  if (slug === "default" && auth.currentUser) {
+    slug = await getUserCommunity(auth.currentUser.uid);
+  }
+  if (window.openCreateResidentModal) {
+    window.openCreateResidentModal(slug);
+  }
+});
