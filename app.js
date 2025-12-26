@@ -58,6 +58,31 @@ function getSlugFromPath() {
     return null;
   }
 }
+
+async function ensureQrLib() {
+  if (window.QRCode && window.QRCode.toDataURL) return;
+  if (window._qrLibLoading) return window._qrLibLoading;
+  window._qrLibLoading = new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => resolve();
+    document.head.appendChild(s);
+  });
+  await window._qrLibLoading;
+}
+
+async function getQrDataUrl(text, size) {
+  try {
+    await ensureQrLib();
+    if (window.QRCode && window.QRCode.toDataURL) {
+      return await window.QRCode.toDataURL(text, { width: size || 64, margin: 0 });
+    }
+  } catch {}
+  const safe = (text || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]));
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size||64}' height='${size||64}'><rect width='100%' height='100%' fill='#ffffff'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='#111'>${safe}</text></svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
 function checkPagePermission(role, path) {
   const p = path || window.location.pathname;
   if (p.includes("sys")) {
@@ -316,7 +341,7 @@ if (loginForm) {
 
 async function handleRoleRedirect(role) {
   // Simple role based redirect logic
-  if (window.location.pathname.includes("sys.html")) {
+  if (window.location.pathname.includes("sys")) {
       if (role === "系統管理員") {
         toggleAuth(false);
         if (sysStack) sysStack.classList.remove("hidden");
@@ -487,11 +512,13 @@ async function handleRoleRedirect(role) {
       }
 
       // If we are on specific pages, handle display
-      if (window.location.pathname.includes("sys.html")) {
+      if (window.location.pathname.includes("sys")) {
           // Role check passed (System Admin)
           toggleAuth(false);
          if (sysStack) sysStack.classList.remove("hidden");
          if (mainContainer) mainContainer.classList.add("hidden");
+         const tipSys = document.getElementById("orientation-tip");
+         tipSys && tipSys.classList.add("hidden");
             const btn = document.getElementById("btn-avatar-sys");
             if (btn) {
               const u = auth.currentUser;
@@ -569,6 +596,8 @@ async function handleRoleRedirect(role) {
         }
         if (frontStack) frontStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
+        const tip = document.getElementById("orientation-tip");
+        tip && tip.classList.add("hidden");
 
         const btnAvatar = document.getElementById("btn-avatar-front");
         if (btnAvatar) {
@@ -602,6 +631,8 @@ async function handleRoleRedirect(role) {
           
           if (adminStack) adminStack.classList.remove("hidden");
           if (mainContainer) mainContainer.classList.add("hidden");
+          const tip2 = document.getElementById("orientation-tip");
+          tip2 && tip2.classList.add("hidden");
 
           let cname = slug;
           try {
@@ -1332,6 +1363,214 @@ if (sysNav.subContainer) {
     });
   }
   async function openEditModal(target, isSelf) {
+    const isResident = (target.role || "住戶") === "住戶";
+    if (isResident) {
+      const titleR = "編輯住戶";
+      const seqR = (() => {
+        try {
+          const tbody = document.getElementById("sys-content")?.querySelector("tbody");
+          if (!tbody) return "";
+          const trs = Array.from(tbody.querySelectorAll("tr"));
+          const idx = trs.findIndex(tr => tr.getAttribute("data-uid") === target.id);
+          return idx >= 0 ? String(idx + 1) : "";
+        } catch {}
+        return "";
+      })();
+      const bodyR = `
+        <div class="modal-dialog">
+          <div class="modal-head"><div class="modal-title">${titleR}</div></div>
+          <div class="modal-body">
+            <div class="modal-row">
+              <label>大頭照</label>
+              <input type="file" id="modal-photo-file" accept="image/png,image/jpeg">
+            </div>
+            <div class="modal-row">
+              <label>預覽</label>
+              <img id="modal-photo-preview" class="avatar-preview" src="${target.photoURL || ""}">
+            </div>
+            <div class="modal-row">
+              <label>序號</label>
+              <input type="text" id="modal-serial" value="${seqR}">
+            </div>
+            <div class="modal-row">
+              <label>戶號</label>
+              <input type="text" id="modal-house-no" value="${target.houseNo || ""}">
+            </div>
+            <div class="modal-row">
+              <label>子戶號</label>
+              <input type="number" id="modal-sub-no" value="${typeof target.subNo === "number" ? target.subNo : ""}">
+            </div>
+            <div class="modal-row">
+              <label>QR 預覽</label>
+              <img id="modal-qr-preview" class="qr-preview" src="">
+            </div>
+            <div class="modal-row">
+              <label>QR code 代碼</label>
+              <input type="text" id="modal-qr-code" value="${(target.qrCodeText || "")}">
+            </div>
+            <div class="modal-row">
+              <label>姓名</label>
+              <input type="text" id="modal-name" value="${target.displayName || ""}">
+            </div>
+            <div class="modal-row">
+              <label>地址</label>
+              <input type="text" id="modal-address" value="${target.address || ""}">
+            </div>
+            <div class="modal-row">
+              <label>手機號碼</label>
+              <input type="tel" id="modal-phone" value="${target.phone || ""}">
+            </div>
+            <div class="modal-row">
+              <label>電子郵件</label>
+              <input type="email" id="modal-email" value="${target.email || ""}">
+            </div>
+            <div class="modal-row">
+              <label>新密碼</label>
+              <input type="text" id="modal-password" placeholder="至少6字元">
+            </div>
+            <div class="modal-row">
+              <label>狀態</label>
+              <select id="modal-status">
+                <option value="啟用">啟用</option>
+                <option value="停用">停用</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button id="modal-cancel" class="btn action-btn danger">取消</button>
+            <button id="modal-save" class="btn action-btn">儲存</button>
+          </div>
+        </div>
+      `;
+      openModal(bodyR);
+      const btnCancel = document.getElementById("modal-cancel");
+      const btnSave = document.getElementById("modal-save");
+      const editFile = document.getElementById("modal-photo-file");
+      const editPreview = document.getElementById("modal-photo-preview");
+      const statusSelect = document.getElementById("modal-status");
+      const editQrPreview = document.getElementById("modal-qr-preview");
+      const editQrCodeInput = document.getElementById("modal-qr-code");
+      if (editPreview) editPreview.src = target.photoURL || "";
+      if (statusSelect) statusSelect.value = target.status || "停用";
+      editFile && editFile.addEventListener("change", () => {
+        const f = editFile.files[0];
+        if (f) {
+          editPreview.src = URL.createObjectURL(f);
+        }
+      });
+      editQrCodeInput && editQrCodeInput.addEventListener("input", async () => {
+        const val = editQrCodeInput.value.trim();
+        if (!editQrPreview) return;
+        if (!val) {
+          editQrPreview.src = "";
+        } else {
+          const url = await getQrDataUrl(val, 64);
+          editQrPreview.src = url;
+        }
+      });
+      (async () => {
+        const val = editQrCodeInput ? editQrCodeInput.value.trim() : "";
+        if (editQrPreview && val) {
+          const url = await getQrDataUrl(val, 64);
+          editQrPreview.src = url;
+        }
+      })();
+      btnCancel && btnCancel.addEventListener("click", () => closeModal());
+      btnSave && btnSave.addEventListener("click", async () => {
+        try {
+          const newName = document.getElementById("modal-name").value.trim();
+          const newPhone = document.getElementById("modal-phone").value.trim();
+          const photoFile = document.getElementById("modal-photo-file").files[0];
+          const newPassword = document.getElementById("modal-password").value;
+          const newStatus = document.getElementById("modal-status").value;
+          const newHouseNo = document.getElementById("modal-house-no").value.trim();
+          const newSubNoRaw = document.getElementById("modal-sub-no").value.trim();
+          const newSubNo = newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : undefined;
+          const newAddress = document.getElementById("modal-address").value.trim();
+          const newQrCodeText = document.getElementById("modal-qr-code").value.trim();
+          const newEmail = document.getElementById("modal-email").value.trim();
+          let newPhotoURL = target.photoURL || "";
+          if (photoFile) {
+            try {
+              const ext = photoFile.type === "image/png" ? "png" : "jpg";
+              const path = `avatars/${target.id}.${ext}`;
+              const ref = storageRef(storage, path);
+              await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+              newPhotoURL = await getDownloadURL(ref);
+            } catch (err) {
+              try {
+                const b64 = await new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(photoFile);
+                });
+                newPhotoURL = b64;
+                showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+              } catch {
+                showHint("上傳大頭照失敗，先以原圖進行更新", "error");
+              }
+            }
+          }
+          const payload = {
+            displayName: newName || target.displayName,
+            phone: newPhone || target.phone,
+            photoURL: newPhotoURL,
+            status: newStatus || target.status,
+            houseNo: newHouseNo || target.houseNo || "",
+            address: newAddress || target.address || "",
+            qrCodeText: newQrCodeText || target.qrCodeText || "",
+            email: newEmail || target.email || ""
+          };
+          if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
+          await setDoc(doc(db, "users", target.id), payload, { merge: true });
+          const curr = auth.currentUser;
+          if (isSelf && curr) {
+            const profilePatch = {};
+            if (newName && newName !== curr.displayName) profilePatch.displayName = newName;
+            if (newPhotoURL && newPhotoURL !== curr.photoURL) profilePatch.photoURL = newPhotoURL;
+            if (Object.keys(profilePatch).length) {
+              try {
+                await updateProfile(curr, profilePatch);
+              } catch (err) {
+                if (err && err.code === "auth/requires-recent-login") {
+                  const cp = window.prompt("請輸入目前密碼以完成更新");
+                  if (cp) {
+                    try {
+                      const cred = EmailAuthProvider.credential(curr.email, cp);
+                      await reauthenticateWithCredential(curr, cred);
+                      await updateProfile(curr, profilePatch);
+                    } catch {}
+                  }
+                }
+              }
+            }
+            if (newPassword && newPassword.length >= 6) {
+              try {
+                await updatePassword(curr, newPassword);
+              } catch (err) {
+                if (err && err.code === "auth/requires-recent-login") {
+                  const cp = window.prompt("請輸入目前密碼以完成設定新密碼");
+                  if (cp) {
+                    try {
+                      const cred = EmailAuthProvider.credential(curr.email, cp);
+                      await reauthenticateWithCredential(curr, cred);
+                      await updatePassword(curr, newPassword);
+                    } catch {}
+                  }
+                }
+              }
+            }
+          }
+          closeModal();
+          await renderSettingsResidents();
+          showHint("已更新住戶資料", "success");
+        } catch (e) {
+          showHint("更新失敗", "error");
+        }
+      });
+      return;
+    }
     const title = (target.role === "系統管理員") ? "編輯系統管理員" : "編輯社區管理員";
     let commList = [];
     try {
@@ -1501,6 +1740,7 @@ if (sysNav.subContainer) {
       }
     });
   }
+  window.openEditModal = openEditModal;
   
   function openCreateModal() {
     const title = "新增系統管理員";
@@ -1609,26 +1849,17 @@ if (sysNav.subContainer) {
   
   function openCreateResidentModal(slug) {
     const title = "新增住戶";
+    const seqGuess = (() => {
+      try {
+        const tbody = document.getElementById("sys-content")?.querySelector("tbody");
+        if (tbody) return String(tbody.querySelectorAll("tr").length + 1);
+      } catch {}
+      return "";
+    })();
     const body = `
       <div class="modal-dialog">
         <div class="modal-head"><div class="modal-title">${title}</div></div>
         <div class="modal-body">
-          <div class="modal-row">
-            <label>電子郵件</label>
-            <input type="text" id="create-r-email" placeholder="example@domain.com">
-          </div>
-          <div class="modal-row">
-            <label>密碼</label>
-            <input type="password" id="create-r-password" placeholder="至少6字元" value="123456">
-          </div>
-          <div class="modal-row">
-            <label>姓名</label>
-            <input type="text" id="create-r-name">
-          </div>
-          <div class="modal-row">
-            <label>手機號碼</label>
-            <input type="tel" id="create-r-phone">
-          </div>
           <div class="modal-row">
             <label>大頭照</label>
             <input type="file" id="create-r-photo-file" accept="image/png,image/jpeg">
@@ -1636,6 +1867,53 @@ if (sysNav.subContainer) {
           <div class="modal-row">
             <label>預覽</label>
             <img id="create-r-photo-preview" class="avatar-preview">
+          </div>
+          <div class="modal-row">
+            <label>序號</label>
+            <input type="text" id="create-r-seq" value="${seqGuess}">
+          </div>
+          <div class="modal-row">
+            <label>戶號</label>
+            <input type="text" id="create-r-house-no" placeholder="例如 A-1201">
+          </div>
+          <div class="modal-row">
+            <label>子戶號</label>
+            <input type="number" id="create-r-sub-no" placeholder="數字">
+          </div>
+          <div class="modal-row">
+            <label>QR 預覽</label>
+            <img id="create-r-qr-preview" class="qr-preview">
+          </div>
+          <div class="modal-row">
+            <label>QR code 代碼</label>
+            <input type="text" id="create-r-qr-code" placeholder="輸入QR內容文字">
+          </div>
+          <div class="modal-row">
+            <label>姓名</label>
+            <input type="text" id="create-r-name">
+          </div>
+          <div class="modal-row">
+            <label>地址</label>
+            <input type="text" id="create-r-address" placeholder="住址">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼</label>
+            <input type="tel" id="create-r-phone">
+          </div>
+          <div class="modal-row">
+            <label>電子郵件</label>
+            <input type="text" id="create-r-email" placeholder="example@domain.com">
+          </div>
+          <div class="modal-row">
+            <label>密碼</label>
+            <input type="text" id="create-r-password" placeholder="至少6字元" value="123456">
+          </div>
+          <div class="modal-row">
+            <label>狀態</label>
+            <select id="create-r-status">
+              <option value="啟用">啟用</option>
+              <option value="停用" selected>停用</option>
+            </select>
           </div>
           <div class="hint" id="create-r-hint"></div>
         </div>
@@ -1650,6 +1928,8 @@ if (sysNav.subContainer) {
     const btnSave = document.getElementById("create-r-save");
     const createFile = document.getElementById("create-r-photo-file");
     const createPreview = document.getElementById("create-r-photo-preview");
+    const qrPreview = document.getElementById("create-r-qr-preview");
+    const qrCodeInput = document.getElementById("create-r-qr-code");
     const hintEl = document.getElementById("create-r-hint");
     
     const showModalHint = (msg, type="error") => {
@@ -1665,6 +1945,23 @@ if (sysNav.subContainer) {
         createPreview.src = URL.createObjectURL(f);
       }
     });
+    qrCodeInput && qrCodeInput.addEventListener("input", async () => {
+      const val = qrCodeInput.value.trim();
+      if (!qrPreview) return;
+      if (!val) {
+        qrPreview.src = "";
+      } else {
+        const url = await getQrDataUrl(val, 64);
+        qrPreview.src = url;
+      }
+    });
+    (async () => {
+      const val = qrCodeInput ? qrCodeInput.value.trim() : "";
+      if (qrPreview && val) {
+        const url = await getQrDataUrl(val, 64);
+        qrPreview.src = url;
+      }
+    })();
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
       try {
@@ -1674,6 +1971,11 @@ if (sysNav.subContainer) {
         const displayName = document.getElementById("create-r-name").value.trim();
         const phone = document.getElementById("create-r-phone").value.trim();
         const photoFile = document.getElementById("create-r-photo-file").files[0];
+        const houseNo = document.getElementById("create-r-house-no").value.trim();
+        const subNoRaw = document.getElementById("create-r-sub-no").value.trim();
+        const address = document.getElementById("create-r-address").value.trim();
+        const qrCodeText = document.getElementById("create-r-qr-code").value.trim();
+        const status = document.getElementById("create-r-status").value;
         let photoURL = "";
         if (!email || !password || password.length < 6) {
           showModalHint("請填寫有效的信箱與至少6字元密碼", "error");
@@ -1709,10 +2011,14 @@ if (sysNav.subContainer) {
         await setDoc(doc(db, "users", cred.user.uid), {
           email,
           role: "住戶",
-          status: "停用",
+          status: status || "停用",
           displayName,
           phone,
           photoURL,
+          houseNo,
+          address,
+          qrCodeText,
+          ...(subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
           community: slug,
           createdAt: Date.now()
         }, { merge: true });
@@ -1772,7 +2078,7 @@ if (sysNav.subContainer) {
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(a => (a.role || "住戶") === "住戶");
     } catch {}
-    const rows = residents.map(a => {
+    const rows = residents.map((a, idx) => {
       const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
       const av = a.photoURL
         ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
@@ -1780,12 +2086,16 @@ if (sysNav.subContainer) {
       return `
         <tr data-uid="${a.id}">
           <td class="avatar-cell">${av}</td>
+          <td>${idx + 1}</td>
+          <td>${a.houseNo || ""}</td>
+          <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
+          <td>${a.qrCodeUrl ? `<img src="${a.qrCodeUrl}" alt="QR" style="width:40px;height:40px;border-radius:4px;object-fit:cover">` : `—`}</td>
           <td>${nm}</td>
+          <td>${a.address || ""}</td>
           <td>${a.phone || ""}</td>
-          <td>••••••</td>
           <td>${a.email || ""}</td>
-          <td>${a.role || "住戶"}</td>
-          <td class="status">${a.status || "啟用"}</td>
+          <td>••••••</td>
+          <td class="status">${a.status || "停用"}</td>
           <td class="actions">
             <button class="btn small action-btn btn-edit-resident">編輯</button>
             <button class="btn small action-btn danger btn-delete-resident">刪除</button>
@@ -1808,16 +2118,20 @@ if (sysNav.subContainer) {
         <div class="table-wrap">
           <table class="table">
             <colgroup>
-              <col><col><col><col><col><col><col><col>
+              <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
             </colgroup>
             <thead>
               <tr>
                 <th>大頭照</th>
+                <th>序號</th>
+                <th>戶號</th>
+                <th>子戶號</th>
+                <th>QR code</th>
                 <th>姓名</th>
+                <th>地址</th>
                 <th>手機號碼</th>
-                <th>密碼</th>
                 <th>電子郵件</th>
-                <th>角色</th>
+                <th>密碼</th>
                 <th>狀態</th>
                 <th>操作</th>
               </tr>
@@ -1937,7 +2251,7 @@ if (sysNav.subContainer) {
         if (snap.exists()) {
           const d = snap.data();
           adsData = d.items || [];
-          if (d.config) adsConfig = d.config;
+          if (d.config) adsConfig = { ...adsConfig, ...d.config };
         }
       } catch (e) {
         console.log("Fetch ads failed", e);
@@ -2307,6 +2621,26 @@ if (sysNav.subContainer) {
              };
           }
 
+          // Swipe support for preview
+          if (previewContainer) {
+            let touchStartX = 0;
+            let touchEndX = 0;
+            previewContainer.addEventListener('touchstart', (e) => {
+              if (e.changedTouches && e.changedTouches.length > 0) {
+                touchStartX = e.changedTouches[0].screenX;
+              }
+              if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+            }, { passive: true });
+            previewContainer.addEventListener('touchend', (e) => {
+              if (e.changedTouches && e.changedTouches.length > 0) {
+                touchEndX = e.changedTouches[0].screenX;
+                if (touchEndX < touchStartX - 50) next();
+                if (touchEndX > touchStartX + 50) prev();
+              }
+              resetTimer();
+            }, { passive: true });
+          }
+
           const startTimer = () => {
               if (config.loop === 'once' && idx >= slides.length - 1) return;
               window.adsPreviewInterval = setInterval(next, intervalTime);
@@ -2510,81 +2844,88 @@ function renderAdminContent(mainKey, subLabel) {
   }
   if (mainKey === "residents") {
     if (sub === "住戶") {
-      adminNav.content.innerHTML = `
-        <div class="card data-card">
-          <div class="card-head">
-            <h1 class="card-title">住戶列表</h1>
-            <button id="btn-create-resident-admin" class="btn small action-btn">新增</button>
-          </div>
-          <div class="table-wrap">
-            <table class="table">
-              <colgroup>
-                <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>大頭照</th>
-                  <th>序號</th>
-                  <th>戶號</th>
-                  <th>子戶號</th>
-                  <th>QR code</th>
-                  <th>姓名</th>
-                  <th>地址</th>
-                  <th>手機號碼</th>
-                  <th>電子郵件</th>
-                  <th>密碼</th>
-                  <th>狀態</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-            <div class="empty-hint hidden">目前沒有住戶資料</div>
-          </div>
-        </div>
-      `;
-      const btnCreate = adminNav.content.querySelector("#btn-create-resident-admin");
-      if (btnCreate) {
-        btnCreate.addEventListener("click", async () => {
-          let slug = getSlugFromPath() || getQueryParam("c") || "default";
-          if (slug === "default" && auth.currentUser) {
-            slug = await getUserCommunity(auth.currentUser.uid);
-          }
-          if (window.openCreateResidentModal) {
-            window.openCreateResidentModal(slug);
-          }
-        });
-      }
       (async () => {
-        let slug = getSlugFromPath() || getQueryParam("c") || "default";
-        if (slug === "default" && auth.currentUser) {
-          slug = await getUserCommunity(auth.currentUser.uid);
+        let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+        if (slug === "default") {
+          try {
+            const snap = await getDocs(collection(db, "communities"));
+            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            if (list.length > 0) {
+              slug = list[0].id;
+              window.currentAdminCommunitySlug = slug;
+            } else if (auth.currentUser) {
+              slug = await getUserCommunity(auth.currentUser.uid);
+              window.currentAdminCommunitySlug = slug;
+            }
+          } catch {
+            if (auth.currentUser) {
+              slug = await getUserCommunity(auth.currentUser.uid);
+              window.currentAdminCommunitySlug = slug;
+            }
+          }
         }
-        let residents = [];
         try {
-          const q = query(collection(db, "users"), where("community", "==", slug));
-          const snapList = await getDocs(q);
-          residents = snapList.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => (a.role || "住戶") === "住戶");
+          const u = auth.currentUser;
+          if (u) {
+            const usnap = await getDoc(doc(db, "users", u.uid));
+            if (usnap.exists()) {
+              const r = (usnap.data().role || "住戶");
+              if (r !== "系統管理員") {
+                const mySlug = await getUserCommunity(u.uid);
+                slug = mySlug;
+                window.currentAdminCommunitySlug = mySlug;
+              }
+            }
+          }
         } catch {}
-        const tbody = adminNav.content.querySelector("tbody");
-        const empty = adminNav.content.querySelector(".empty-hint");
-        if (!residents.length) {
-          if (empty) empty.classList.remove("hidden");
-          return;
-        } else {
-          if (empty) empty.classList.add("hidden");
+        let cname = slug;
+        try {
+          const csnap = await getDoc(doc(db, "communities", slug));
+          if (csnap.exists()) {
+            const c = csnap.data();
+            cname = c.name || slug;
+          }
+        } catch {}
+        let residents = [];
+        let fetchError = null;
+        try {
+          const communitiesFilter = [slug];
+          if (cname && cname !== slug) communitiesFilter.push(cname);
+          let snapList;
+          if (communitiesFilter.length > 1) {
+            const qIn = query(collection(db, "users"), where("community", "in", communitiesFilter), where("role", "==", "住戶"));
+            snapList = await getDocs(qIn);
+          } else {
+            const qEq = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"));
+            snapList = await getDocs(qEq);
+          }
+          residents = snapList.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (err) {
+          console.error("Fetch residents error:", err);
+          try {
+            const qFallback = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"));
+            const snapList = await getDocs(qFallback);
+            residents = snapList.docs.map(d => ({ id: d.id, ...d.data() }));
+          } catch (retryErr) {
+             console.error("Retry fetch error:", retryErr);
+             if (retryErr.code === 'permission-denied') {
+               fetchError = "權限不足：您沒有權限讀取此社區的住戶資料 (Permission Denied)。";
+             } else {
+               fetchError = "無法載入住戶資料，請檢查網路連線或稍後再試。";
+             }
+          }
         }
         const rows = residents.map((a, idx) => {
           const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
           const av = a.photoURL ? `<img class="avatar" src="${a.photoURL}" alt="avatar">` : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
-          const qr = a.qrCodeUrl ? `<img src="${a.qrCodeUrl}" alt="QR" style="width:40px;height:40px;border-radius:4px;object-fit:cover">` : `—`;
+          const qrText = a.qrCodeText || "—";
           return `
             <tr data-uid="${a.id}">
               <td class="avatar-cell">${av}</td>
               <td>${idx + 1}</td>
               <td>${a.houseNo || ""}</td>
               <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
-              <td>${qr}</td>
+              <td>${qrText}</td>
               <td>${nm}</td>
               <td>${a.address || ""}</td>
               <td>${a.phone || ""}</td>
@@ -2598,7 +2939,42 @@ function renderAdminContent(mainKey, subLabel) {
             </tr>
           `;
         }).join("");
-        if (tbody) tbody.innerHTML = rows;
+        const emptyText = fetchError ? `<span style="color:red">${fetchError}</span>` : "目前沒有住戶資料";
+        adminNav.content.innerHTML = `
+          <div class="card data-card">
+            <div class="card-head">
+              <h1 class="card-title">住戶帳號列表（${cname}） · 總數：${residents.length}</h1>
+              <button id="btn-create-resident" class="btn small action-btn">新增</button>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <colgroup>
+                  <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>大頭照</th>
+                    <th>序號</th>
+                    <th>戶號</th>
+                    <th>子戶號</th>
+                    <th>QR code</th>
+                    <th>姓名</th>
+                    <th>地址</th>
+                    <th>手機號碼</th>
+                    <th>電子郵件</th>
+                    <th>密碼</th>
+                    <th>狀態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+              ${emptyText ? `<div class="empty-hint">${emptyText}</div>` : ""}
+            </div>
+          </div>
+        `;
+        const btnCreate = document.getElementById("btn-create-resident");
+        btnCreate && btnCreate.addEventListener("click", () => window.openCreateResidentModal && window.openCreateResidentModal(slug));
         const btnEdits = adminNav.content.querySelectorAll(".btn-edit-resident");
         const btnDeletes = adminNav.content.querySelectorAll(".btn-delete-resident");
         btnEdits.forEach(btn => {
@@ -2619,7 +2995,7 @@ function renderAdminContent(mainKey, subLabel) {
                 target.status = d.status || target.status;
               }
             } catch {}
-            openEditModal(target, isSelf);
+            window.openEditModal && window.openEditModal(target, isSelf);
           });
         });
         btnDeletes.forEach(btn => {
@@ -2643,6 +3019,54 @@ function renderAdminContent(mainKey, subLabel) {
               showHint("刪除失敗，可能需要重新登入驗證", "error");
             }
           });
+        });
+        adminNav.content.addEventListener("click", async (e) => {
+          const btn = e.target.closest("button");
+          if (!btn) return;
+          if (btn.id === "btn-create-resident") {
+            window.openCreateResidentModal && window.openCreateResidentModal(slug);
+            return;
+          }
+          if (btn.classList.contains("btn-edit-resident")) {
+            const tr = btn.closest("tr");
+            const targetUid = tr && tr.getAttribute("data-uid");
+            const currentUser = auth.currentUser;
+            const isSelf = currentUser && currentUser.uid === targetUid;
+            let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "住戶", status: "停用" };
+            try {
+              const snap = await getDoc(doc(db, "users", targetUid));
+              if (snap.exists()) {
+                const d = snap.data();
+                target.displayName = d.displayName || target.displayName;
+                target.email = d.email || target.email;
+                target.phone = d.phone || target.phone;
+                target.photoURL = d.photoURL || target.photoURL;
+                target.status = d.status || target.status;
+              }
+            } catch {}
+            window.openEditModal && window.openEditModal(target, isSelf);
+            return;
+          }
+          if (btn.classList.contains("btn-delete-resident")) {
+            const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
+            if (!ok) return;
+            try {
+              const tr = btn.closest("tr");
+              const targetUid = tr && tr.getAttribute("data-uid");
+              const curr = auth.currentUser;
+              if (curr && curr.uid === targetUid) {
+                await curr.delete();
+                showHint("已刪除目前帳號", "success");
+                redirectAfterSignOut();
+              } else {
+                await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+                showHint("已標記該帳號為停用", "success");
+                setActiveAdminNav("residents");
+              }
+            } catch (err) {
+              showHint("刪除失敗，可能需要重新登入驗證", "error");
+            }
+          }
         });
       })();
       return;
@@ -2681,6 +3105,476 @@ function renderAdminContent(mainKey, subLabel) {
   adminNav.content.innerHTML = "";
 }
 
+function openCommunitySwitchModal() {
+  (async () => {
+    let items = [];
+    try {
+      const snap = await getDocs(collection(db, "communities"));
+      items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {}
+    const current = window.currentAdminCommunitySlug || "";
+    const list = items.map(c => `
+      <button class="btn action-btn ${c.id === current ? "primary" : ""}" data-slug="${c.id}">${c.name || c.id}</button>
+    `).join("");
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">切換社區</div></div>
+        <div class="modal-body">
+          <div class="modal-row">${list || "<div class='empty-hint'>尚未建立社區</div>"}</div>
+        </div>
+        <div class="modal-foot">
+          <button id="switch-cancel" class="btn action-btn danger">關閉</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+    const btns = Array.from(document.querySelectorAll(".modal-body .btn.action-btn"));
+    btns.forEach(b => {
+      b.addEventListener("click", () => {
+        const slug = b.getAttribute("data-slug");
+        if (slug) {
+          window.currentAdminCommunitySlug = slug;
+          closeModal();
+          const savedMain = localStorage.getItem("adminActiveMain") || "shortcuts";
+          setActiveAdminNav(savedMain);
+        }
+      });
+    });
+    const btnCancel = document.getElementById("switch-cancel");
+    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+  })();
+}
+
+async function updateAdminBrandTitle() {
+  const el = document.querySelector("#admin-stack .sys-title");
+  if (!el) return;
+  let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+  if (slug === "default") {
+    try {
+      const snap = await getDocs(collection(db, "communities"));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (list.length > 0) slug = list[0].id;
+    } catch {}
+    if (slug === "default" && auth.currentUser) {
+      slug = await getUserCommunity(auth.currentUser.uid);
+    }
+  }
+  let cname = slug;
+  try {
+    const csnap = await getDoc(doc(db, "communities", slug));
+    if (csnap.exists()) {
+      const c = csnap.data();
+      cname = c.name || slug;
+    }
+  } catch {}
+  el.textContent = `西北e生活 社區後台（${cname}）`;
+}
+if (!window.openCreateResidentModal) {
+  function openCreateResidentModal(slug) {
+    const title = "新增住戶";
+    const seqGuess = (() => {
+      try {
+        const tbody = document.querySelector("#admin-stack .row.B3")?.querySelector("tbody");
+        if (tbody) return String(tbody.querySelectorAll("tr").length + 1);
+      } catch {}
+      return "";
+    })();
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+          <div class="modal-row">
+            <label>大頭照</label>
+            <input type="file" id="create-r-photo-file" accept="image/png,image/jpeg">
+          </div>
+          <div class="modal-row">
+            <label>預覽</label>
+            <img id="create-r-photo-preview" class="avatar-preview">
+          </div>
+          <div class="modal-row">
+            <label>序號</label>
+            <input type="text" id="create-r-seq" value="${seqGuess}">
+          </div>
+          <div class="modal-row">
+            <label>戶號</label>
+            <input type="text" id="create-r-house-no" placeholder="例如 A-1201">
+          </div>
+          <div class="modal-row">
+            <label>子戶號</label>
+            <input type="number" id="create-r-sub-no" placeholder="數字">
+          </div>
+          <div class="modal-row">
+            <label>QR 預覽</label>
+            <img id="create-r-qr-preview" class="qr-preview">
+          </div>
+          <div class="modal-row">
+            <label>QR code 代碼</label>
+            <input type="text" id="create-r-qr-code" placeholder="輸入QR內容文字">
+          </div>
+          <div class="modal-row">
+            <label>姓名</label>
+            <input type="text" id="create-r-name">
+          </div>
+          <div class="modal-row">
+            <label>地址</label>
+            <input type="text" id="create-r-address" placeholder="住址">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼</label>
+            <input type="tel" id="create-r-phone">
+          </div>
+          <div class="modal-row">
+            <label>電子郵件</label>
+            <input type="text" id="create-r-email" placeholder="example@domain.com">
+          </div>
+          <div class="modal-row">
+            <label>密碼</label>
+            <input type="text" id="create-r-password" placeholder="至少6字元" value="123456">
+          </div>
+          <div class="modal-row">
+            <label>狀態</label>
+            <select id="create-r-status">
+              <option value="啟用">啟用</option>
+              <option value="停用" selected>停用</option>
+            </select>
+          </div>
+          <div class="hint" id="create-r-hint"></div>
+        </div>
+        <div class="modal-foot">
+          <button id="create-r-cancel" class="btn action-btn danger">取消</button>
+          <button id="create-r-save" class="btn action-btn">建立</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+    const btnCancel = document.getElementById("create-r-cancel");
+    const btnSave = document.getElementById("create-r-save");
+    const createFile = document.getElementById("create-r-photo-file");
+    const createPreview = document.getElementById("create-r-photo-preview");
+    const qrPreview = document.getElementById("create-r-qr-preview");
+    const qrCodeInput = document.getElementById("create-r-qr-code");
+    const hintEl = document.getElementById("create-r-hint");
+    
+    const showModalHint = (msg, type="error") => {
+      if(hintEl) {
+        hintEl.textContent = msg;
+        hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
+      }
+    };
+    createFile && createFile.addEventListener("change", () => {
+      const f = createFile.files[0];
+      if (f) createPreview.src = URL.createObjectURL(f);
+    });
+    qrCodeInput && qrCodeInput.addEventListener("input", async () => {
+      const val = qrCodeInput.value.trim();
+      if (!qrPreview) return;
+      if (!val) {
+        qrPreview.src = "";
+      } else {
+        const url = await getQrDataUrl(val, 64);
+        qrPreview.src = url;
+      }
+    });
+    (async () => {
+      const val = qrCodeInput ? qrCodeInput.value.trim() : "";
+      if (qrPreview && val) {
+        const url = await getQrDataUrl(val, 64);
+        qrPreview.src = url;
+      }
+    })();
+    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+    btnSave && btnSave.addEventListener("click", async () => {
+      try {
+        showModalHint(""); 
+        const email = document.getElementById("create-r-email").value.trim();
+        const password = document.getElementById("create-r-password").value;
+        const displayName = document.getElementById("create-r-name").value.trim();
+        const phone = document.getElementById("create-r-phone").value.trim();
+        const photoFile = document.getElementById("create-r-photo-file").files[0];
+        const houseNo = document.getElementById("create-r-house-no").value.trim();
+        const subNoRaw = document.getElementById("create-r-sub-no").value.trim();
+        const address = document.getElementById("create-r-address").value.trim();
+        const qrCodeText = document.getElementById("create-r-qr-code").value.trim();
+        const status = document.getElementById("create-r-status").value;
+        let photoURL = "";
+        if (!email || !password || password.length < 6) {
+          showModalHint("請填寫有效的信箱與至少6字元密碼", "error");
+          return;
+        }
+        btnSave.disabled = true;
+        btnSave.textContent = "建立中...";
+        const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+        if (photoFile) {
+          try {
+            const ext = photoFile.type === "image/png" ? "png" : "jpg";
+            const path = `avatars/${cred.user.uid}.${ext}`;
+            const ref = storageRef(storage, path);
+            await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+            photoURL = await getDownloadURL(ref);
+          } catch (err) {
+            try {
+              const b64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(photoFile);
+              });
+              photoURL = b64;
+              showModalHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+            } catch {
+              showModalHint("上傳大頭照失敗，帳號仍已建立", "error");
+            }
+          }
+        }
+        await setDoc(doc(db, "users", cred.user.uid), {
+          email,
+          role: "住戶",
+          status: status || "停用",
+          displayName,
+          phone,
+          photoURL,
+          houseNo,
+          address,
+          qrCodeText,
+          ...(subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+          community: slug,
+          createdAt: Date.now()
+        }, { merge: true });
+        await updateProfile(cred.user, { displayName, photoURL });
+        closeModal();
+        showHint("已建立住戶帳號", "success");
+        const savedMain = localStorage.getItem("adminActiveMain") || "residents";
+        setActiveAdminNav(savedMain);
+      } catch (e) {
+        console.error(e);
+        let msg = "建立失敗";
+        if (e.code === 'auth/email-already-in-use') msg = "該 Email 已被使用";
+        else if (e.code === 'auth/invalid-email') msg = "Email 格式不正確";
+        else if (e.code === 'auth/weak-password') msg = "密碼強度不足";
+        else if (e.message) msg += ": " + e.message;
+        showModalHint(msg, "error");
+      } finally {
+        if(btnSave) {
+          btnSave.disabled = false;
+          btnSave.textContent = "建立";
+        }
+      }
+    });
+  }
+  window.openCreateResidentModal = openCreateResidentModal;
+}
+if (!window.openEditModal) {
+  async function openEditModal(target, isSelf) {
+    const isResident = (target.role || "住戶") === "住戶";
+    if (isResident) {
+      const titleR = "編輯住戶";
+      const seqR = (() => {
+        try {
+          const tbody = document.querySelector("#admin-stack .row.B3")?.querySelector("tbody");
+          if (!tbody) return "";
+          const trs = Array.from(tbody.querySelectorAll("tr"));
+          const idx = trs.findIndex(tr => tr.getAttribute("data-uid") === target.id);
+          return idx >= 0 ? String(idx + 1) : "";
+        } catch {}
+        return "";
+      })();
+      const bodyR = `
+        <div class="modal-dialog">
+          <div class="modal-head"><div class="modal-title">${titleR}</div></div>
+          <div class="modal-body">
+            <div class="modal-row">
+              <label>大頭照</label>
+              <input type="file" id="modal-photo-file" accept="image/png,image/jpeg">
+            </div>
+            <div class="modal-row">
+              <label>預覽</label>
+              <img id="modal-photo-preview" class="avatar-preview" src="${target.photoURL || ""}">
+            </div>
+            <div class="modal-row">
+              <label>序號</label>
+              <input type="text" id="modal-serial" value="${seqR}">
+            </div>
+            <div class="modal-row">
+              <label>戶號</label>
+              <input type="text" id="modal-house-no" value="${target.houseNo || ""}">
+            </div>
+            <div class="modal-row">
+              <label>子戶號</label>
+              <input type="number" id="modal-sub-no" value="${typeof target.subNo === "number" ? target.subNo : ""}">
+            </div>
+            <div class="modal-row">
+              <label>QR 預覽</label>
+              <img id="modal-qr-preview" class="qr-preview" src="">
+            </div>
+            <div class="modal-row">
+              <label>QR code 代碼</label>
+              <input type="text" id="modal-qr-code" value="${(target.qrCodeText || "")}">
+            </div>
+            <div class="modal-row">
+              <label>姓名</label>
+              <input type="text" id="modal-name" value="${target.displayName || ""}">
+            </div>
+            <div class="modal-row">
+              <label>地址</label>
+              <input type="text" id="modal-address" value="${target.address || ""}">
+            </div>
+            <div class="modal-row">
+              <label>手機號碼</label>
+              <input type="tel" id="modal-phone" value="${target.phone || ""}">
+            </div>
+            <div class="modal-row">
+              <label>電子郵件</label>
+              <input type="email" id="modal-email" value="${target.email || ""}">
+            </div>
+            <div class="modal-row">
+              <label>新密碼</label>
+              <input type="text" id="modal-password" placeholder="至少6字元">
+            </div>
+            <div class="modal-row">
+              <label>狀態</label>
+              <select id="modal-status">
+                <option value="啟用">啟用</option>
+                <option value="停用">停用</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button id="modal-cancel" class="btn action-btn danger">取消</button>
+            <button id="modal-save" class="btn action-btn">儲存</button>
+          </div>
+        </div>
+      `;
+      openModal(bodyR);
+      const btnCancel = document.getElementById("modal-cancel");
+      const btnSave = document.getElementById("modal-save");
+      const editFile = document.getElementById("modal-photo-file");
+      const editPreview = document.getElementById("modal-photo-preview");
+      const statusSelect = document.getElementById("modal-status");
+      const editQrPreview = document.getElementById("modal-qr-preview");
+      const editQrCodeInput = document.getElementById("modal-qr-code");
+      if (editPreview) editPreview.src = target.photoURL || "";
+      if (statusSelect) statusSelect.value = target.status || "停用";
+      editFile && editFile.addEventListener("change", () => {
+        const f = editFile.files[0];
+        if (f) editPreview.src = URL.createObjectURL(f);
+      });
+      editQrCodeInput && editQrCodeInput.addEventListener("input", async () => {
+        const val = editQrCodeInput.value.trim();
+        if (!editQrPreview) return;
+        if (!val) {
+          editQrPreview.src = "";
+        } else {
+          const url = await getQrDataUrl(val, 64);
+          editQrPreview.src = url;
+        }
+      });
+      (async () => {
+        const val = editQrCodeInput ? editQrCodeInput.value.trim() : "";
+        if (editQrPreview && val) {
+          const url = await getQrDataUrl(val, 64);
+          editQrPreview.src = url;
+        }
+      })();
+      btnCancel && btnCancel.addEventListener("click", () => closeModal());
+      btnSave && btnSave.addEventListener("click", async () => {
+        try {
+          const newName = document.getElementById("modal-name").value.trim();
+          const newPhone = document.getElementById("modal-phone").value.trim();
+          const photoFile = document.getElementById("modal-photo-file").files[0];
+          const newPassword = document.getElementById("modal-password").value;
+          const newStatus = document.getElementById("modal-status").value;
+          const newHouseNo = document.getElementById("modal-house-no").value.trim();
+          const newSubNoRaw = document.getElementById("modal-sub-no").value.trim();
+          const newSubNo = newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : undefined;
+          const newAddress = document.getElementById("modal-address").value.trim();
+          const newQrCodeText = document.getElementById("modal-qr-code").value.trim();
+          const newEmail = document.getElementById("modal-email").value.trim();
+          let newPhotoURL = target.photoURL || "";
+          if (photoFile) {
+            try {
+              const ext = photoFile.type === "image/png" ? "png" : "jpg";
+              const path = `avatars/${target.id}.${ext}`;
+              const ref = storageRef(storage, path);
+              await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+              newPhotoURL = await getDownloadURL(ref);
+            } catch (err) {
+              try {
+                const b64 = await new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = () => resolve(reader.result);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(photoFile);
+                });
+                newPhotoURL = b64;
+                showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
+              } catch {
+                showHint("上傳大頭照失敗，先以原圖進行更新", "error");
+              }
+            }
+          }
+          const payload = {
+            displayName: newName || target.displayName,
+            phone: newPhone || target.phone,
+            photoURL: newPhotoURL,
+            status: newStatus || target.status,
+            houseNo: newHouseNo || target.houseNo || "",
+            address: newAddress || target.address || "",
+            qrCodeText: newQrCodeText || target.qrCodeText || "",
+            email: newEmail || target.email || ""
+          };
+          if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
+          await setDoc(doc(db, "users", target.id), payload, { merge: true });
+          const curr = auth.currentUser;
+          if (isSelf && curr) {
+            const profilePatch = {};
+            if (newName && newName !== curr.displayName) profilePatch.displayName = newName;
+            if (newPhotoURL && newPhotoURL !== curr.photoURL) profilePatch.photoURL = newPhotoURL;
+            if (Object.keys(profilePatch).length) {
+              try {
+                await updateProfile(curr, profilePatch);
+              } catch (err) {
+                if (err && err.code === "auth/requires-recent-login") {
+                  const cp = window.prompt("請輸入目前密碼以完成更新");
+                  if (cp) {
+                    try {
+                      const cred = EmailAuthProvider.credential(curr.email, cp);
+                      await reauthenticateWithCredential(curr, cred);
+                      await updateProfile(curr, profilePatch);
+                    } catch {}
+                  }
+                }
+              }
+            }
+            if (newPassword && newPassword.length >= 6) {
+              try {
+                await updatePassword(curr, newPassword);
+              } catch (err) {
+                if (err && err.code === "auth/requires-recent-login") {
+                  const cp = window.prompt("請輸入目前密碼以完成設定新密碼");
+                  if (cp) {
+                    try {
+                      const cred = EmailAuthProvider.credential(curr.email, cp);
+                      await reauthenticateWithCredential(curr, cred);
+                      await updatePassword(curr, newPassword);
+                    } catch {}
+                  }
+                }
+              }
+            }
+          }
+          closeModal();
+          const savedMain = localStorage.getItem("adminActiveMain") || "residents";
+          setActiveAdminNav(savedMain);
+          showHint("已更新住戶資料", "success");
+        } catch (e) {
+          showHint("更新失敗", "error");
+        }
+      });
+      return;
+    }
+  }
+  window.openEditModal = openEditModal;
+}
 function renderAdminSubNav(key) {
   if (!adminNav.subContainer) return;
   const items = adminSubMenus[key] || [];
@@ -2724,6 +3618,7 @@ function setActiveAdminNav(activeKey) {
   });
   localStorage.setItem("adminActiveMain", activeKey);
   renderAdminSubNav(activeKey);
+  updateAdminBrandTitle();
 }
 
 if (adminNav.subContainer) {
@@ -2743,6 +3638,9 @@ async function loadFrontAds(slug) {
   const container = document.querySelector(".row.A3");
   if (!container) return;
   
+  // Ensure we clear any existing interval before reloading
+  if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+
   try {
     let data = null;
     let snap = await getDoc(doc(db, `communities/${slug}/app_modules/ads`));
@@ -2757,7 +3655,10 @@ async function loadFrontAds(slug) {
        data = snap.data();
     }
     const items = data.items || [];
-    const config = data.config || { interval: 3, effect: 'slide', loop: 'infinite', nav: true };
+    // Merge defaults to ensure all properties exist even if DB has partial config
+    const defaults = { interval: 3, effect: 'slide', loop: 'infinite', nav: true };
+    const savedConfig = data.config || {};
+    const config = { ...defaults, ...savedConfig };
     
     const validItems = items.filter(x => x.url).sort((a, b) => a.idx - b.idx);
     
@@ -2864,6 +3765,26 @@ function startFrontCarousel(config) {
        btnPrev.onclick = (e) => { e.preventDefault(); prev(); resetTimer(); };
     }
 
+    // Swipe support
+    if (frontContainer) {
+      let touchStartX = 0;
+      let touchEndX = 0;
+      frontContainer.addEventListener('touchstart', (e) => {
+        if (e.changedTouches && e.changedTouches.length > 0) {
+          touchStartX = e.changedTouches[0].screenX;
+        }
+        if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+      }, { passive: true });
+      frontContainer.addEventListener('touchend', (e) => {
+        if (e.changedTouches && e.changedTouches.length > 0) {
+          touchEndX = e.changedTouches[0].screenX;
+          if (touchEndX < touchStartX - 50) next();
+          if (touchEndX > touchStartX + 50) prev();
+        }
+        resetTimer();
+      }, { passive: true });
+    }
+
     const startTimer = () => {
         if (config.loop === 'once' && idx >= slides.length - 1) return;
         window.frontAdsInterval = setInterval(next, intervalTime);
@@ -2913,8 +3834,21 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
-document.addEventListener("click", async (e) => {
-  const btn = e.target && e.target.closest && e.target.closest("#btn-create-resident-admin");
+function matchInPath(e, selector) {
+  const p = (typeof e.composedPath === "function") ? e.composedPath() : [];
+  if (Array.isArray(p) && p.length) {
+    for (let i = 0; i < p.length; i++) {
+      const n = p[i];
+      if (n && n.matches && n.matches(selector)) return n;
+      if (n && n.closest && n.closest(selector)) return n.closest(selector);
+    }
+    return null;
+  }
+  const t = e.target;
+  return t && t.closest ? t.closest(selector) : null;
+}
+async function handleCreateResidentTrigger(e) {
+  const btn = matchInPath(e, "#btn-create-resident-admin") || matchInPath(e, "#btn-create-resident");
   if (!btn) return;
   const root = document.getElementById("sys-modal");
   if (root && !root.classList.contains("hidden")) return;
@@ -2925,4 +3859,6 @@ document.addEventListener("click", async (e) => {
   if (window.openCreateResidentModal) {
     window.openCreateResidentModal(slug);
   }
-});
+}
+document.addEventListener("click", handleCreateResidentTrigger, true);
+document.addEventListener("touchend", handleCreateResidentTrigger, { passive: true, capture: true });

@@ -710,6 +710,14 @@ select:focus {
   object-fit: cover;
   background: #e5e7eb;
 }
+.qr-preview {
+  width: 64px;
+  height: 64px;
+  border-radius: 0;
+  object-fit: contain;
+  background: #e5e7eb;
+  border: 1px solid var(--border);
+}
 .modal-row {
   display: grid;
   gap: 8px;
