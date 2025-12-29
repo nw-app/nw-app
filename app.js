@@ -1116,6 +1116,8 @@ async function handleRoleRedirect(role) {
             btnAvatar.addEventListener("click", () => openUserProfileModal());
         }
         loadFrontAds(slug);
+        loadFrontButtons(slug);
+        subscribeFrontButtons(slug);
         startFrontPolling(slug);
     } else if (window.location.pathname.includes("admin")) {
         // Role check passed (Community Admin or System Admin)
@@ -3169,6 +3171,85 @@ if (sysNav.subContainer) {
         </div>
       `;
     }
+    else if (sub === '按鈕') {
+      let data = { a6: [], a8: [] };
+      try {
+        const targetSlug = current === 'all' ? 'default' : current;
+        const snap = await getDoc(doc(db, `communities/${targetSlug}/app_modules/buttons`));
+        if (snap.exists()) {
+          const d = snap.data();
+          data.a6 = Array.isArray(d.a6) ? d.a6 : [];
+          data.a8 = Array.isArray(d.a8) ? d.a8 : [];
+        }
+      } catch {}
+      const buildRows = (items, section) => {
+        const rows = [];
+        for (let i = 1; i <= 8; i++) {
+          const it = items.find(x => x.idx === i) || { idx: i, text: '', link: '', iconUrl: '' };
+          rows.push(`
+            <tr data-idx="${i}">
+              <td>${i}</td>
+              <td><input type="text" class="btn-text" value="${it.text || ''}" placeholder="按鈕名稱"></td>
+              <td><input type="url" class="btn-link" value="${it.link || ''}" placeholder="https://..."></td>
+              <td>
+                <div class="icon-cell">
+                  <img class="icon-preview" src="${it.iconUrl || ''}">
+                  <input type="file" class="icon-file ${section}-icon-file" accept="image/png,image/jpeg">
+                </div>
+              </td>
+            </tr>
+          `);
+        }
+        return rows.join("");
+      };
+      const a6Rows = buildRows(data.a6, "a6");
+      const a8Rows = buildRows(data.a8, "a8");
+      contentHtml = `
+        <div class="card data-card">
+          <div class="card-head">
+            <h2 class="card-title">A6 列按鈕設定</h2>
+            <button id="btn-save-buttons" class="btn primary action-btn">儲存設定</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="a6-table">
+              <colgroup><col width="60"><col><col><col width="180"></colgroup>
+              <thead>
+                <tr>
+                  <th>序號</th>
+                  <th>名稱</th>
+                  <th>連結</th>
+                  <th>圖形</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${a6Rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card data-card">
+          <div class="card-head">
+            <h2 class="card-title">A8 列按鈕設定</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="a8-table">
+              <colgroup><col width="60"><col><col><col width="180"></colgroup>
+              <thead>
+                <tr>
+                  <th>序號</th>
+                  <th>名稱</th>
+                  <th>連結</th>
+                  <th>圖形</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${a8Rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
 
     sysNav.content.innerHTML = `
       <div class="card-wrapper">
@@ -3503,6 +3584,128 @@ if (sysNav.subContainer) {
       if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
       
       restartCarousel(adsConfig);
+    }
+    if (sub === '按鈕') {
+      const bindPreview = (scope) => {
+        const inputs = sysNav.content.querySelectorAll(`.${scope}-icon-file`);
+        inputs.forEach(input => {
+          input.addEventListener("change", () => {
+            const tr = input.closest("tr");
+            const img = tr.querySelector(".icon-preview");
+            const f = input.files[0];
+            if (img) img.src = f ? URL.createObjectURL(f) : "";
+          });
+        });
+      };
+      bindPreview("a6");
+      bindPreview("a8");
+      const btn = document.getElementById("btn-save-buttons");
+      if (btn) {
+        btn.addEventListener("click", async () => {
+          const originalText = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = "儲存中...";
+          const selEl = document.getElementById("app-community-select");
+          const targetSlug = (selEl && selEl.value === 'all') ? 'default' : (selEl ? selEl.value : 'default');
+          const collect = (tableId) => {
+            const trs = sysNav.content.querySelectorAll(`#${tableId} tbody tr`);
+            const items = [];
+            trs.forEach(tr => {
+              const idx = parseInt(tr.getAttribute("data-idx"));
+              const text = tr.querySelector(".btn-text").value.trim();
+              const link = tr.querySelector(".btn-link").value.trim();
+              const fileInput = tr.querySelector(".icon-file");
+              items.push({ idx, text, link, fileInput });
+            });
+            return items;
+          };
+          const a6Items = collect("a6-table");
+          const a8Items = collect("a8-table");
+          const uploadIcon = async (section, idx, file) => {
+            const ext = file.type === "image/png" ? "png" : "jpg";
+            const path = `buttons/${targetSlug}/${section}_${idx}.${ext}`;
+            const ref = storageRef(storage, path);
+            await uploadBytes(ref, file, { contentType: file.type });
+            return await getDownloadURL(ref);
+          };
+          const resultA6 = [];
+          const resultA8 = [];
+          try {
+            for (let it of a6Items) {
+              let iconUrl = "";
+              const f = it.fileInput.files[0];
+              if (f) {
+                try {
+                  iconUrl = await uploadIcon("a6", it.idx, f);
+                } catch {
+                  try {
+                    iconUrl = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(f);
+                    });
+                  } catch {
+                    iconUrl = "";
+                  }
+                }
+              } else {
+                const prev = it.fileInput.closest("tr").querySelector(".icon-preview").getAttribute("src") || "";
+                iconUrl = prev || "";
+              }
+              if (it.text || it.link || iconUrl) {
+                resultA6.push({ idx: it.idx, text: it.text, link: it.link, iconUrl });
+              }
+            }
+            for (let it of a8Items) {
+              let iconUrl = "";
+              const f = it.fileInput.files[0];
+              if (f) {
+                try {
+                  iconUrl = await uploadIcon("a8", it.idx, f);
+                } catch {
+                  try {
+                    iconUrl = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = reject;
+                      reader.readAsDataURL(f);
+                    });
+                  } catch {
+                    iconUrl = "";
+                  }
+                }
+              } else {
+                const prev = it.fileInput.closest("tr").querySelector(".icon-preview").getAttribute("src") || "";
+                iconUrl = prev || "";
+              }
+              if (it.text || it.link || iconUrl) {
+                resultA8.push({ idx: it.idx, text: it.text, link: it.link, iconUrl });
+              }
+            }
+            await setDoc(doc(db, `communities/${targetSlug}/app_modules/buttons`), { a6: resultA6, a8: resultA8 }, { merge: true });
+            showHint("設定已儲存", "success");
+            btn.textContent = "已儲存";
+            const hint = document.createElement("span");
+            hint.textContent = "已完成";
+            hint.style.cssText = "margin-left:8px;color:#0ea5e9;font-size:13px;";
+            btn.parentElement && btn.parentElement.appendChild(hint);
+            setTimeout(() => {
+              if (hint && hint.parentElement) hint.parentElement.removeChild(hint);
+              btn.textContent = originalText;
+              btn.disabled = false;
+            }, 1500);
+          } catch (e) {
+            console.error(e);
+            showHint("儲存失敗", "error");
+            btn.textContent = "儲存失敗";
+            setTimeout(() => {
+              btn.textContent = originalText;
+              btn.disabled = false;
+            }, 1200);
+          }
+        });
+      }
     }
   }
   
@@ -4889,7 +5092,68 @@ function startFrontCarousel(config) {
     startTimer();
 }
 
+async function loadFrontButtons(slug) {
+  const a6Btns = document.querySelectorAll(".row.A6 .feature-btn");
+  const a8Btns = document.querySelectorAll(".row.A8 .feature-btn");
+  if (!a6Btns.length && !a8Btns.length) return;
+  try {
+    let snap = await getDoc(doc(db, `communities/${slug}/app_modules/buttons`));
+    if (!snap.exists()) {
+      const def = await getDoc(doc(db, `communities/default/app_modules/buttons`));
+      if (!def.exists()) return;
+      snap = def;
+    }
+    const data = snap.data() || {};
+    const a6 = Array.isArray(data.a6) ? data.a6 : [];
+    const a8 = Array.isArray(data.a8) ? data.a8 : [];
+    const applyToButtons = (items, nodeList) => {
+      const byIdx = {};
+      items.forEach(it => { if (typeof it.idx === "number") byIdx[it.idx] = it; });
+      nodeList.forEach((btn, i) => {
+        const cfg = byIdx[i + 1] || null;
+        const textEl = btn.querySelector(".nav-text");
+        const iconEl = btn.querySelector(".nav-icon");
+        if (cfg && textEl) textEl.textContent = cfg.text || textEl.textContent;
+        if (cfg && cfg.iconUrl) {
+          if (iconEl && iconEl.tagName === "IMG") {
+            iconEl.src = cfg.iconUrl;
+          } else {
+            const img = document.createElement("img");
+            img.className = "nav-icon";
+            img.src = cfg.iconUrl;
+            if (iconEl) iconEl.replaceWith(img);
+            else btn.prepend(img);
+          }
+        }
+        btn.onclick = null;
+        if (cfg && cfg.link) {
+          btn.addEventListener("click", () => {
+            const url = cfg.link;
+            if (url && /^https?:\/\//i.test(url)) location.href = url;
+          });
+        }
+      });
+    };
+    applyToButtons(a6, a6Btns);
+    applyToButtons(a8, a8Btns);
+  } catch (e) {
+    console.error("Load front buttons failed", e);
+  }
+}
 
+let unsubscribeFrontButtons = null;
+function subscribeFrontButtons(slug) {
+  if (unsubscribeFrontButtons) {
+    try { unsubscribeFrontButtons(); } catch {}
+    unsubscribeFrontButtons = null;
+  }
+  const ref = doc(db, `communities/${slug}/app_modules/buttons`);
+  unsubscribeFrontButtons = onSnapshot(ref, () => {
+    loadFrontButtons(slug);
+  }, (err) => {
+    console.error("Front buttons subscribe error", err);
+  });
+}
 
 let unsubscribeFrontAds = null;
 function subscribeFrontAds(slug) {
@@ -4909,6 +5173,10 @@ window.addEventListener("beforeunload", () => {
   if (unsubscribeFrontAds) {
     try { unsubscribeFrontAds(); } catch {}
     unsubscribeFrontAds = null;
+  }
+  if (unsubscribeFrontButtons) {
+    try { unsubscribeFrontButtons(); } catch {}
+    unsubscribeFrontButtons = null;
   }
 
 });

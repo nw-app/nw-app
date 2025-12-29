@@ -870,3 +870,12 @@ select:focus {
 .table select:focus {
   border-color: #9ca3af;
 }
+.icon-preview {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  background: #e5e7eb;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: inline-block;
+}
