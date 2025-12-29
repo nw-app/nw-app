@@ -3206,12 +3206,18 @@ if (sysNav.subContainer) {
       const buildRows = (items, section) => {
         const rows = [];
         for (let i = 1; i <= 8; i++) {
-          const it = items.find(x => x.idx === i) || { idx: i, text: '', link: '', iconUrl: '' };
+          const it = items.find(x => x.idx === i) || { idx: i, text: '', link: '', iconUrl: '', newWindow: false };
           rows.push(`
             <tr data-idx="${i}">
               <td>${i}</td>
               <td><input type="text" class="btn-text" value="${it.text || ''}" placeholder="按鈕名稱"></td>
               <td><input type="url" class="btn-link" value="${it.link || ''}" placeholder="https://..."></td>
+              <td>
+                <label style="display:flex;align-items:center;gap:6px;">
+                  <input type="checkbox" class="btn-new-window" ${it.newWindow ? 'checked' : ''}>
+                  <span>另開</span>
+                </label>
+              </td>
               <td>
                 <div class="icon-cell">
                   <img class="icon-preview" src="${it.iconUrl || ''}">
@@ -3233,12 +3239,13 @@ if (sysNav.subContainer) {
           </div>
           <div class="table-wrap">
             <table class="table" id="a6-table">
-              <colgroup><col width="60"><col><col><col width="180"></colgroup>
+              <colgroup><col width="60"><col><col><col width="100"><col width="180"></colgroup>
               <thead>
                 <tr>
                   <th>序號</th>
                   <th>名稱</th>
                   <th>連結</th>
+                  <th>另開視窗</th>
                   <th>圖形</th>
                 </tr>
               </thead>
@@ -3254,12 +3261,13 @@ if (sysNav.subContainer) {
           </div>
           <div class="table-wrap">
             <table class="table" id="a8-table">
-              <colgroup><col width="60"><col><col><col width="180"></colgroup>
+              <colgroup><col width="60"><col><col><col width="100"><col width="180"></colgroup>
               <thead>
                 <tr>
                   <th>序號</th>
                   <th>名稱</th>
                   <th>連結</th>
+                  <th>另開視窗</th>
                   <th>圖形</th>
                 </tr>
               </thead>
@@ -3635,8 +3643,9 @@ if (sysNav.subContainer) {
               const idx = parseInt(tr.getAttribute("data-idx"));
               const text = tr.querySelector(".btn-text").value.trim();
               const link = tr.querySelector(".btn-link").value.trim();
+              const newWindow = !!(tr.querySelector(".btn-new-window")?.checked);
               const fileInput = tr.querySelector(".icon-file");
-              items.push({ idx, text, link, fileInput });
+              items.push({ idx, text, link, newWindow, fileInput });
             });
             return items;
           };
@@ -3675,7 +3684,7 @@ if (sysNav.subContainer) {
                 iconUrl = prev || "";
               }
               if (it.text || it.link || iconUrl) {
-                resultA6.push({ idx: it.idx, text: it.text, link: it.link, iconUrl });
+                resultA6.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl });
               }
             }
             for (let it of a8Items) {
@@ -3701,7 +3710,7 @@ if (sysNav.subContainer) {
                 iconUrl = prev || "";
               }
               if (it.text || it.link || iconUrl) {
-                resultA8.push({ idx: it.idx, text: it.text, link: it.link, iconUrl });
+                resultA8.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl });
               }
             }
             await setDoc(doc(db, `communities/${targetSlug}/app_modules/buttons`), { a6: resultA6, a8: resultA8 }, { merge: true });
@@ -5151,7 +5160,16 @@ async function loadFrontButtons(slug) {
           btn.addEventListener("click", () => {
             const url = cfg.link;
             const title = (cfg.text || (textEl && textEl.textContent) || "連結");
-            if (url) openLinkView(title, url);
+            if (!url) return;
+            if (cfg.newWindow) {
+              try {
+                window.open(url, "_blank", "noopener");
+              } catch {
+                openLinkView(title, url);
+              }
+            } else {
+              openLinkView(title, url);
+            }
           });
         }
       });
