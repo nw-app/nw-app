@@ -994,6 +994,22 @@ async function handleRoleRedirect(role) {
     if (user) {
       if (el.authCard) el.authCard.classList.add("hidden");
       
+      const pathNow = window.location.pathname || "";
+      if (
+        (pathNow.endsWith("/") || pathNow.includes("index.html")) &&
+        !pathNow.includes("front") && !pathNow.includes("admin") && !pathNow.includes("sys")
+      ) {
+        try {
+          const userSlug = await getUserCommunity(user.uid);
+          const target = (userSlug && userSlug !== "default") ? `front.html?c=${userSlug}` : "front.html";
+          location.replace(target);
+          return;
+        } catch {
+          location.replace("front.html");
+          return;
+        }
+      }
+      
       let role = "住戶";
       try {
         role = await getOrCreateUserRole(user.uid, user.email);
@@ -1182,10 +1198,15 @@ async function handleRoleRedirect(role) {
     
     if (el.profileEmail) el.profileEmail.textContent = user.email;
     // We can fetch role here if needed for profile card
-  } else {
-    toggleAuth(true);
-  }
-});
+    } else {
+      toggleAuth(true);
+      const pathNow = window.location.pathname || "";
+      if (pathNow.includes("front")) {
+        location.replace("index.html");
+        return;
+      }
+    }
+  });
 
 async function openCommunitySwitcher(type) {
   const modal = document.createElement("div");
@@ -5129,7 +5150,8 @@ async function loadFrontButtons(slug) {
         if (cfg && cfg.link) {
           btn.addEventListener("click", () => {
             const url = cfg.link;
-            if (url && /^https?:\/\//i.test(url)) location.href = url;
+            const title = (cfg.text || (textEl && textEl.textContent) || "連結");
+            if (url) openLinkView(title, url);
           });
         }
       });
@@ -5139,6 +5161,43 @@ async function loadFrontButtons(slug) {
   } catch (e) {
     console.error("Load front buttons failed", e);
   }
+}
+
+function openLinkView(title, url) {
+  let root = document.getElementById("sys-modal");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "sys-modal";
+    root.className = "modal hidden";
+    document.body.appendChild(root);
+  }
+  const safeTitle = (title || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]));
+  const html = `
+    <div class="modal-dialog link-view-dialog">
+      <div class="modal-head link-view-head">
+        <div class="modal-title link-view-title">${safeTitle}</div>
+        <button type="button" id="link-view-close" class="btn link-view-close">
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body link-view-body">
+        <iframe class="link-view-iframe" src="${url}" frameborder="0" allow="autoplay; encrypted-media; clipboard-read; clipboard-write; geolocation"></iframe>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  const closeBtn = document.getElementById("link-view-close");
+  if (closeBtn) closeBtn.addEventListener("click", () => closeModal());
+  const escHandler = (e) => {
+    if (e.key === "Escape") {
+      closeModal();
+      document.removeEventListener("keydown", escHandler, true);
+    }
+  };
+  document.addEventListener("keydown", escHandler, true);
 }
 
 let unsubscribeFrontButtons = null;
