@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
@@ -70,6 +70,33 @@ async function ensureQrLib() {
     document.head.appendChild(s);
   });
   await window._qrLibLoading;
+}
+
+async function ensureXlsxLib() {
+  if (window.XLSX) return;
+  if (window._xlsxLibLoading) return window._xlsxLibLoading;
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js',
+    'https://unpkg.com/xlsx@0.20.2/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.20.2/xlsx.full.min.js'
+  ];
+  window._xlsxLibLoading = new Promise((resolve) => {
+    let idx = 0;
+    const tryLoad = () => {
+      if (window.XLSX) return resolve();
+      if (idx >= sources.length) return resolve();
+      const s = document.createElement('script');
+      s.src = sources[idx++];
+      s.onload = () => resolve();
+      s.onerror = () => tryLoad();
+      document.head.appendChild(s);
+      setTimeout(() => {
+        if (!window.XLSX) tryLoad();
+      }, 5000);
+    };
+    tryLoad();
+  });
+  await window._xlsxLibLoading;
 }
 
 async function getQrDataUrl(text, size) {
@@ -290,6 +317,7 @@ async function getOrCreateUserRole(uid, email) {
         }
         return "系統管理員";
       }
+      if (data.status === "停用") return "停用";
       return data.role || "住戶";
     }
     try {
@@ -315,6 +343,13 @@ if (loginForm) {
     try {
       const cred = await signInWithEmailAndPassword(auth, email, password);
       const role = await getOrCreateUserRole(cred.user.uid, cred.user.email);
+      if (role === "停用") {
+        showHint("帳號已停用，請聯繫管理員", "error");
+        await signOut(auth);
+        el.btnLogin.disabled = false;
+        el.btnLogin.textContent = "登入";
+        return;
+      }
       showHint("登入成功", "success");
       // Strict Login Check based on Page
       if (!checkPagePermission(role, window.location.pathname)) {
@@ -340,6 +375,11 @@ if (loginForm) {
 }
 
 async function handleRoleRedirect(role) {
+  if (role === "停用") {
+    showHint("帳號已停用，請聯繫管理員", "error");
+    await signOut(auth);
+    return;
+  }
   // Simple role based redirect logic
   if (window.location.pathname.includes("sys")) {
       if (role === "系統管理員") {
@@ -354,7 +394,7 @@ async function handleRoleRedirect(role) {
       return;
   }
   
-  async function renderSettingsResidents() {
+  async function renderSettingsResidentsLegacy() {
     if (!sysNav.content) return;
     const u = auth.currentUser;
     const slug = u ? await getUserCommunity(u.uid) : "default";
@@ -428,8 +468,246 @@ async function handleRoleRedirect(role) {
         </div>
       </div>
     `;
+    const btnExportLegacy2 = document.getElementById("btn-export-resident");
+    btnExportLegacy2 && btnExportLegacy2.addEventListener("click", async () => {
+      btnExportLegacy2.disabled = true;
+      btnExportLegacy2.textContent = "匯出中...";
+      try {
+        await ensureXlsxLib();
+        if (!window.XLSX) throw new Error("Excel Library not found");
+        const data = residents.map((r, idx) => ({
+          "大頭照": r.photoURL || "",
+          "序號": r.seq || "",
+          "戶號": r.houseNo || "",
+          "子戶號": r.subNo !== undefined ? r.subNo : "",
+          "QR code": r.qrCodeText || "",
+          "姓名": r.displayName || "",
+          "地址": r.address || "",
+          "坪數": r.area || "",
+          "區分權比": r.ownershipRatio || "",
+          "手機號碼": r.phone || "",
+          "電子郵件": r.email || "",
+          "狀態": r.status || "啟用"
+        }));
+        const ws = window.XLSX.utils.json_to_sheet(data);
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, "Residents");
+        window.XLSX.writeFile(wb, `${cname}_residents_${new Date().toISOString().slice(0,10)}.xlsx`);
+      } catch(e) {
+        console.error(e);
+        alert("匯出失敗");
+      } finally {
+        btnExportLegacy2.disabled = false;
+        btnExportLegacy2.textContent = "匯出 Excel";
+      }
+    });
+
+    const btnImportLegacy2 = document.getElementById("btn-import-resident");
+    btnImportLegacy2 && btnImportLegacy2.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".xlsx, .xls, .csv";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        let overlay = document.getElementById("import-overlay");
+        if (!overlay) {
+          overlay = document.createElement("div");
+          overlay.id = "import-overlay";
+          overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;justify-content:center;align-items:center;color:#fff;flex-direction:column;font-size:1.2rem;";
+          document.body.appendChild(overlay);
+        }
+        overlay.style.display = "flex";
+        overlay.innerHTML = `<div class="spinner"></div><div id="import-msg" style="margin-top:15px;">準備匯入中...</div>`;
+        btnImportLegacy2.disabled = true;
+        btnImportLegacy2.textContent = "匯入中...";
+        try {
+          await ensureXlsxLib();
+          if (!window.XLSX) throw new Error("Excel Library not found");
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const data = new Uint8Array(e.target.result);
+              const workbook = window.XLSX.read(data, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+              if (jsonData.length === 0) {
+                alert("檔案內容為空");
+                overlay.style.display = "none";
+                return;
+              }
+              if (!confirm(`即將匯入 ${jsonData.length} 筆資料，確定嗎？`)) {
+                overlay.style.display = "none";
+                return;
+              }
+              let successCount = 0;
+              let failCount = 0;
+              const total = jsonData.length;
+              const updateProgress = (processed) => {
+                 const el = document.getElementById("import-msg");
+                 if (el) el.textContent = `匯入中... ${processed} / ${total}`;
+              };
+              const CHUNK_SIZE = 20; 
+              for (let i = 0; i < total; i += CHUNK_SIZE) {
+                const chunk = jsonData.slice(i, i + CHUNK_SIZE);
+                const batch = writeBatch(db);
+                let hasWrites = false;
+                const promises = chunk.map(async (row) => {
+                    try {
+                        const email = (row["電子郵件"] || "").trim();
+                        const password = (row["密碼"] || "123456").trim();
+                        const displayName = (row["姓名"] || "").trim();
+                        const phone = (row["手機號碼"] || "").toString().trim();
+                        const seq = (row["序號"] || "").toString().trim();
+                        const houseNo = (row["戶號"] || "").toString().trim();
+                        const subNoRaw = row["子戶號"];
+                        const qrCodeText = (row["QR code"] || "").trim();
+                        const address = (row["地址"] || "").trim();
+                        const area = (row["坪數"] || "").toString().trim();
+                        const ownershipRatio = (row["區分權比"] || "").toString().trim();
+                        const status = (row["狀態"] || "停用").trim();
+                        const photoURL = (row["大頭照"] || "").trim();
+                        if (!email) { failCount++; return null; }
+                        let uid = null;
+                        try {
+                            const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+                            uid = cred.user.uid;
+                            await updateProfile(cred.user, { displayName, photoURL });
+                            await signOut(createAuth);
+                        } catch (authErr) {
+                            if (authErr.code === 'auth/email-already-in-use') {
+                                const qUser = query(collection(db, "users"), where("email", "==", email));
+                                const snapUser = await getDocs(qUser);
+                                if (!snapUser.empty) uid = snapUser.docs[0].id;
+                            }
+                            if (!uid) { failCount++; return null; }
+                        }
+                        if (uid) {
+                            const docRef = doc(db, "users", uid);
+                            const payload = {
+                                email, role: "住戶", status, displayName, phone, photoURL,
+                                community: selectedSlug, seq, houseNo,
+                                ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+                                qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
+                            };
+                            return { docRef, payload };
+                        }
+                    } catch (err) { failCount++; }
+                    return null;
+                });
+                const results = await Promise.all(promises);
+                results.forEach(res => {
+                    if (res) {
+                        batch.set(res.docRef, res.payload, { merge: true });
+                        hasWrites = true;
+                        successCount++;
+                    }
+                });
+                if (hasWrites) await batch.commit();
+                updateProgress(Math.min(i + CHUNK_SIZE, total));
+              }
+              overlay.innerHTML = `
+                <div style="background:white;color:black;padding:20px;border-radius:8px;text-align:center;min-width:300px;">
+                    <h2 style="margin-top:0;color:#333;">匯入完成</h2>
+                    <p style="font-size:1.1rem;margin:10px 0;">成功：<span style="color:green;font-weight:bold;">${successCount}</span> 筆</p>
+                    <p style="font-size:1.1rem;margin:10px 0;">失敗：<span style="color:red;font-weight:bold;">${failCount}</span> 筆</p>
+                    <button id="close-overlay-btn" class="btn action-btn primary" style="margin-top:15px;width:100%;">確定</button>
+                </div>
+              `;
+              const closeBtn = document.getElementById("close-overlay-btn");
+              if (closeBtn) {
+                  closeBtn.onclick = async () => {
+                      overlay.style.display = "none";
+                      await renderSettingsResidents();
+                  };
+              }
+            } catch (e) {
+              console.error(e);
+              alert("讀取 Excel 失敗");
+              overlay.style.display = "none";
+            } finally {
+              btnImportLegacy2.disabled = false;
+              btnImportLegacy2.textContent = "匯入 Excel";
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        } catch(e) {
+          console.error(e);
+          alert("匯入失敗");
+          btnImportLegacy2.disabled = false;
+          btnImportLegacy2.textContent = "匯入 Excel";
+          if (overlay) overlay.style.display = "none";
+        }
+      };
+      input.click();
+    });
+
+    sysNav.content.addEventListener("change", (e) => {
+      if (e.target.id === "check-all-residents") {
+        const checked = e.target.checked;
+        const checkboxes = sysNav.content.querySelectorAll(".check-resident");
+        checkboxes.forEach(cb => cb.checked = checked);
+        updateDeleteSelectedBtn();
+      } else if (e.target.classList.contains("check-resident")) {
+        updateDeleteSelectedBtn();
+      }
+    });
+
+    function updateDeleteSelectedBtn() {
+       const btn = document.getElementById("btn-delete-selected");
+       const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+       if (btn) {
+         if (checked.length > 0) {
+           btn.style.display = "inline-block";
+           btn.textContent = `刪除選取項目 (${checked.length})`;
+         } else {
+           btn.style.display = "none";
+         }
+       }
+    }
+
+    const btnDeleteSelected = document.getElementById("btn-delete-selected");
+    if (btnDeleteSelected) {
+      btnDeleteSelected.addEventListener("click", async () => {
+         const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+         if (checked.length === 0) return;
+         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
+         btnDeleteSelected.disabled = true;
+         btnDeleteSelected.textContent = "刪除中...";
+         let successCount = 0;
+         let failCount = 0;
+         const allIds = Array.from(checked).map(cb => cb.value);
+         try {
+            const limit = 10;
+            const processItem = async (uid) => {
+               try {
+                 await deleteDoc(doc(db, "users", uid));
+                 successCount++;
+               } catch (e) {
+                 console.error(e);
+                 failCount++;
+               }
+            };
+            for (let i = 0; i < allIds.length; i += limit) {
+               const batchIds = allIds.slice(i, i + limit);
+               await Promise.all(batchIds.map(uid => processItem(uid)));
+            }
+            showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+            await renderSettingsResidents();
+         } catch (err) {
+           console.error(err);
+           showHint("批次刪除發生錯誤", "error");
+         } finally {
+           if (btnDeleteSelected) {
+             btnDeleteSelected.disabled = false;
+             btnDeleteSelected.textContent = "刪除選取項目";
+           }
+         }
+      });
+    }
+
     const btnEdits = sysNav.content.querySelectorAll(".btn-edit-resident");
-    const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-resident");
     btnEdits.forEach(btn => {
       btn.addEventListener("click", async () => {
         if (!sysNav.content) return;
@@ -447,34 +725,256 @@ async function handleRoleRedirect(role) {
             target.phone = d.phone || target.phone;
             target.photoURL = d.photoURL || target.photoURL;
             target.status = d.status || target.status;
+            target.seq = d.seq;
+            target.houseNo = d.houseNo;
+            target.subNo = d.subNo;
+            target.qrCodeText = d.qrCodeText;
+            target.address = d.address;
+            target.area = d.area;
+            target.ownershipRatio = d.ownershipRatio;
           }
         } catch {}
         openEditModal(target, isSelf);
       });
     });
-    btnDeletes.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
-        if (!ok) return;
-        try {
-          const tr = btn.closest("tr");
-          const targetUid = tr && tr.getAttribute("data-uid");
-          const curr = auth.currentUser;
-          if (curr && curr.uid === targetUid) {
-            await curr.delete();
-            showHint("已刪除目前帳號", "success");
-            redirectAfterSignOut();
-          } else {
-            await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-            showHint("已標記該帳號為停用", "success");
-            await renderSettingsResidents();
-          }
-        } catch (err) {
-          console.error(err);
-          showHint("刪除失敗，可能需要重新登入驗證", "error");
-        }
-      });
+
+    const btnExport = document.getElementById("btn-export-resident");
+    btnExport && btnExport.addEventListener("click", async () => {
+      btnExport.disabled = true;
+      btnExport.textContent = "匯出中...";
+      try {
+        await ensureXlsxLib();
+        if (!window.XLSX) throw new Error("Excel Library not found");
+        const data = residents.map((r, idx) => ({
+          "大頭照": r.photoURL || "",
+          "序號": r.seq || "",
+          "戶號": r.houseNo || "",
+          "子戶號": r.subNo !== undefined ? r.subNo : "",
+          "QR code": r.qrCodeText || "",
+          "姓名": r.displayName || "",
+          "地址": r.address || "",
+          "坪數": r.area || "",
+          "區分權比": r.ownershipRatio || "",
+          "手機號碼": r.phone || "",
+          "電子郵件": r.email || "",
+          "狀態": r.status || "啟用"
+        }));
+        const ws = window.XLSX.utils.json_to_sheet(data);
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, "Residents");
+        window.XLSX.writeFile(wb, `${cname}_residents_${new Date().toISOString().slice(0,10)}.xlsx`);
+      } catch(e) {
+        console.error(e);
+        alert("匯出失敗");
+      } finally {
+        btnExport.disabled = false;
+        btnExport.textContent = "匯出 Excel";
+      }
     });
+
+    const btnImport = document.getElementById("btn-import-resident");
+    btnImport && btnImport.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".xlsx, .xls, .csv";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        let overlay = document.getElementById("import-overlay");
+        if (!overlay) {
+          overlay = document.createElement("div");
+          overlay.id = "import-overlay";
+          overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;justify-content:center;align-items:center;color:#fff;flex-direction:column;font-size:1.2rem;";
+          document.body.appendChild(overlay);
+        }
+        overlay.style.display = "flex";
+        overlay.innerHTML = `<div class="spinner"></div><div id="import-msg" style="margin-top:15px;">準備匯入中...</div>`;
+        btnImport.disabled = true;
+        btnImport.textContent = "匯入中...";
+        try {
+          await ensureXlsxLib();
+          if (!window.XLSX) throw new Error("Excel Library not found");
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const data = new Uint8Array(e.target.result);
+              const workbook = window.XLSX.read(data, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+              if (jsonData.length === 0) {
+                alert("檔案內容為空");
+                overlay.style.display = "none";
+                return;
+              }
+              if (!confirm(`即將匯入 ${jsonData.length} 筆資料，確定嗎？`)) {
+                overlay.style.display = "none";
+                return;
+              }
+              let successCount = 0;
+              let failCount = 0;
+              const total = jsonData.length;
+              const updateProgress = (processed) => {
+                 const el = document.getElementById("import-msg");
+                 if (el) el.textContent = `匯入中... ${processed} / ${total}`;
+              };
+              const CHUNK_SIZE = 20; 
+              for (let i = 0; i < total; i += CHUNK_SIZE) {
+                const chunk = jsonData.slice(i, i + CHUNK_SIZE);
+                const batch = writeBatch(db);
+                let hasWrites = false;
+                const promises = chunk.map(async (row) => {
+                    try {
+                        const email = (row["電子郵件"] || "").trim();
+                        const password = (row["密碼"] || "123456").trim();
+                        const displayName = (row["姓名"] || "").trim();
+                        const phone = (row["手機號碼"] || "").toString().trim();
+                        const seq = (row["序號"] || "").toString().trim();
+                        const houseNo = (row["戶號"] || "").toString().trim();
+                        const subNoRaw = row["子戶號"];
+                        const qrCodeText = (row["QR code"] || "").trim();
+                        const address = (row["地址"] || "").trim();
+                        const area = (row["坪數"] || "").toString().trim();
+                        const ownershipRatio = (row["區分權比"] || "").toString().trim();
+                        const status = (row["狀態"] || "停用").trim();
+                        const photoURL = (row["大頭照"] || "").trim();
+                        if (!email) { failCount++; return null; }
+                        let uid = null;
+                        try {
+                            const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+                            uid = cred.user.uid;
+                            await updateProfile(cred.user, { displayName, photoURL });
+                            await signOut(createAuth);
+                        } catch (authErr) {
+                            if (authErr.code === 'auth/email-already-in-use') {
+                                const qUser = query(collection(db, "users"), where("email", "==", email));
+                                const snapUser = await getDocs(qUser);
+                                if (!snapUser.empty) uid = snapUser.docs[0].id;
+                            }
+                            if (!uid) { failCount++; return null; }
+                        }
+                        if (uid) {
+                            const docRef = doc(db, "users", uid);
+                            const payload = {
+                                email, role: "住戶", status, displayName, phone, photoURL,
+                                community: selectedSlug, seq, houseNo,
+                                ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+                                qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
+                            };
+                            return { docRef, payload };
+                        }
+                    } catch (err) { failCount++; }
+                    return null;
+                });
+                const results = await Promise.all(promises);
+                results.forEach(res => {
+                    if (res) {
+                        batch.set(res.docRef, res.payload, { merge: true });
+                        hasWrites = true;
+                        successCount++;
+                    }
+                });
+                if (hasWrites) await batch.commit();
+                updateProgress(Math.min(i + CHUNK_SIZE, total));
+              }
+              overlay.innerHTML = `
+                <div style="background:white;color:black;padding:20px;border-radius:8px;text-align:center;min-width:300px;">
+                    <h2 style="margin-top:0;color:#333;">匯入完成</h2>
+                    <p style="font-size:1.1rem;margin:10px 0;">成功：<span style="color:green;font-weight:bold;">${successCount}</span> 筆</p>
+                    <p style="font-size:1.1rem;margin:10px 0;">失敗：<span style="color:red;font-weight:bold;">${failCount}</span> 筆</p>
+                    <button id="close-overlay-btn" class="btn action-btn primary" style="margin-top:15px;width:100%;">確定</button>
+                </div>
+              `;
+              const closeBtn = document.getElementById("close-overlay-btn");
+              if (closeBtn) {
+                  closeBtn.onclick = async () => {
+                      overlay.style.display = "none";
+                      await renderSettingsResidents();
+                  };
+              }
+            } catch (e) {
+              console.error(e);
+              alert("讀取 Excel 失敗");
+              overlay.style.display = "none";
+            } finally {
+              btnImport.disabled = false;
+              btnImport.textContent = "匯入 Excel";
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        } catch(e) {
+          console.error(e);
+          alert("匯入失敗");
+          btnImport.disabled = false;
+          btnImport.textContent = "匯入 Excel";
+          if (overlay) overlay.style.display = "none";
+        }
+      };
+      input.click();
+    });
+
+    sysNav.content.addEventListener("change", (e) => {
+      if (e.target.id === "check-all-residents") {
+        const checked = e.target.checked;
+        const checkboxes = sysNav.content.querySelectorAll(".check-resident");
+        checkboxes.forEach(cb => cb.checked = checked);
+        updateDeleteSelectedBtn();
+      } else if (e.target.classList.contains("check-resident")) {
+        updateDeleteSelectedBtn();
+      }
+    });
+
+    function updateDeleteSelectedBtn() {
+       const btn = document.getElementById("btn-delete-selected");
+       const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+       if (btn) {
+         if (checked.length > 0) {
+           btn.style.display = "inline-block";
+           btn.textContent = `刪除選取項目 (${checked.length})`;
+         } else {
+           btn.style.display = "none";
+         }
+       }
+    }
+
+    const btnDeleteSelectedLegacy2 = document.getElementById("btn-delete-selected");
+    if (btnDeleteSelectedLegacy2) {
+      btnDeleteSelectedLegacy2.addEventListener("click", async () => {
+         const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+         if (checked.length === 0) return;
+         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
+         btnDeleteSelectedLegacy2.disabled = true;
+         btnDeleteSelectedLegacy2.textContent = "刪除中...";
+         let successCount = 0;
+         let failCount = 0;
+         const allIds = Array.from(checked).map(cb => cb.value);
+         try {
+            const limit = 10;
+            const processItem = async (uid) => {
+               try {
+                 await deleteDoc(doc(db, "users", uid));
+                 successCount++;
+               } catch (e) {
+                 console.error(e);
+                 failCount++;
+               }
+            };
+            for (let i=0; i<allIds.length; i+=limit) {
+                const chunk = allIds.slice(i, i+limit);
+                await Promise.all(chunk.map(processItem));
+            }
+            alert(`刪除完成\n成功：${successCount}\n失敗：${failCount}`);
+            await renderSettingsResidents();
+         } catch(e) {
+            console.error(e);
+            alert("刪除過程發生錯誤");
+         } finally {
+            btnDeleteSelectedLegacy2.disabled = false;
+            btnDeleteSelectedLegacy2.textContent = "刪除選取項目";
+            btnDeleteSelectedLegacy2.style.display = "none";
+         }
+      });
+    }
   }
   
   const u = auth.currentUser;
@@ -895,6 +1395,13 @@ if (sysNav.subContainer) {
             target.phone = d.phone || target.phone;
             target.photoURL = d.photoURL || target.photoURL;
             target.status = d.status || target.status;
+            target.seq = d.seq;
+            target.houseNo = d.houseNo;
+            target.subNo = d.subNo;
+            target.qrCodeText = d.qrCodeText;
+            target.address = d.address;
+            target.area = d.area;
+            target.ownershipRatio = d.ownershipRatio;
           }
         } catch {}
         openEditModal(target, isSelf);
@@ -989,7 +1496,7 @@ if (sysNav.subContainer) {
         ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
         : `<span class="avatar">${(nm || a.email || "管")[0]}</span>`;
       return `
-        <tr data-uid="${a.id}">
+        <tr data-uid="${a.id}" data-slug="${selectedSlug}">
           <td class="avatar-cell">${av}</td>
           <td>${nm}</td>
           <td>${a.phone || ""}</td>
@@ -1154,9 +1661,24 @@ if (sysNav.subContainer) {
     });
     const btnGoAdmins = sysNav.content.querySelectorAll(".btn-go-community-admin");
     btnGoAdmins.forEach(btn => {
-      btn.addEventListener("click", () => {
-        if (!selectedSlug) return;
-        const url = `admin.html?c=${selectedSlug}`;
+      btn.addEventListener("click", async () => {
+        const tr = btn.closest("tr");
+        const slug = tr && tr.getAttribute("data-slug");
+        if (!slug) return;
+        
+        // Check role validation again just in case (though target page checks too)
+        const user = auth.currentUser;
+        if (user) {
+           const role = await getOrCreateUserRole(user.uid, user.email);
+           const userSlug = await getUserCommunity(user.uid);
+           if (role !== "系統管理員" && slug !== userSlug) {
+              // If not sys admin, ensure they only go to their own community
+              location.replace(`admin.html?c=${userSlug}`);
+              return;
+           }
+        }
+        
+        const url = `admin.html?c=${slug}`;
         const w = window.open(url, "_blank");
         if (w) w.opener = null;
       });
@@ -1366,16 +1888,7 @@ if (sysNav.subContainer) {
     const isResident = (target.role || "住戶") === "住戶";
     if (isResident) {
       const titleR = "編輯住戶";
-      const seqR = (() => {
-        try {
-          const tbody = document.getElementById("sys-content")?.querySelector("tbody");
-          if (!tbody) return "";
-          const trs = Array.from(tbody.querySelectorAll("tr"));
-          const idx = trs.findIndex(tr => tr.getAttribute("data-uid") === target.id);
-          return idx >= 0 ? String(idx + 1) : "";
-        } catch {}
-        return "";
-      })();
+      const seqR = target.seq || "";
       const bodyR = `
         <div class="modal-dialog">
           <div class="modal-head"><div class="modal-title">${titleR}</div></div>
@@ -1415,6 +1928,14 @@ if (sysNav.subContainer) {
             <div class="modal-row">
               <label>地址</label>
               <input type="text" id="modal-address" value="${target.address || ""}">
+            </div>
+            <div class="modal-row">
+              <label>坪數</label>
+              <input type="number" id="modal-area" value="${target.area || ""}">
+            </div>
+            <div class="modal-row">
+              <label>區分權比</label>
+              <input type="number" id="modal-ownership" value="${target.ownershipRatio || ""}">
             </div>
             <div class="modal-row">
               <label>手機號碼</label>
@@ -1479,6 +2000,7 @@ if (sysNav.subContainer) {
       btnSave && btnSave.addEventListener("click", async () => {
         try {
           const newName = document.getElementById("modal-name").value.trim();
+          const newSeq = document.getElementById("modal-serial").value.trim();
           const newPhone = document.getElementById("modal-phone").value.trim();
           const photoFile = document.getElementById("modal-photo-file").files[0];
           const newPassword = document.getElementById("modal-password").value;
@@ -1487,6 +2009,8 @@ if (sysNav.subContainer) {
           const newSubNoRaw = document.getElementById("modal-sub-no").value.trim();
           const newSubNo = newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : undefined;
           const newAddress = document.getElementById("modal-address").value.trim();
+          const newArea = document.getElementById("modal-area").value.trim();
+          const newOwnership = document.getElementById("modal-ownership").value.trim();
           const newQrCodeText = document.getElementById("modal-qr-code").value.trim();
           const newEmail = document.getElementById("modal-email").value.trim();
           let newPhotoURL = target.photoURL || "";
@@ -1514,12 +2038,15 @@ if (sysNav.subContainer) {
           }
           const payload = {
             displayName: newName || target.displayName,
+            seq: newSeq,
             phone: newPhone || target.phone,
             photoURL: newPhotoURL,
             status: newStatus || target.status,
             houseNo: newHouseNo || target.houseNo || "",
             address: newAddress || target.address || "",
             qrCodeText: newQrCodeText || target.qrCodeText || "",
+            area: newArea || target.area || "",
+            ownershipRatio: newOwnership || target.ownershipRatio || "",
             email: newEmail || target.email || ""
           };
           if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
@@ -1897,6 +2424,14 @@ if (sysNav.subContainer) {
             <input type="text" id="create-r-address" placeholder="住址">
           </div>
           <div class="modal-row">
+            <label>坪數</label>
+            <input type="number" id="create-r-area" placeholder="例如 35.5">
+          </div>
+          <div class="modal-row">
+            <label>區分權比</label>
+            <input type="number" id="create-r-ownership" placeholder="例如 1.5">
+          </div>
+          <div class="modal-row">
             <label>手機號碼</label>
             <input type="tel" id="create-r-phone">
           </div>
@@ -1971,9 +2506,12 @@ if (sysNav.subContainer) {
         const displayName = document.getElementById("create-r-name").value.trim();
         const phone = document.getElementById("create-r-phone").value.trim();
         const photoFile = document.getElementById("create-r-photo-file").files[0];
+        const seq = document.getElementById("create-r-seq").value.trim();
         const houseNo = document.getElementById("create-r-house-no").value.trim();
         const subNoRaw = document.getElementById("create-r-sub-no").value.trim();
         const address = document.getElementById("create-r-address").value.trim();
+        const area = document.getElementById("create-r-area").value.trim();
+        const ownershipRatio = document.getElementById("create-r-ownership").value.trim();
         const qrCodeText = document.getElementById("create-r-qr-code").value.trim();
         const status = document.getElementById("create-r-status").value;
         let photoURL = "";
@@ -2015,8 +2553,11 @@ if (sysNav.subContainer) {
           displayName,
           phone,
           photoURL,
+          seq,
           houseNo,
           address,
+          area,
+          ownershipRatio,
           qrCodeText,
           ...(subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
           community: slug,
@@ -2085,20 +2626,21 @@ if (sysNav.subContainer) {
         : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
       return `
         <tr data-uid="${a.id}">
+          <td><input type="checkbox" class="check-resident" value="${a.id}"></td>
           <td class="avatar-cell">${av}</td>
-          <td>${idx + 1}</td>
+          <td>${a.seq || ""}</td>
           <td>${a.houseNo || ""}</td>
           <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
-          <td>${a.qrCodeUrl ? `<img src="${a.qrCodeUrl}" alt="QR" style="width:40px;height:40px;border-radius:4px;object-fit:cover">` : `—`}</td>
+          <td>${a.qrCodeText || "—"}</td>
           <td>${nm}</td>
           <td>${a.address || ""}</td>
+          <td>${a.area || ""}</td>
           <td>${a.phone || ""}</td>
           <td>${a.email || ""}</td>
           <td>••••••</td>
           <td class="status">${a.status || "停用"}</td>
           <td class="actions">
             <button class="btn small action-btn btn-edit-resident">編輯</button>
-            <button class="btn small action-btn danger btn-delete-resident">刪除</button>
           </td>
         </tr>
       `;
@@ -2113,15 +2655,21 @@ if (sysNav.subContainer) {
         </div>
         <div class="card-head">
           <h1 class="card-title">住戶帳號列表（${cname}）</h1>
-          <button id="btn-create-resident" class="btn small action-btn">新增</button>
+          <div style="display:flex;gap:8px;">
+            <button id="btn-delete-selected" class="btn small action-btn danger" style="display:none;">刪除選取項目</button>
+            <button id="btn-import-resident" class="btn small action-btn">匯入 Excel</button>
+            <button id="btn-export-resident" class="btn small action-btn">匯出 Excel</button>
+            <button id="btn-create-resident" class="btn small action-btn">新增</button>
+          </div>
         </div>
         <div class="table-wrap">
           <table class="table">
             <colgroup>
-              <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
+              <col width="40"><col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col><col width="80"><col width="80"><col width="160">
             </colgroup>
             <thead>
               <tr>
+                <th><input type="checkbox" id="check-all-residents"></th>
                 <th>大頭照</th>
                 <th>序號</th>
                 <th>戶號</th>
@@ -2129,6 +2677,7 @@ if (sysNav.subContainer) {
                 <th>QR code</th>
                 <th>姓名</th>
                 <th>地址</th>
+                <th>坪數</th>
                 <th>手機號碼</th>
                 <th>電子郵件</th>
                 <th>密碼</th>
@@ -2147,6 +2696,239 @@ if (sysNav.subContainer) {
       window.currentResidentsSlug = sel.value;
       await renderSettingsResidents();
     });
+    const btnExport = document.getElementById("btn-export-resident");
+    btnExport && btnExport.addEventListener("click", async () => {
+      btnExport.disabled = true;
+      btnExport.textContent = "匯出中...";
+      try {
+        await ensureXlsxLib();
+        if (!window.XLSX) throw new Error("Excel Library not found");
+        const data = residents.map((r) => ({
+          "大頭照": r.photoURL || "",
+          "序號": r.seq || "",
+          "戶號": r.houseNo || "",
+          "子戶號": r.subNo !== undefined ? r.subNo : "",
+          "QR code": r.qrCodeText || "",
+          "姓名": r.displayName || "",
+          "地址": r.address || "",
+          "坪數": r.area || "",
+          "區分權比": r.ownershipRatio || "",
+          "手機號碼": r.phone || "",
+          "電子郵件": r.email || "",
+          "狀態": r.status || "啟用"
+        }));
+        const ws = window.XLSX.utils.json_to_sheet(data);
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, "Residents");
+        window.XLSX.writeFile(wb, `${cname}_residents_${new Date().toISOString().slice(0,10)}.xlsx`);
+      } catch(e) {
+        console.error(e);
+        alert("匯出失敗");
+      } finally {
+        btnExport.disabled = false;
+        btnExport.textContent = "匯出 Excel";
+      }
+    });
+    const btnImport = document.getElementById("btn-import-resident");
+    btnImport && btnImport.addEventListener("click", () => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".xlsx, .xls, .csv";
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        let overlay = document.getElementById("import-overlay");
+        if (!overlay) {
+          overlay = document.createElement("div");
+          overlay.id = "import-overlay";
+          overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;justify-content:center;align-items:center;color:#fff;flex-direction:column;font-size:1.2rem;";
+          document.body.appendChild(overlay);
+        }
+        overlay.style.display = "flex";
+        overlay.innerHTML = `<div class="spinner"></div><div id="import-msg" style="margin-top:15px;">準備匯入中...</div>`;
+        btnImport.disabled = true;
+        btnImport.textContent = "匯入中...";
+        try {
+          await ensureXlsxLib();
+          if (!window.XLSX) throw new Error("Excel Library not found");
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const data = new Uint8Array(e.target.result);
+              const workbook = window.XLSX.read(data, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+              if (jsonData.length === 0) {
+                alert("檔案內容為空");
+                overlay.style.display = "none";
+                return;
+              }
+              if (!confirm(`即將匯入 ${jsonData.length} 筆資料，確定嗎？`)) {
+                overlay.style.display = "none";
+                return;
+              }
+              let successCount = 0;
+              let failCount = 0;
+              const total = jsonData.length;
+              const updateProgress = (processed) => {
+                 const el = document.getElementById("import-msg");
+                 if (el) el.textContent = `匯入中... ${processed} / ${total}`;
+              };
+              const CHUNK_SIZE = 20; 
+              for (let i = 0; i < total; i += CHUNK_SIZE) {
+                const chunk = jsonData.slice(i, i + CHUNK_SIZE);
+                const batch = writeBatch(db);
+                let hasWrites = false;
+                const promises = chunk.map(async (row) => {
+                    try {
+                        const email = (row["電子郵件"] || "").trim();
+                        const password = (row["密碼"] || "123456").trim();
+                        const displayName = (row["姓名"] || "").trim();
+                        const phone = (row["手機號碼"] || "").toString().trim();
+                        const seq = (row["序號"] || "").toString().trim();
+                        const houseNo = (row["戶號"] || "").toString().trim();
+                        const subNoRaw = row["子戶號"];
+                        const qrCodeText = (row["QR code"] || "").trim();
+                        const address = (row["地址"] || "").trim();
+                        const area = (row["坪數"] || "").toString().trim();
+                        const ownershipRatio = (row["區分權比"] || "").toString().trim();
+                        const status = (row["狀態"] || "停用").trim();
+                        const photoURL = (row["大頭照"] || "").trim();
+                        if (!email) { failCount++; return null; }
+                        let uid = null;
+                        try {
+                            const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+                            uid = cred.user.uid;
+                            await updateProfile(cred.user, { displayName, photoURL });
+                            await signOut(createAuth);
+                        } catch (authErr) {
+                            if (authErr.code === 'auth/email-already-in-use') {
+                                const qUser = query(collection(db, "users"), where("email", "==", email));
+                                const snapUser = await getDocs(qUser);
+                                if (!snapUser.empty) uid = snapUser.docs[0].id;
+                            }
+                            if (!uid) { failCount++; return null; }
+                        }
+                        if (uid) {
+                            const docRef = doc(db, "users", uid);
+                            const payload = {
+                                email, role: "住戶", status, displayName, phone, photoURL,
+                                community: selectedSlug, seq, houseNo,
+                                ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+                                qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
+                            };
+                            return { docRef, payload };
+                        }
+                    } catch (err) { failCount++; }
+                    return null;
+                });
+                const results = await Promise.all(promises);
+                results.forEach(res => {
+                    if (res) {
+                        batch.set(res.docRef, res.payload, { merge: true });
+                        hasWrites = true;
+                        successCount++;
+                    }
+                });
+                if (hasWrites) await batch.commit();
+                updateProgress(Math.min(i + CHUNK_SIZE, total));
+              }
+              overlay.innerHTML = `
+                <div style="background:white;color:black;padding:20px;border-radius:8px;text-align:center;min-width:300px;">
+                    <h2 style="margin-top:0;color:#333;">匯入完成</h2>
+                    <p style="font-size:1.1rem;margin:10px 0;">成功：<span style="color:green;font-weight:bold;">${successCount}</span> 筆</p>
+                    <p style="font-size:1.1rem;margin:10px 0;">失敗：<span style="color:red;font-weight:bold;">${failCount}</span> 筆</p>
+                    <button id="close-overlay-btn" class="btn action-btn primary" style="margin-top:15px;width:100%;">確定</button>
+                </div>
+              `;
+              const closeBtn = document.getElementById("close-overlay-btn");
+              if (closeBtn) {
+                  closeBtn.onclick = async () => {
+                      overlay.style.display = "none";
+                      await renderSettingsResidents();
+                  };
+              }
+            } catch (e) {
+              console.error(e);
+              alert("讀取 Excel 失敗");
+              overlay.style.display = "none";
+            } finally {
+              btnImport.disabled = false;
+              btnImport.textContent = "匯入 Excel";
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        } catch(e) {
+          console.error(e);
+          alert("匯入失敗");
+          btnImport.disabled = false;
+          btnImport.textContent = "匯入 Excel";
+          if (overlay) overlay.style.display = "none";
+        }
+      };
+      input.click();
+    });
+    sysNav.content.addEventListener("change", (e) => {
+      if (e.target.id === "check-all-residents") {
+        const checked = e.target.checked;
+        const checkboxes = sysNav.content.querySelectorAll(".check-resident");
+        checkboxes.forEach(cb => cb.checked = checked);
+        updateDeleteSelectedBtn();
+      } else if (e.target.classList.contains("check-resident")) {
+        updateDeleteSelectedBtn();
+      }
+    });
+    function updateDeleteSelectedBtn() {
+       const btn = document.getElementById("btn-delete-selected");
+       const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+       if (btn) {
+         if (checked.length > 0) {
+           btn.style.display = "inline-block";
+           btn.textContent = `刪除選取項目 (${checked.length})`;
+         } else {
+           btn.style.display = "none";
+         }
+       }
+    }
+    const btnDeleteSelected = document.getElementById("btn-delete-selected");
+    if (btnDeleteSelected) {
+      btnDeleteSelected.addEventListener("click", async () => {
+         const checked = sysNav.content.querySelectorAll(".check-resident:checked");
+         if (checked.length === 0) return;
+         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
+         btnDeleteSelected.disabled = true;
+        btnDeleteSelected.textContent = "刪除中...";
+         let successCount = 0;
+         let failCount = 0;
+         const allIds = Array.from(checked).map(cb => cb.value);
+         try {
+            const limit = 10;
+            const processItem = async (uid) => {
+               try {
+                 await deleteDoc(doc(db, "users", uid));
+                 successCount++;
+               } catch (e) {
+                 console.error(e);
+                 failCount++;
+               }
+            };
+            for (let i=0; i<allIds.length; i+=limit) {
+                const chunk = allIds.slice(i, i+limit);
+                await Promise.all(chunk.map(processItem));
+            }
+            alert(`刪除完成\n成功：${successCount}\n失敗：${failCount}`);
+            await renderSettingsResidents();
+         } catch(e) {
+            console.error(e);
+            alert("刪除過程發生錯誤");
+         } finally {
+            btnDeleteSelected.disabled = false;
+            btnDeleteSelected.textContent = "刪除選取項目";
+            btnDeleteSelected.style.display = "none";
+         }
+      });
+    }
     const btnCreate = document.getElementById("btn-create-resident");
     btnCreate && btnCreate.addEventListener("click", () => openCreateResidentModal(selectedSlug));
     const btnEdits = sysNav.content.querySelectorAll(".btn-edit-resident");
@@ -2168,6 +2950,13 @@ if (sysNav.subContainer) {
             target.phone = d.phone || target.phone;
             target.photoURL = d.photoURL || target.photoURL;
             target.status = d.status || target.status;
+            target.seq = d.seq;
+            target.houseNo = d.houseNo;
+            target.subNo = d.subNo;
+            target.qrCodeText = d.qrCodeText;
+            target.address = d.address;
+            target.area = d.area;
+            target.ownershipRatio = d.ownershipRatio;
           }
         } catch {}
         openEditModal(target, isSelf);
@@ -2312,11 +3101,10 @@ if (sysNav.subContainer) {
           return `<div class="preview-slide ${idx===0?'active':''}">${content}</div>`;
         }).join('');
         previewContent = `
-          <div class="preview-carousel">
             ${slides}
             <button class="preview-nav-btn preview-nav-prev" style="display: ${adsConfig.nav ? 'block' : 'none'}">❮</button>
             <button class="preview-nav-btn preview-nav-next" style="display: ${adsConfig.nav ? 'block' : 'none'}">❯</button>
-          </div>`;
+          `;
       }
 
       contentHtml = `
@@ -2456,6 +3244,12 @@ if (sysNav.subContainer) {
       
       // Function to refresh preview based on current DOM inputs
       const updatePreview = () => {
+         // Clear existing interval immediately to prevent race conditions
+         if (window.adsPreviewInterval) {
+             clearInterval(window.adsPreviewInterval);
+             window.adsPreviewInterval = null;
+         }
+
          // Gather current inputs
          const trs = sysNav.content.querySelectorAll("tbody tr");
          const items = [];
@@ -2530,11 +3324,10 @@ if (sysNav.subContainer) {
             }).join('');
             
             previewContent = `
-              <div class="preview-carousel">
                 ${slidesHtml}
                 <button class="preview-nav-btn preview-nav-prev" style="display: ${currentConfig.nav ? 'block' : 'none'}">❮</button>
                 <button class="preview-nav-btn preview-nav-next" style="display: ${currentConfig.nav ? 'block' : 'none'}">❯</button>
-              </div>`;
+              `;
          }
          
          previewContainer.innerHTML = previewContent;
@@ -2544,7 +3337,10 @@ if (sysNav.subContainer) {
       };
 
       const restartCarousel = (config) => {
-          if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+          if (window.adsPreviewInterval) {
+            clearInterval(window.adsPreviewInterval);
+            window.adsPreviewInterval = null;
+          }
           
           const previewContainer = sysNav.content.querySelector(".a3-preview-container");
           if (!previewContainer) return;
@@ -2557,12 +3353,16 @@ if (sysNav.subContainer) {
 
           let idx = 0;
           // Try to maintain current active slide if possible, or start from 0
-          slides.forEach((s, i) => {
-             if (s.classList.contains('active')) idx = i;
-          });
+          for (let i = 0; i < slides.length; i++) {
+             if (slides[i].classList.contains('active')) {
+                 idx = i;
+                 break;
+             }
+          }
           
           let direction = 1; 
-          const intervalTime = Math.max((parseInt(config.interval) || 3) * 1000, 1000);
+          const rawInterval = parseInt(config.interval);
+          const intervalTime = Math.max((!isNaN(rawInterval) ? rawInterval : 3) * 1000, 2000); // Enforce min 2s
           
           const showSlide = (i) => {
               slides.forEach(s => s.classList.remove('active'));
@@ -2574,14 +3374,16 @@ if (sysNav.subContainer) {
 
           const next = () => {
               if (config.loop === 'rewind') {
-                  if (slides.length <= 1) return;
                   if (idx >= slides.length - 1) direction = -1;
                   if (idx <= 0) direction = 1;
                   idx += direction;
               } else if (config.loop === 'once') {
                   if (idx < slides.length - 1) idx++;
                   else {
-                      if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+                      if (window.adsPreviewInterval) {
+                          clearInterval(window.adsPreviewInterval);
+                          window.adsPreviewInterval = null;
+                      }
                       return;
                   }
               } else { 
@@ -2600,13 +3402,17 @@ if (sysNav.subContainer) {
               showSlide(idx);
           };
 
+          const startTimer = () => {
+              if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
+              if (config.loop === 'once' && idx >= slides.length - 1) return;
+              window.adsPreviewInterval = setInterval(next, intervalTime);
+          };
+          
+          const resetTimer = () => {
+              startTimer();
+          };
+
           if (btnNext) {
-             // Remove old listeners by cloning or just re-adding (careful with dupes)
-             // Simple way: replace element to strip listeners, or just handle it. 
-             // Since updatePreview re-creates HTML, listeners are gone. 
-             // But if restartCarousel is called without HTML update (not the case here), it might duplicate.
-             // In current flow, restartCarousel is always called after updatePreview (HTML rebuild).
-             // EXCEPT initial load. Initial load renders HTML then calls restartCarousel.
              btnNext.onclick = (e) => {
                 e.preventDefault();
                 next();
@@ -2640,16 +3446,6 @@ if (sysNav.subContainer) {
               resetTimer();
             }, { passive: true });
           }
-
-          const startTimer = () => {
-              if (config.loop === 'once' && idx >= slides.length - 1) return;
-              window.adsPreviewInterval = setInterval(next, intervalTime);
-          };
-          
-          const resetTimer = () => {
-              if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
-              startTimer();
-          };
 
           startTimer();
       };
@@ -2772,7 +3568,7 @@ const adminSubMenus = {
   mail: ["收件", "取件", "寄放", "設定"],
   facility: ["設定"],
   announce: ["公告", "財報", "修繕", "APP", "設定"],
-  residents: ["住戶", "設定"],
+  residents: ["住戶", "通知", "警報", "設定"],
   others: ["日誌", "班表", "通訊", "巡邏", "設定"]
 };
 
@@ -2845,6 +3641,19 @@ function renderAdminContent(mainKey, subLabel) {
   if (mainKey === "residents") {
     if (sub === "住戶") {
       (async () => {
+        const cu = auth.currentUser;
+        if (!cu) {
+          adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">請先登入後台</div></div>`;
+          return;
+        }
+        let roleNow = "住戶";
+        try {
+          roleNow = await getOrCreateUserRole(cu.uid, cu.email);
+        } catch {}
+        if (roleNow === "停用" || !checkPagePermission(roleNow, window.location.pathname)) {
+          adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">權限不足</div></div>`;
+          return;
+        }
         let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
         if (slug === "default") {
           try {
@@ -2921,20 +3730,22 @@ function renderAdminContent(mainKey, subLabel) {
           const qrText = a.qrCodeText || "—";
           return `
             <tr data-uid="${a.id}">
+              <td><input type="checkbox" class="check-resident" value="${a.id}"></td>
               <td class="avatar-cell">${av}</td>
-              <td>${idx + 1}</td>
+              <td>${a.seq || ""}</td>
               <td>${a.houseNo || ""}</td>
               <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
               <td>${qrText}</td>
               <td>${nm}</td>
               <td>${a.address || ""}</td>
+              <td>${a.area || ""}</td>
+              <td>${a.ownershipRatio || ""}</td>
               <td>${a.phone || ""}</td>
               <td>${a.email || ""}</td>
               <td>••••••</td>
               <td class="status">${a.status || "停用"}</td>
               <td class="actions">
                 <button class="btn small action-btn btn-edit-resident">編輯</button>
-                <button class="btn small action-btn danger btn-delete-resident">刪除</button>
               </td>
             </tr>
           `;
@@ -2944,15 +3755,21 @@ function renderAdminContent(mainKey, subLabel) {
           <div class="card data-card">
             <div class="card-head">
               <h1 class="card-title">住戶帳號列表（${cname}） · 總數：${residents.length}</h1>
-              <button id="btn-create-resident" class="btn small action-btn">新增</button>
+              <div style="display:flex;gap:8px;">
+                <button id="btn-delete-selected" class="btn small action-btn danger" style="display:none;">刪除選取項目</button>
+                <button id="btn-import-resident" class="btn small action-btn">匯入 Excel</button>
+                <button id="btn-export-resident" class="btn small action-btn">匯出 Excel</button>
+                <button id="btn-create-resident" class="btn small action-btn">新增</button>
+              </div>
             </div>
             <div class="table-wrap">
               <table class="table">
                 <colgroup>
-                  <col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col width="80"><col width="80"><col width="160">
+                  <col width="40"><col><col width="70"><col width="100"><col width="80"><col width="120"><col><col><col><col><col><col><col width="80"><col width="80"><col width="160">
                 </colgroup>
                 <thead>
                   <tr>
+                    <th><input type="checkbox" id="check-all-residents"></th>
                     <th>大頭照</th>
                     <th>序號</th>
                     <th>戶號</th>
@@ -2960,6 +3777,8 @@ function renderAdminContent(mainKey, subLabel) {
                     <th>QR code</th>
                     <th>姓名</th>
                     <th>地址</th>
+                    <th>坪數</th>
+                    <th>區分權比</th>
                     <th>手機號碼</th>
                     <th>電子郵件</th>
                     <th>密碼</th>
@@ -2975,51 +3794,312 @@ function renderAdminContent(mainKey, subLabel) {
         `;
         const btnCreate = document.getElementById("btn-create-resident");
         btnCreate && btnCreate.addEventListener("click", () => window.openCreateResidentModal && window.openCreateResidentModal(slug));
-        const btnEdits = adminNav.content.querySelectorAll(".btn-edit-resident");
-        const btnDeletes = adminNav.content.querySelectorAll(".btn-delete-resident");
-        btnEdits.forEach(btn => {
-          btn.addEventListener("click", async () => {
-            const tr = btn.closest("tr");
-            const targetUid = tr && tr.getAttribute("data-uid");
-            const currentUser = auth.currentUser;
-            const isSelf = currentUser && currentUser.uid === targetUid;
-            let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "住戶", status: "停用" };
-            try {
-              const snap = await getDoc(doc(db, "users", targetUid));
-              if (snap.exists()) {
-                const d = snap.data();
-                target.displayName = d.displayName || target.displayName;
-                target.email = d.email || target.email;
-                target.phone = d.phone || target.phone;
-                target.photoURL = d.photoURL || target.photoURL;
-                target.status = d.status || target.status;
-              }
-            } catch {}
-            window.openEditModal && window.openEditModal(target, isSelf);
-          });
+        
+        const btnExport = document.getElementById("btn-export-resident");
+        btnExport && btnExport.addEventListener("click", async () => {
+          btnExport.disabled = true;
+          btnExport.textContent = "匯出中...";
+          try {
+            await ensureXlsxLib();
+            if (!window.XLSX) throw new Error("Excel Library not found");
+            
+            const data = residents.map((r, idx) => ({
+              "大頭照": r.photoURL || "",
+              "序號": r.seq || "",
+              "戶號": r.houseNo || "",
+              "子戶號": r.subNo !== undefined ? r.subNo : "",
+              "QR code": r.qrCodeText || "",
+              "姓名": r.displayName || "",
+              "地址": r.address || "",
+              "坪數": r.area || "",
+              "區分權比": r.ownershipRatio || "",
+              "手機號碼": r.phone || "",
+              "電子郵件": r.email || "",
+              "狀態": r.status || "啟用"
+            }));
+            
+            const ws = window.XLSX.utils.json_to_sheet(data);
+            const wb = window.XLSX.utils.book_new();
+            window.XLSX.utils.book_append_sheet(wb, ws, "Residents");
+            window.XLSX.writeFile(wb, `${cname}_residents_${new Date().toISOString().slice(0,10)}.xlsx`);
+          } catch(e) {
+            console.error(e);
+            alert("匯出失敗");
+          } finally {
+            btnExport.disabled = false;
+            btnExport.textContent = "匯出 Excel";
+          }
         });
-        btnDeletes.forEach(btn => {
-          btn.addEventListener("click", async () => {
-            const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
-            if (!ok) return;
-            try {
-              const tr = btn.closest("tr");
-              const targetUid = tr && tr.getAttribute("data-uid");
-              const curr = auth.currentUser;
-              if (curr && curr.uid === targetUid) {
-                await curr.delete();
-                showHint("已刪除目前帳號", "success");
-                redirectAfterSignOut();
-              } else {
-                await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-                showHint("已標記該帳號為停用", "success");
-                setActiveAdminNav("residents");
-              }
-            } catch (err) {
-              showHint("刪除失敗，可能需要重新登入驗證", "error");
+
+        const btnImport = document.getElementById("btn-import-resident");
+        btnImport && btnImport.addEventListener("click", () => {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = ".xlsx, .xls, .csv";
+          input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Show blocking overlay
+            let overlay = document.getElementById("import-overlay");
+            if (!overlay) {
+              overlay = document.createElement("div");
+              overlay.id = "import-overlay";
+              overlay.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;justify-content:center;align-items:center;color:#fff;flex-direction:column;font-size:1.2rem;";
+              overlay.innerHTML = `<div class="spinner"></div><div id="import-msg" style="margin-top:15px;">準備匯入中...</div>`;
+              document.body.appendChild(overlay);
+            } else {
+              overlay.style.display = "flex";
+              overlay.innerHTML = `<div class="spinner"></div><div id="import-msg" style="margin-top:15px;">準備匯入中...</div>`;
             }
-          });
+            
+            btnImport.disabled = true;
+            btnImport.textContent = "匯入中...";
+            try {
+              await ensureXlsxLib();
+              if (!window.XLSX) throw new Error("Excel Library not found");
+              
+              const reader = new FileReader();
+              reader.onload = async (e) => {
+                try {
+                  const data = new Uint8Array(e.target.result);
+                  const workbook = window.XLSX.read(data, { type: 'array' });
+                  const firstSheetName = workbook.SheetNames[0];
+                  const worksheet = workbook.Sheets[firstSheetName];
+                  const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+                  
+                  if (jsonData.length === 0) {
+                    alert("檔案內容為空");
+                    overlay.style.display = "none";
+                    return;
+                  }
+                  
+                  if (!confirm(`即將匯入 ${jsonData.length} 筆資料，確定嗎？`)) {
+                    overlay.style.display = "none";
+                    return;
+                  }
+
+                  let successCount = 0;
+                  let failCount = 0;
+                  const total = jsonData.length;
+                  const updateProgress = (processed) => {
+                     const el = document.getElementById("import-msg");
+                     if (el) el.textContent = `匯入中... ${processed} / ${total}`;
+                  };
+
+                  // Optimized Batch Processing with Concurrency Control
+                  // Auth creation can be rate-limited, so we keep concurrency low (e.g., 10)
+                  const CHUNK_SIZE = 20; 
+                  for (let i = 0; i < total; i += CHUNK_SIZE) {
+                    const chunk = jsonData.slice(i, i + CHUNK_SIZE);
+                    const batch = writeBatch(db);
+                    let hasWrites = false;
+
+                    const promises = chunk.map(async (row) => {
+                        try {
+                            const email = (row["電子郵件"] || "").trim();
+                            const password = (row["密碼"] || "123456").trim();
+                            const displayName = (row["姓名"] || "").trim();
+                            const phone = (row["手機號碼"] || "").toString().trim();
+                            const seq = (row["序號"] || "").toString().trim();
+                            const houseNo = (row["戶號"] || "").toString().trim();
+                            const subNoRaw = row["子戶號"];
+                            const qrCodeText = (row["QR code"] || "").trim();
+                            const address = (row["地址"] || "").trim();
+                            const area = (row["坪數"] || "").toString().trim();
+                            const ownershipRatio = (row["區分權比"] || "").toString().trim();
+                            const status = (row["狀態"] || "停用").trim();
+                            const photoURL = (row["大頭照"] || "").trim();
+
+                            if (!email) {
+                                console.warn("Skipping row without email", row);
+                                failCount++;
+                                return null;
+                            }
+
+                            // Create Auth
+                            let uid = null;
+                            try {
+                                const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+                                uid = cred.user.uid;
+                                await updateProfile(cred.user, { displayName, photoURL });
+                                await signOut(createAuth);
+                            } catch (authErr) {
+                                if (authErr.code === 'auth/email-already-in-use') {
+                                    const qUser = query(collection(db, "users"), where("email", "==", email));
+                                    const snapUser = await getDocs(qUser);
+                                    if (!snapUser.empty) {
+                                        uid = snapUser.docs[0].id;
+                                    }
+                                }
+                                if (!uid) {
+                                    console.error("Auth create failed", authErr);
+                                    failCount++;
+                                    return null;
+                                }
+                            }
+                            
+                            if (uid) {
+                                const docRef = doc(db, "users", uid);
+                                const payload = {
+                                    email,
+                                    role: "住戶",
+                                    status,
+                                    displayName,
+                                    phone,
+                                    photoURL,
+                                    community: slug,
+                                    seq,
+                                    houseNo,
+                                    ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+                                    qrCodeText,
+                                    address,
+                                    area,
+                                    ownershipRatio,
+                                    createdAt: Date.now()
+                                };
+                                return { docRef, payload };
+                            }
+                        } catch (err) {
+                            console.error("Import row failed", err);
+                            failCount++;
+                        }
+                        return null;
+                    });
+
+                    const results = await Promise.all(promises);
+                    results.forEach(res => {
+                        if (res) {
+                            batch.set(res.docRef, res.payload, { merge: true });
+                            hasWrites = true;
+                            successCount++;
+                        }
+                    });
+
+                    if (hasWrites) {
+                        await batch.commit();
+                    }
+                    updateProgress(Math.min(i + CHUNK_SIZE, total));
+                  }
+                  
+                  // Completion UI
+                  overlay.innerHTML = `
+                    <div style="background:white;color:black;padding:20px;border-radius:8px;text-align:center;min-width:300px;">
+                        <h2 style="margin-top:0;color:#333;">匯入完成</h2>
+                        <p style="font-size:1.1rem;margin:10px 0;">成功：<span style="color:green;font-weight:bold;">${successCount}</span> 筆</p>
+                        <p style="font-size:1.1rem;margin:10px 0;">失敗：<span style="color:red;font-weight:bold;">${failCount}</span> 筆</p>
+                        <button id="close-overlay-btn" class="btn action-btn primary" style="margin-top:15px;width:100%;">確定</button>
+                    </div>
+                  `;
+                  const closeBtn = document.getElementById("close-overlay-btn");
+                  if (closeBtn) {
+                      closeBtn.onclick = () => {
+                          overlay.style.display = "none";
+                          // Refresh list
+                          const btnResidents = document.getElementById("admin-tab-residents");
+                          if (btnResidents) btnResidents.click(); 
+                      };
+                  }
+                  
+                } catch (e) {
+                  console.error(e);
+                  alert("讀取 Excel 失敗");
+                  overlay.style.display = "none";
+                } finally {
+                  btnImport.disabled = false;
+                  btnImport.textContent = "匯入 Excel";
+                }
+              };
+              reader.readAsArrayBuffer(file);
+              
+            } catch(e) {
+              console.error(e);
+              alert("匯入失敗");
+              btnImport.disabled = false;
+              btnImport.textContent = "匯入 Excel";
+              if (overlay) overlay.style.display = "none";
+            }
+          };
+          input.click();
         });
+
+        adminNav.content.addEventListener("change", (e) => {
+          if (e.target.id === "check-all-residents") {
+            const checked = e.target.checked;
+            const checkboxes = adminNav.content.querySelectorAll(".check-resident");
+            checkboxes.forEach(cb => cb.checked = checked);
+            updateDeleteSelectedBtn();
+          } else if (e.target.classList.contains("check-resident")) {
+            updateDeleteSelectedBtn();
+          }
+        });
+
+        function updateDeleteSelectedBtn() {
+           const btn = document.getElementById("btn-delete-selected");
+           const checked = adminNav.content.querySelectorAll(".check-resident:checked");
+           if (btn) {
+             if (checked.length > 0) {
+               btn.style.display = "inline-block";
+               btn.textContent = `刪除選取項目 (${checked.length})`;
+             } else {
+               btn.style.display = "none";
+             }
+           }
+        }
+
+        const btnDeleteSelected = document.getElementById("btn-delete-selected");
+        if (btnDeleteSelected) {
+          btnDeleteSelected.addEventListener("click", async () => {
+             const checked = adminNav.content.querySelectorAll(".check-resident:checked");
+             if (checked.length === 0) return;
+             if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
+             
+             btnDeleteSelected.disabled = true;
+             btnDeleteSelected.textContent = "刪除中...";
+             
+             let successCount = 0;
+             let failCount = 0;
+             
+             // Use writeBatch for atomic updates (max 500 operations per batch)
+             const chunks = [];
+             const allIds = Array.from(checked).map(cb => cb.value);
+             for (let i = 0; i < allIds.length; i += 500) {
+               chunks.push(allIds.slice(i, i + 500));
+             }
+             
+             try {
+                const limit = 10;
+                
+                const processItem = async (uid) => {
+                   try {
+                     await deleteDoc(doc(db, "users", uid));
+                     successCount++;
+                   } catch (e) {
+                     console.error(e);
+                     failCount++;
+                   }
+                };
+                
+                // Simple batch processing
+                for (let i = 0; i < allIds.length; i += limit) {
+                   const batchIds = allIds.slice(i, i + limit);
+                   await Promise.all(batchIds.map(uid => processItem(uid)));
+                }
+
+                showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+                setActiveAdminNav("residents"); // Reload
+             } catch (err) {
+               console.error(err);
+               showHint("批次刪除發生錯誤", "error");
+             } finally {
+               if (btnDeleteSelected) {
+                 btnDeleteSelected.disabled = false;
+                 btnDeleteSelected.textContent = "刪除選取項目";
+               }
+             }
+          });
+        }
+
         adminNav.content.addEventListener("click", async (e) => {
           const btn = e.target.closest("button");
           if (!btn) return;
@@ -3042,30 +4122,17 @@ function renderAdminContent(mainKey, subLabel) {
                 target.phone = d.phone || target.phone;
                 target.photoURL = d.photoURL || target.photoURL;
                 target.status = d.status || target.status;
+                target.seq = d.seq;
+                target.houseNo = d.houseNo || target.houseNo;
+                target.subNo = d.subNo;
+                target.qrCodeText = d.qrCodeText || target.qrCodeText;
+                target.address = d.address || target.address;
+                target.area = d.area || target.area;
+                target.ownershipRatio = d.ownershipRatio || target.ownershipRatio;
               }
             } catch {}
             window.openEditModal && window.openEditModal(target, isSelf);
             return;
-          }
-          if (btn.classList.contains("btn-delete-resident")) {
-            const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
-            if (!ok) return;
-            try {
-              const tr = btn.closest("tr");
-              const targetUid = tr && tr.getAttribute("data-uid");
-              const curr = auth.currentUser;
-              if (curr && curr.uid === targetUid) {
-                await curr.delete();
-                showHint("已刪除目前帳號", "success");
-                redirectAfterSignOut();
-              } else {
-                await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-                showHint("已標記該帳號為停用", "success");
-                setActiveAdminNav("residents");
-              }
-            } catch (err) {
-              showHint("刪除失敗，可能需要重新登入驗證", "error");
-            }
           }
         });
       })();
@@ -3073,6 +4140,10 @@ function renderAdminContent(mainKey, subLabel) {
     }
     if (sub === "通知") {
       adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶通知</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      return;
+    }
+    if (sub === "警報") {
+      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶警報</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "設定") {
@@ -3220,6 +4291,14 @@ if (!window.openCreateResidentModal) {
             <input type="text" id="create-r-address" placeholder="住址">
           </div>
           <div class="modal-row">
+            <label>坪數</label>
+            <input type="number" id="create-r-area" placeholder="例如 35.5">
+          </div>
+          <div class="modal-row">
+            <label>區分權比</label>
+            <input type="number" id="create-r-ownership" placeholder="例如 1.5">
+          </div>
+          <div class="modal-row">
             <label>手機號碼</label>
             <input type="tel" id="create-r-phone">
           </div>
@@ -3294,6 +4373,8 @@ if (!window.openCreateResidentModal) {
         const houseNo = document.getElementById("create-r-house-no").value.trim();
         const subNoRaw = document.getElementById("create-r-sub-no").value.trim();
         const address = document.getElementById("create-r-address").value.trim();
+        const area = document.getElementById("create-r-area").value.trim();
+        const ownershipRatio = document.getElementById("create-r-ownership").value.trim();
         const qrCodeText = document.getElementById("create-r-qr-code").value.trim();
         const status = document.getElementById("create-r-status").value;
         let photoURL = "";
@@ -3335,6 +4416,8 @@ if (!window.openCreateResidentModal) {
           photoURL,
           houseNo,
           address,
+          area,
+          ownershipRatio,
           qrCodeText,
           ...(subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
           community: slug,
@@ -3368,16 +4451,7 @@ if (!window.openEditModal) {
     const isResident = (target.role || "住戶") === "住戶";
     if (isResident) {
       const titleR = "編輯住戶";
-      const seqR = (() => {
-        try {
-          const tbody = document.querySelector("#admin-stack .row.B3")?.querySelector("tbody");
-          if (!tbody) return "";
-          const trs = Array.from(tbody.querySelectorAll("tr"));
-          const idx = trs.findIndex(tr => tr.getAttribute("data-uid") === target.id);
-          return idx >= 0 ? String(idx + 1) : "";
-        } catch {}
-        return "";
-      })();
+      const seqR = target.seq || "";
       const bodyR = `
         <div class="modal-dialog">
           <div class="modal-head"><div class="modal-title">${titleR}</div></div>
@@ -3417,6 +4491,14 @@ if (!window.openEditModal) {
             <div class="modal-row">
               <label>地址</label>
               <input type="text" id="modal-address" value="${target.address || ""}">
+            </div>
+            <div class="modal-row">
+              <label>坪數</label>
+              <input type="number" id="modal-area" value="${target.area || ""}">
+            </div>
+            <div class="modal-row">
+              <label>區分權比</label>
+              <input type="number" id="modal-ownership" value="${target.ownershipRatio || ""}">
             </div>
             <div class="modal-row">
               <label>手機號碼</label>
@@ -3479,6 +4561,7 @@ if (!window.openEditModal) {
       btnSave && btnSave.addEventListener("click", async () => {
         try {
           const newName = document.getElementById("modal-name").value.trim();
+          const newSeq = document.getElementById("modal-serial").value.trim();
           const newPhone = document.getElementById("modal-phone").value.trim();
           const photoFile = document.getElementById("modal-photo-file").files[0];
           const newPassword = document.getElementById("modal-password").value;
@@ -3487,6 +4570,8 @@ if (!window.openEditModal) {
           const newSubNoRaw = document.getElementById("modal-sub-no").value.trim();
           const newSubNo = newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : undefined;
           const newAddress = document.getElementById("modal-address").value.trim();
+          const newArea = document.getElementById("modal-area").value.trim();
+          const newOwnership = document.getElementById("modal-ownership").value.trim();
           const newQrCodeText = document.getElementById("modal-qr-code").value.trim();
           const newEmail = document.getElementById("modal-email").value.trim();
           let newPhotoURL = target.photoURL || "";
@@ -3514,12 +4599,15 @@ if (!window.openEditModal) {
           }
           const payload = {
             displayName: newName || target.displayName,
+            seq: newSeq,
             phone: newPhone || target.phone,
             photoURL: newPhotoURL,
             status: newStatus || target.status,
             houseNo: newHouseNo || target.houseNo || "",
             address: newAddress || target.address || "",
             qrCodeText: newQrCodeText || target.qrCodeText || "",
+            area: newArea || target.area || "",
+            ownershipRatio: newOwnership || target.ownershipRatio || "",
             email: newEmail || target.email || ""
           };
           if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
@@ -3634,7 +4722,7 @@ if (adminNav.subContainer) {
 }
 
 // Front-end Ads Logic
-async function loadFrontAds(slug) {
+async function loadFrontAds(slug, providedSnap = null) {
   const container = document.querySelector(".row.A3");
   if (!container) return;
   
@@ -3643,7 +4731,10 @@ async function loadFrontAds(slug) {
 
   try {
     let data = null;
-    let snap = await getDoc(doc(db, `communities/${slug}/app_modules/ads`));
+    let snap = providedSnap;
+    if (!snap) {
+      snap = await getDoc(doc(db, `communities/${slug}/app_modules/ads`));
+    }
     if (!snap.exists()) {
        const def = await getDoc(doc(db, `communities/default/app_modules/ads`));
        if (!def.exists()) {
@@ -3798,16 +4889,7 @@ function startFrontCarousel(config) {
     startTimer();
 }
 
-function startFrontPolling(slug, interval=5000) {
-  if (window.frontAdsPolling) {
-    clearInterval(window.frontAdsPolling);
-    window.frontAdsPolling = null;
-  }
-  const ms = Math.max(parseInt(interval) || 5000, 2000);
-  window.frontAdsPolling = setInterval(() => {
-    loadFrontAds(slug);
-  }, ms);
-}
+
 
 let unsubscribeFrontAds = null;
 function subscribeFrontAds(slug) {
@@ -3828,10 +4910,7 @@ window.addEventListener("beforeunload", () => {
     try { unsubscribeFrontAds(); } catch {}
     unsubscribeFrontAds = null;
   }
-  if (window.frontAdsPolling) {
-    try { clearInterval(window.frontAdsPolling); } catch {}
-    window.frontAdsPolling = null;
-  }
+
 });
 
 function matchInPath(e, selector) {

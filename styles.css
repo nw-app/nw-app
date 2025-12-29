@@ -335,8 +335,35 @@ select:focus {
   padding-bottom: 0;
 }
 .row.A4 {
-  background: #fff;
-  color: var(--text);
+  background: var(--primary);
+  color: #fff;
+}
+.row.A5 {
+  background: var(--primary);
+  color: #fff;
+}
+.row.A5 .section-text { color: #fff; }
+.row.A7 {
+  background: var(--primary);
+  color: #fff;
+}
+.row.A7 .section-text { color: #fff; }
+.btn-sos {
+  width: 80%;
+  background-color: #fff;
+  color: var(--primary);
+  font-weight: 800;
+  font-size: 24px;
+  border: none;
+  border-radius: 30px;
+  padding: 8px 32px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: transform 0.1s;
+}
+.btn-sos:active {
+  transform: scale(0.95);
 }
 .section-text {
   font-size: 16px;
@@ -400,6 +427,40 @@ select:focus {
 .nav-text {
   font-size: 12px;
   font-weight: 500;
+}
+
+/* A6 feature grid and buttons */
+.row.A6 .a6-grid {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 3%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  column-gap: 12px;
+  row-gap: 0;
+}
+.row.A6 .feature-btn {
+  width: 100%;
+  height: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.row.A6 .feature-btn:hover {
+  color: var(--primary);
+  transform: translateY(-2px);
 }
 .remember input[type="checkbox"] {
   width: 18px;
@@ -570,6 +631,40 @@ select:focus {
 .row.A9 {
   background: #fff;
   color: var(--text);
+}
+
+/* A8 feature grid and buttons (follow A6 style) */
+.row.A8 .a8-grid {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 3%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  column-gap: 12px;
+  row-gap: 0;
+}
+.row.A8 .feature-btn {
+  width: 100%;
+  height: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.row.A8 .feature-btn:hover {
+  color: var(--primary);
+  transform: translateY(-2px);
 }
 .content-wrap {
   width: 100%;
