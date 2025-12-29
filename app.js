@@ -5050,9 +5050,23 @@ function startFrontCarousel(config) {
     let direction = 1; 
     const intervalTime = Math.max((parseInt(config.interval) || 3) * 1000, 1000);
     
-    const showSlide = (i) => {
-        slides.forEach(s => s.classList.remove('active'));
-        if (slides[i]) slides[i].classList.add('active');
+    const showSlide = (i, enterFrom) => {
+        slides.forEach(s => {
+          s.classList.remove('active');
+          s.classList.remove('enter-left');
+          s.classList.remove('enter-right');
+        });
+        const target = slides[i];
+        if (target) {
+          target.classList.add('active');
+          if (enterFrom === 'right') {
+            target.classList.add('enter-right');
+            setTimeout(() => target.classList.remove('enter-right'), 500);
+          } else if (enterFrom === 'left') {
+            target.classList.add('enter-left');
+            setTimeout(() => target.classList.remove('enter-left'), 500);
+          }
+        }
     };
     
     const next = () => {
@@ -5070,7 +5084,7 @@ function startFrontCarousel(config) {
         } else { 
             idx = (idx + 1) % slides.length;
         }
-        showSlide(idx);
+        showSlide(idx, 'right');
     };
 
     const prev = () => {
@@ -5079,7 +5093,7 @@ function startFrontCarousel(config) {
         } else { 
             idx = (idx - 1 + slides.length) % slides.length;
         }
-        showSlide(idx);
+        showSlide(idx, 'left');
     };
 
     if (btnNext) {
@@ -5111,7 +5125,9 @@ function startFrontCarousel(config) {
 
     const startTimer = () => {
         if (config.loop === 'once' && idx >= slides.length - 1) return;
-        window.frontAdsInterval = setInterval(next, intervalTime);
+        window.frontAdsInterval = setInterval(() => {
+          next();
+        }, intervalTime);
     };
     
     const resetTimer = () => {
@@ -5119,6 +5135,7 @@ function startFrontCarousel(config) {
         startTimer();
     };
 
+    showSlide(idx, null);
     startTimer();
 }
 
@@ -5162,11 +5179,9 @@ async function loadFrontButtons(slug) {
             const title = (cfg.text || (textEl && textEl.textContent) || "連結");
             if (!url) return;
             if (cfg.newWindow) {
-              try {
-                window.open(url, "_blank", "noopener");
-              } catch {
-                openLinkView(title, url);
-              }
+              let win = null;
+              try { win = window.open(url, "_blank", "noopener"); } catch {}
+              if (!win) openLinkView(title, url);
             } else {
               openLinkView(title, url);
             }

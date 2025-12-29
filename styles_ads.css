@@ -41,12 +41,23 @@
   transform: translateX(0);
   z-index: 0;
 }
-.a3-preview-container.effect-slide .preview-slide.active {
-  z-index: 1;
-  animation: slideInRight 0.5s ease forwards;
+.a3-preview-container.effect-slide .preview-slide.active { 
+  z-index: 1; 
+}
+.a3-preview-container.effect-slide .preview-slide.enter-right {
+  z-index: 2;
+  animation: slideInRight 0.45s ease forwards;
+}
+.a3-preview-container.effect-slide .preview-slide.enter-left {
+  z-index: 2;
+  animation: slideInLeft 0.45s ease forwards;
 }
 @keyframes slideInRight {
   from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
   to { transform: translateX(0); }
 }
 
