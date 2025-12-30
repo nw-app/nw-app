@@ -236,8 +236,9 @@ select:focus {
   font-weight: 700;
   margin: 16px 0 8px;
 }
-@media (max-width: 768px) and (orientation: landscape) {
+@media (orientation: landscape) {
   #orientation-tip { display: flex; }
+  #front-stack { display: none; }
 }
 .stack {
   position: relative;
