@@ -455,14 +455,15 @@ select:focus {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 12px 8px;
+  gap: 2px;
+  padding: 6px 6px;
   cursor: pointer;
   transition: all 0.2s;
 }
 .row.A6 .feature-btn .nav-icon {
   width: 30px;
   height: 30px;
+  margin-bottom: 2px;
 }
 .row.A6 .feature-btn:hover {
   color: var(--primary);
@@ -663,14 +664,15 @@ select:focus {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 12px 8px;
+  gap: 2px;
+  padding: 6px 6px;
   cursor: pointer;
   transition: all 0.2s;
 }
 .row.A8 .feature-btn .nav-icon {
   width: 30px;
   height: 30px;
+  margin-bottom: 2px;
 }
 .row.A8 .feature-btn:hover {
   color: var(--primary);

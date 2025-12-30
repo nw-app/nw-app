@@ -1513,7 +1513,7 @@ const sysSubMenus = {
   home: ["總覽", "社區"],
   notify: ["系統", "社區", "住戶"],
   settings: ["一般", "社區", "住戶", "系統"],
-  app: ["廣告", "按鈕", "監控", "區大"]
+  app: ["廣告", "按鈕"]
 };
 
 if (sysNav.subContainer) {
