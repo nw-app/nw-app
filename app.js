@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
@@ -21,6 +21,44 @@ const db = initializeFirestore(app, {
 });
 const storage = getStorage(app);
 setLogLevel("silent");
+try {
+  const _origError = console.error.bind(console);
+  console.error = (...args) => {
+    const s = args.map(a => {
+      if (typeof a === "string") return a;
+      if (a && typeof a === "object" && a.message) return String(a.message);
+      return "";
+    }).join(" ");
+    if (
+      s.includes("google.firestore.v1.Firestore/Listen/channel") ||
+      s.includes("net::ERR_ABORTED")
+    ) {
+      return;
+    }
+    _origError(...args);
+  };
+} catch {}
+try {
+  const suppress = (msg) => {
+    const s = String(msg || "");
+    return s.includes("google.firestore.v1.Firestore/Listen/channel") || s.includes("net::ERR_ABORTED");
+  };
+  window.addEventListener("error", (e) => {
+    const m = e && (e.message || (e.error && e.error.message));
+    if (suppress(m)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e && e.reason;
+    const m = (r && r.message) ? r.message : String(r || "");
+    if (suppress(m)) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+  }, true);
+} catch {}
 // Secondary app for admin account creation to avoid switching current session
 const createApp = initializeApp(firebaseConfig, "create-admin");
 const createAuth = getAuth(createApp);
@@ -1135,6 +1173,60 @@ async function handleRoleRedirect(role) {
         loadFrontButtons(slug);
         subscribeFrontButtons(slug);
         startFrontPolling(slug);
+
+        const btnSOS = document.querySelector(".btn-sos");
+        if (btnSOS) {
+          btnSOS.addEventListener("click", () => {
+             const body = `
+               <div class="modal-dialog">
+                 <div class="modal-head"><div class="modal-title" style="color: #ef4444;">緊急求救 SOS</div></div>
+                 <div class="modal-body" style="text-align: center; padding: 20px;">
+                   <p style="font-size: 1.2rem; margin-bottom: 20px;">按下下方按鈕將發送緊急求救訊號至管理中心</p>
+                   <button id="btn-sos-confirm" class="btn action-btn danger" style="width: 100%; height: 80px; font-size: 24px; border-radius: 12px;">送出</button>
+                 </div>
+                 <div class="modal-foot">
+                   <button class="btn action-btn" onclick="closeModal()">取消</button>
+                 </div>
+               </div>
+             `;
+             openModal(body);
+             setTimeout(() => {
+                const btnConfirm = document.getElementById("btn-sos-confirm");
+                if(btnConfirm) {
+                  btnConfirm.addEventListener("click", async () => {
+                    btnConfirm.disabled = true;
+                    btnConfirm.textContent = "發送中...";
+                    try {
+                      const u = auth.currentUser;
+                      let userData = {};
+                      if (u) {
+                        const snap = await getDoc(doc(db, "users", u.uid));
+                        if (snap.exists()) userData = snap.data();
+                      }
+                      
+                      await addDoc(collection(db, "sos_alerts"), {
+                        community: slug,
+                        houseNo: userData.houseNo || "",
+                        subNo: userData.subNo || "",
+                        name: userData.displayName || "",
+                        address: userData.address || "",
+                        status: "active",
+                        createdAt: Date.now()
+                      });
+                      
+                      closeModal();
+                      showHint("求救訊號已發送", "success");
+                    } catch(e) {
+                      console.error(e);
+                      showHint("發送失敗，請重試", "error");
+                      btnConfirm.disabled = false;
+                      btnConfirm.textContent = "送出";
+                    }
+                  });
+                }
+             }, 100);
+          });
+        }
     } else if (window.location.pathname.includes("admin")) {
         // Role check passed (Community Admin or System Admin)
           const pathSlug = getSlugFromPath();
@@ -1193,6 +1285,95 @@ async function handleRoleRedirect(role) {
             }
             btnAvatarAdmin.innerHTML = photo ? `<img class="avatar" src="${photo}" alt="${name}">` : `<span class="avatar">${(name || (u && u.email) || "管")[0]}</span>`;
             btnAvatarAdmin.addEventListener("click", () => openUserProfileModal());
+          }
+
+          // SOS System - Global Alert Listener
+          let sosUnsub = null;
+          function stopAlarm() {
+             if(window.sosAlarmTimer) {
+               clearInterval(window.sosAlarmTimer);
+               window.sosAlarmTimer = null;
+             }
+          }
+          function startAlarm() {
+             if(window.sosAlarmTimer) return;
+             const ctx = new (window.AudioContext || window.webkitAudioContext)();
+             const beep = () => {
+               if(ctx.state === 'suspended') ctx.resume();
+               const osc = ctx.createOscillator();
+               const gain = ctx.createGain();
+               osc.connect(gain);
+               gain.connect(ctx.destination);
+               osc.frequency.setValueAtTime(800, ctx.currentTime);
+               osc.frequency.linearRampToValueAtTime(600, ctx.currentTime + 0.5);
+               osc.type = "sawtooth";
+               osc.start();
+               gain.gain.setValueAtTime(0.5, ctx.currentTime);
+               gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+               osc.stop(ctx.currentTime + 0.5);
+             };
+             beep();
+             window.sosAlarmTimer = setInterval(beep, 1000);
+          }
+
+          if (sosUnsub) sosUnsub();
+          // Ensure we only listen if we have a valid slug
+          if (slug && slug !== "default") {
+              const qSos = query(collection(db, "sos_alerts"), where("community", "==", slug), where("status", "==", "active"));
+              sosUnsub = onSnapshot(qSos, (snap) => {
+                 // Check if any active alerts exist
+                 if (snap.empty) {
+                   const modal = document.getElementById("sos-alert-modal");
+                   if (modal) modal.remove();
+                   stopAlarm();
+                   return;
+                 }
+                 
+                 // If there are active alerts, show the latest one
+                 const docs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                 const latest = docs.sort((a,b) => b.createdAt - a.createdAt)[0];
+                 
+                 // Create or update modal
+                 let modal = document.getElementById("sos-alert-modal");
+                 if (!modal) {
+                   modal = document.createElement("div");
+                   modal.id = "sos-alert-modal";
+                   modal.className = "modal";
+                   modal.style.zIndex = "99999";
+                   document.body.appendChild(modal);
+                 }
+                 
+                 modal.innerHTML = `
+                   <div class="modal-dialog" style="border: 4px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);">
+                     <div class="modal-head" style="background: #ef4444; color: white;">
+                       <div class="modal-title">⚠️ 緊急求救警報 ⚠️</div>
+                     </div>
+                     <div class="modal-body" style="font-size: 1.2rem;">
+                       <div class="modal-row"><label>戶號：</label> <strong style="font-size:1.5rem">${latest.houseNo || ""}</strong></div>
+                       <div class="modal-row"><label>子戶號：</label> <strong>${latest.subNo || ""}</strong></div>
+                       <div class="modal-row"><label>姓名：</label> <strong>${latest.name || ""}</strong></div>
+                       <div class="modal-row"><label>地址：</label> <strong>${latest.address || ""}</strong></div>
+                       <div class="modal-row"><label>時間：</label> <span>${new Date(latest.createdAt).toLocaleString()}</span></div>
+                     </div>
+                     <div class="modal-foot">
+                       <button id="btn-close-sos-alarm" class="btn action-btn danger" style="width:100%; font-size:1.2rem;">收到，關閉警報</button>
+                     </div>
+                   </div>
+                 `;
+                 modal.classList.remove("hidden");
+                 
+                 // Only start alarm if not already running (to avoid restarting interval)
+                 // But startAlarm handles that check.
+                 startAlarm();
+                 
+                 const btnClose = document.getElementById("btn-close-sos-alarm");
+                 if(btnClose) {
+                   btnClose.addEventListener("click", () => {
+                     stopAlarm();
+                     modal.remove();
+                   });
+                 }
+              });
           }
     }
     
@@ -4376,7 +4557,83 @@ function renderAdminContent(mainKey, subLabel) {
       return;
     }
     if (sub === "警報") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶警報</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      (async () => {
+        let alerts = [];
+        try {
+          let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+          if (slug === "default" && auth.currentUser) {
+             slug = await getUserCommunity(auth.currentUser.uid);
+          }
+          const q = query(collection(db, "sos_alerts"), where("community", "==", slug), orderBy("createdAt", "desc"));
+          const snap = await getDocs(q);
+          alerts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (e) {
+          console.error(e);
+        }
+
+        const rows = alerts.map(a => {
+          const time = new Date(a.createdAt).toLocaleString();
+          const statusClass = a.status === "active" ? "danger" : "success";
+          const statusText = a.status === "active" ? "警報中" : "已解除";
+          return `
+            <tr data-id="${a.id}">
+              <td>${time}</td>
+              <td>${a.houseNo || ""}</td>
+              <td>${a.subNo || ""}</td>
+              <td>${a.name || ""}</td>
+              <td>${a.address || ""}</td>
+              <td><span class="status ${statusClass}" style="color: ${a.status === 'active' ? '#ef4444' : '#10b981'}">${statusText}</span></td>
+              <td>
+                ${a.status === "active" ? `<button class="btn small action-btn btn-resolve-sos">解除</button>` : ""}
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+        adminNav.content.innerHTML = `
+          <div class="card data-card">
+            <div class="card-head">
+              <h1 class="card-title">住戶警報紀錄</h1>
+              <button id="btn-refresh-sos" class="btn small action-btn">重新整理</button>
+            </div>
+            <div class="table-wrap">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>時間</th>
+                    <th>戶號</th>
+                    <th>子戶號</th>
+                    <th>姓名</th>
+                    <th>地址</th>
+                    <th>狀態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>${rows || '<tr><td colspan="7" style="text-align:center">無警報紀錄</td></tr>'}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+        
+        const btnRefresh = adminNav.content.querySelector("#btn-refresh-sos");
+        if(btnRefresh) btnRefresh.addEventListener("click", () => renderAdminContent("residents", "警報"));
+
+        const btnResolves = adminNav.content.querySelectorAll(".btn-resolve-sos");
+        btnResolves.forEach(btn => {
+          btn.addEventListener("click", async () => {
+            if(!confirm("確定要解除此警報嗎？")) return;
+            const tr = btn.closest("tr");
+            const id = tr.getAttribute("data-id");
+            try {
+              await setDoc(doc(db, "sos_alerts", id), { status: "resolved" }, { merge: true });
+              renderAdminContent("residents", "警報");
+            } catch(e) {
+              console.error(e);
+              alert("操作失敗");
+            }
+          });
+        });
+      })();
       return;
     }
     if (sub === "設定") {
@@ -5252,7 +5509,7 @@ function subscribeFrontButtons(slug) {
   unsubscribeFrontButtons = onSnapshot(ref, () => {
     loadFrontButtons(slug);
   }, (err) => {
-    console.error("Front buttons subscribe error", err);
+    void 0;
   });
 }
 
@@ -5266,7 +5523,7 @@ function subscribeFrontAds(slug) {
   unsubscribeFrontAds = onSnapshot(ref, () => {
     loadFrontAds(slug);
   }, (err) => {
-    console.error("Front ads subscribe error", err);
+    void 0;
   });
 }
 
@@ -5275,8 +5532,8 @@ function startFrontPolling(slug) {
     if (window.frontDataPolling) clearInterval(window.frontDataPolling);
   } catch {}
   const poll = async () => {
-    try { await loadFrontAds(slug); } catch (e) { console.error("Front ads poll error", e); }
-    try { await loadFrontButtons(slug); } catch (e) { console.error("Front buttons poll error", e); }
+    try { await loadFrontAds(slug); } catch {}
+    try { await loadFrontButtons(slug); } catch {}
   };
   window.frontDataPolling = setInterval(poll, 15000);
 }
