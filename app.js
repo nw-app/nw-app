@@ -4651,13 +4651,14 @@ function renderAdminContent(mainKey, subLabel) {
               <thead>
                 <tr>
                   <th>變動日期</th>
+                  <th>原因</th>
                   <th>變動點數</th>
                   <th>點數餘額</th>
                   <th>紀錄（操作人員）</th>
                 </tr>
               </thead>
               <tbody id="points-tbody">
-                <tr><td colspan="4" style="text-align:center">尚未建立內容</td></tr>
+                <tr><td colspan="5" style="text-align:center">尚未建立內容</td></tr>
               </tbody>
             </table>
           </div>
@@ -4736,6 +4737,45 @@ function renderAdminContent(mainKey, subLabel) {
                     </div>
                   `;
                 }
+                const tbody = document.getElementById("points-tbody");
+                if (tbody) {
+                  try {
+                    let logs = [];
+                    try {
+                      const qLogs = query(collection(db, `communities/${slug}/app_modules/points_logs`), where("houseNo", "==", houseNo));
+                      const snapLogs = await getDocs(qLogs);
+                      logs = snapLogs.docs.map(d => ({ id: d.id, ...d.data() }));
+                    } catch (permErr) {
+                      try {
+                        const pdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
+                        if (pdoc.exists()) {
+                          const data = pdoc.data();
+                          const arr = Array.isArray(data.logs) ? data.logs : [];
+                          logs = arr.filter(x => x.houseNo === houseNo);
+                        }
+                      } catch {}
+                    }
+                    logs.sort((a,b) => a.createdAt - b.createdAt);
+                    let run = 0;
+                    const rowsAsc = logs.map(l => {
+                      run += (typeof l.delta === "number" ? l.delta : 0);
+                      return { ...l, run };
+                    });
+                    rowsAsc.sort((a,b) => b.createdAt - a.createdAt);
+                    const rowsHtml = rowsAsc.map(l => `
+                      <tr>
+                        <td>${new Date(l.createdAt).toLocaleString()}</td>
+                        <td>${l.reason || "—"}</td>
+                        <td>${(typeof l.delta === "number" ? l.delta : 0)}</td>
+                        <td>${l.run}</td>
+                        <td>${l.operatorName || l.operator || "—"}</td>
+                      </tr>
+                    `).join("");
+                    tbody.innerHTML = rowsHtml || '<tr><td colspan="5" style="text-align:center">尚未建立內容</td></tr>';
+                  } catch (err) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#b71c1c;">載入失敗</td></tr>';
+                  }
+                }
               } catch {
                 if (summary) summary.innerHTML = `<div style="color:#b71c1c;">載入失敗</div>`;
               }
@@ -4797,7 +4837,17 @@ function renderAdminContent(mainKey, subLabel) {
                       const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
                     });
                   }
+                  const operatorId = auth.currentUser ? auth.currentUser.uid : "";
+                  let operatorName = (auth.currentUser && auth.currentUser.displayName) ? auth.currentUser.displayName : "";
                   const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "未知";
+                  if (!operatorName && operatorId) {
+                    try {
+                      const osnap = await getDoc(doc(db, "users", operatorId));
+                      if (osnap.exists()) {
+                        operatorName = osnap.data().displayName || operatorName;
+                      }
+                    } catch {}
+                  }
                   let balance = 0;
                   try {
                     const bdoc = await getDoc(doc(db, `communities/${slug}/points_balances/${houseNo}`));
@@ -4810,6 +4860,8 @@ function renderAdminContent(mainKey, subLabel) {
                       reason,
                       delta: amount,
                       operator,
+                      operatorId,
+                      operatorName,
                       createdAt: Date.now()
                     });
                     await setDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`), {
@@ -4824,7 +4876,7 @@ function renderAdminContent(mainKey, subLabel) {
                       if (psnap.exists()) prev = psnap.data() || {};
                     } catch {}
                     const logs = Array.isArray(prev.logs) ? prev.logs.slice() : [];
-                    logs.push({ houseNo, reason, delta: amount, operator, createdAt: Date.now() });
+                    logs.push({ houseNo, reason, delta: amount, operator, operatorId, operatorName, createdAt: Date.now() });
                     const balances = typeof prev.balances === "object" && prev.balances ? { ...prev.balances } : {};
                     balances[houseNo] = newBalance;
                     await setDoc(pointsDocRef, { logs, balances, updatedAt: Date.now() }, { merge: true });
@@ -4842,22 +4894,16 @@ function renderAdminContent(mainKey, subLabel) {
             });
             
             const btnAuto = adminNav.content.querySelector("#btn-auto-points");
-            btnAuto && btnAuto.addEventListener("click", () => {
-              const optionsHtml = houseNos.map(hn => `
-                <label style="display:flex;align-items:center;gap:6px;">
-                  <input type="checkbox" class="auto-house" value="${hn}" style="width:14px;height:14px;"> <span>${hn}</span>
-                </label>
-              `).join("");
+            btnAuto && btnAuto.addEventListener("click", async () => {
+              const dayOptions = Array.from({length:31}, (_,i) => `<option value="${i+1}">${i+1}</option>`).join("");
+              const hourOptions = Array.from({length:24}, (_,i) => `<option value="${i}">${i}</option>`).join("");
+              const minuteOptions = Array.from({length:60}, (_,i) => `<option value="${i}">${i}</option>`).join("");
               const body = `
                 <div class="modal-dialog">
                   <div class="modal-head"><div class="modal-title">自動新增點數</div></div>
                   <div class="modal-body">
                     <div class="modal-row">
-                      <label>勾選該社區全部住戶戶號</label>
-                      <div id="auto-house-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:180px;overflow:auto;">${optionsHtml}</div>
-                      <div style="margin-top:8px;">
-                        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="auto-select-all" style="width:14px;height:14px;"> 全選</label>
-                      </div>
+                      <label>套用該社區全部戶號（唯一設定）</label>
                     </div>
                     <div class="modal-row">
                       <label>原因</label>
@@ -4870,13 +4916,13 @@ function renderAdminContent(mainKey, subLabel) {
                     <div class="modal-row">
                       <label>自動新增日期時間</label>
                       <div style="display:flex;gap:8px;align-items:center;">
-                        <input type="number" id="auto-day" min="1" max="31" placeholder="日(1-31)" style="width:80px;">
-                        <input type="number" id="auto-hour" min="0" max="23" placeholder="時(0-23)" style="width:80px;">
-                        <input type="number" id="auto-minute" min="0" max="59" placeholder="分(0-59)" style="width:80px;">
+                        <select id="auto-day" style="width:90px;"><option value="">日</option>${dayOptions}</select>
+                        <select id="auto-hour" style="width:90px;"><option value="">時</option>${hourOptions}</select>
+                        <select id="auto-minute" style="width:90px;"><option value="">分</option>${minuteOptions}</select>
                       </div>
                     </div>
                     <div class="modal-row">
-                      <label>原點數是否再新增時歸0</label>
+                      <label>原點數是否在新增時歸0</label>
                       <input type="checkbox" id="auto-reset" style="width:14px;height:14px;">
                     </div>
                     <div class="hint" id="auto-hint"></div>
@@ -4888,11 +4934,36 @@ function renderAdminContent(mainKey, subLabel) {
                 </div>
               `;
               openModal(body);
-              const elAll = document.getElementById("auto-select-all");
-              const elList = document.getElementById("auto-house-list");
-              elAll && elAll.addEventListener("change", () => {
-                elList && elList.querySelectorAll(".auto-house").forEach(cb => { cb.checked = elAll.checked; });
-              });
+              try {
+                let preset = null;
+                try {
+                  const jsnap = await getDoc(doc(db, `communities/${slug}/app_modules/points_auto_job`));
+                  if (jsnap.exists()) preset = jsnap.data();
+                } catch {}
+                if (!preset) {
+                  try {
+                    const psnap = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
+                    if (psnap.exists()) {
+                      const data = psnap.data();
+                      preset = data.autoJob || null;
+                    }
+                  } catch {}
+                }
+                if (preset) {
+                  const r = document.getElementById("auto-reason");
+                  const a = document.getElementById("auto-amount");
+                  const d = document.getElementById("auto-day");
+                  const h = document.getElementById("auto-hour");
+                  const m = document.getElementById("auto-minute");
+                  const x = document.getElementById("auto-reset");
+                  if (r) r.value = preset.reason || r.value;
+                  if (a) a.value = typeof preset.amount === "number" ? String(preset.amount) : a.value;
+                  if (d) d.value = typeof preset.dayOfMonth === "number" ? String(preset.dayOfMonth) : "";
+                  if (h) h.value = typeof preset.hour === "number" ? String(preset.hour) : "";
+                  if (m) m.value = typeof preset.minute === "number" ? String(preset.minute) : "";
+                  if (x) x.checked = !!preset.resetBeforeAdd;
+                }
+              } catch {}
               const cancel = document.getElementById("auto-cancel");
               const save = document.getElementById("auto-save");
               const hintEl = document.getElementById("auto-hint");
@@ -4905,7 +4976,7 @@ function renderAdminContent(mainKey, subLabel) {
               cancel && cancel.addEventListener("click", () => closeModal());
               save && save.addEventListener("click", async () => {
                 try {
-                  const selected = Array.from(elList.querySelectorAll(".auto-house")).filter(cb => cb.checked).map(cb => cb.value);
+                  const selected = houseNos.slice();
                   const reason = (document.getElementById("auto-reason").value || "").trim();
                   const amount = parseInt(document.getElementById("auto-amount").value || "NaN", 10);
                   const day = parseInt(document.getElementById("auto-day").value || "NaN", 10);
@@ -4921,8 +4992,16 @@ function renderAdminContent(mainKey, subLabel) {
                       const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
                     });
                   }
+                  const operatorId = auth.currentUser ? auth.currentUser.uid : "";
+                  let operatorName = (auth.currentUser && auth.currentUser.displayName) ? auth.currentUser.displayName : "";
                   const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "未知";
-                  await addDoc(collection(db, `communities/${slug}/app_modules/points_auto_jobs`), {
+                  if (!operatorName && operatorId) {
+                    try {
+                      const osnap = await getDoc(doc(db, "users", operatorId));
+                      if (osnap.exists()) operatorName = osnap.data().displayName || operatorName;
+                    } catch {}
+                  }
+                  const payload = {
                     houseNos: selected,
                     reason: reason || "每月新增",
                     amount,
@@ -4931,9 +5010,17 @@ function renderAdminContent(mainKey, subLabel) {
                     minute,
                     resetBeforeAdd: reset,
                     createdBy: operator,
+                    createdById: operatorId,
+                    createdByName: operatorName,
                     createdAt: Date.now(),
                     status: "active"
-                  });
+                  };
+                  try {
+                    await setDoc(doc(db, `communities/${slug}/app_modules/points_auto_job`), payload, { merge: true });
+                  } catch (werr) {
+                    const pointsDocRef = doc(db, `communities/${slug}/app_modules/points`);
+                    await setDoc(pointsDocRef, { autoJob: payload, updatedAt: Date.now() }, { merge: true });
+                  }
                   closeModal();
                   showHint("已儲存自動新增設定", "success");
                 } catch (e) {
