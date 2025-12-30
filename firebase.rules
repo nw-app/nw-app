@@ -51,6 +51,14 @@ service cloud.firestore {
       }
     }
 
+    match /sos_alerts/{alertId} {
+      allow create: if request.auth != null;
+      allow read, update: if request.auth != null && (
+        isAdmin() || 
+        (isCommunityStaff() && resource.data.community == getUserData().community)
+      );
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

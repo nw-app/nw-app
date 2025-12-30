@@ -1345,12 +1345,16 @@ async function handleRoleRedirect(role) {
           console.log("Starting SOS listener for community:", listenSlug);
           
           if (listenSlug) {
-              const qSos = query(collection(db, "sos_alerts"), where("community", "==", listenSlug), where("status", "==", "active"));
+              // Simplify query to avoid Index requirements (filter status in memory)
+              const qSos = query(collection(db, "sos_alerts"), where("community", "==", listenSlug));
               sosUnsub = onSnapshot(qSos, (snap) => {
-                 console.log("SOS Snapshot update. Empty?", snap.empty, "Size:", snap.size);
+                 // Filter for active alerts in memory
+                 const activeDocs = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(d => d.status === "active");
+                 
+                 console.log("SOS Snapshot update. Total:", snap.size, "Active:", activeDocs.length);
                  
                  // Check if any active alerts exist
-                 if (snap.empty) {
+                 if (activeDocs.length === 0) {
                    const modal = document.getElementById("sos-alert-modal");
                    if (modal) modal.remove();
                    stopAlarm();
@@ -1358,8 +1362,7 @@ async function handleRoleRedirect(role) {
                  }
                  
                  // If there are active alerts, show the latest one
-                 const docs = snap.docs.map(d => ({id: d.id, ...d.data()}));
-                 const latest = docs.sort((a,b) => b.createdAt - a.createdAt)[0];
+                 const latest = activeDocs.sort((a,b) => b.createdAt - a.createdAt)[0];
                  
                  console.log("New Active SOS Alert:", latest);
                  
@@ -4598,9 +4601,10 @@ function renderAdminContent(mainKey, subLabel) {
           if (slug === "default" && auth.currentUser) {
              slug = await getUserCommunity(auth.currentUser.uid);
           }
-          const q = query(collection(db, "sos_alerts"), where("community", "==", slug), orderBy("createdAt", "desc"));
+          // Simplify query to avoid Index requirements (sort in memory)
+          const q = query(collection(db, "sos_alerts"), where("community", "==", slug));
           const snap = await getDocs(q);
-          alerts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          alerts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.createdAt - a.createdAt);
         } catch (e) {
           console.error(e);
         }
