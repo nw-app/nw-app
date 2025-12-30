@@ -5209,12 +5209,21 @@ function openLinkView(title, url) {
     <div class="modal-dialog link-view-dialog">
       <div class="modal-head link-view-head">
         <div class="modal-title link-view-title">${safeTitle}</div>
-        <button type="button" id="link-view-close" class="btn link-view-close">
-          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
-            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
-          </svg>
-        </button>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <a href="${url}" target="_blank" rel="noopener" class="link-view-external" title="在新視窗開啟" style="display:flex;color:#666;">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+          </a>
+          <button type="button" id="link-view-close" class="btn link-view-close">
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+              <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="modal-body link-view-body">
         <iframe class="link-view-iframe" src="${url}" frameborder="0" allow="autoplay; encrypted-media; clipboard-read; clipboard-write; geolocation"></iframe>
@@ -5261,6 +5270,17 @@ function subscribeFrontAds(slug) {
   });
 }
 
+function startFrontPolling(slug) {
+  try {
+    if (window.frontDataPolling) clearInterval(window.frontDataPolling);
+  } catch {}
+  const poll = async () => {
+    try { await loadFrontAds(slug); } catch (e) { console.error("Front ads poll error", e); }
+    try { await loadFrontButtons(slug); } catch (e) { console.error("Front buttons poll error", e); }
+  };
+  window.frontDataPolling = setInterval(poll, 15000);
+}
+
 window.addEventListener("beforeunload", () => {
   if (unsubscribeFrontAds) {
     try { unsubscribeFrontAds(); } catch {}
@@ -5269,6 +5289,10 @@ window.addEventListener("beforeunload", () => {
   if (unsubscribeFrontButtons) {
     try { unsubscribeFrontButtons(); } catch {}
     unsubscribeFrontButtons = null;
+  }
+  if (window.frontDataPolling) {
+    try { clearInterval(window.frontDataPolling); } catch {}
+    window.frontDataPolling = null;
   }
 
 });

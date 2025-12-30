@@ -353,10 +353,12 @@ select:focus {
   background-color: #fff;
   color: var(--primary);
   font-weight: 800;
-  font-size: 24px;
+  font-size: 36px;
+  height: var(--control-size);
+  line-height: var(--control-size);
   border: none;
   border-radius: 30px;
-  padding: 8px 32px;
+  padding: 0 32px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
   cursor: pointer;
   letter-spacing: 1px;
@@ -457,6 +459,10 @@ select:focus {
   padding: 12px 8px;
   cursor: pointer;
   transition: all 0.2s;
+}
+.row.A6 .feature-btn .nav-icon {
+  width: 30px;
+  height: 30px;
 }
 .row.A6 .feature-btn:hover {
   color: var(--primary);
@@ -661,6 +667,10 @@ select:focus {
   padding: 12px 8px;
   cursor: pointer;
   transition: all 0.2s;
+}
+.row.A8 .feature-btn .nav-icon {
+  width: 30px;
+  height: 30px;
 }
 .row.A8 .feature-btn:hover {
   color: var(--primary);
