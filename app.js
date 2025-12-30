@@ -240,6 +240,7 @@ function closeModal() {
   root.classList.add("hidden");
   root.innerHTML = "";
 }
+window.closeModal = closeModal;
 async function openUserProfileModal() {
   const u = auth.currentUser;
   const title = "個人資訊";
@@ -1177,6 +1178,7 @@ async function handleRoleRedirect(role) {
         const btnSOS = document.querySelector(".btn-sos");
         if (btnSOS) {
           btnSOS.addEventListener("click", () => {
+             console.log("SOS button clicked. Current slug:", slug);
              const body = `
                <div class="modal-dialog">
                  <div class="modal-head"><div class="modal-title" style="color: #ef4444;">緊急求救 SOS</div></div>
@@ -1204,20 +1206,23 @@ async function handleRoleRedirect(role) {
                         if (snap.exists()) userData = snap.data();
                       }
                       
-                      await addDoc(collection(db, "sos_alerts"), {
-                        community: slug,
+                      const alertData = {
+                        community: slug || "default",
                         houseNo: userData.houseNo || "",
                         subNo: userData.subNo || "",
                         name: userData.displayName || "",
                         address: userData.address || "",
                         status: "active",
                         createdAt: Date.now()
-                      });
+                      };
+                      console.log("Sending SOS alert:", alertData);
+                      
+                      await addDoc(collection(db, "sos_alerts"), alertData);
                       
                       closeModal();
                       showHint("求救訊號已發送", "success");
                     } catch(e) {
-                      console.error(e);
+                      console.error("SOS Send Error:", e);
                       showHint("發送失敗，請重試", "error");
                       btnConfirm.disabled = false;
                       btnConfirm.textContent = "送出";
@@ -1294,33 +1299,56 @@ async function handleRoleRedirect(role) {
                clearInterval(window.sosAlarmTimer);
                window.sosAlarmTimer = null;
              }
+             // Close audio context if possible, but usually just stopping oscillator is enough.
           }
           function startAlarm() {
              if(window.sosAlarmTimer) return;
-             const ctx = new (window.AudioContext || window.webkitAudioContext)();
+             
+             let ctx;
+             try {
+               ctx = new (window.AudioContext || window.webkitAudioContext)();
+             } catch(e) {
+               console.error("AudioContext not supported", e);
+               return;
+             }
+             
              const beep = () => {
-               if(ctx.state === 'suspended') ctx.resume();
-               const osc = ctx.createOscillator();
-               const gain = ctx.createGain();
-               osc.connect(gain);
-               gain.connect(ctx.destination);
-               osc.frequency.setValueAtTime(800, ctx.currentTime);
-               osc.frequency.linearRampToValueAtTime(600, ctx.currentTime + 0.5);
-               osc.type = "sawtooth";
-               osc.start();
-               gain.gain.setValueAtTime(0.5, ctx.currentTime);
-               gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-               osc.stop(ctx.currentTime + 0.5);
+               if(ctx.state === 'suspended') {
+                 ctx.resume().catch(err => console.log("AudioContext resume failed (user interaction needed)", err));
+               }
+               
+               try {
+                 const osc = ctx.createOscillator();
+                 const gain = ctx.createGain();
+                 osc.connect(gain);
+                 gain.connect(ctx.destination);
+                 osc.frequency.setValueAtTime(800, ctx.currentTime);
+                 osc.frequency.linearRampToValueAtTime(600, ctx.currentTime + 0.5);
+                 osc.type = "sawtooth";
+                 osc.start();
+                 gain.gain.setValueAtTime(0.5, ctx.currentTime);
+                 gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                 osc.stop(ctx.currentTime + 0.5);
+               } catch(e) {
+                 console.error("Beep error", e);
+               }
              };
+             
+             // Try one beep immediately
              beep();
              window.sosAlarmTimer = setInterval(beep, 1000);
           }
 
           if (sosUnsub) sosUnsub();
-          // Ensure we only listen if we have a valid slug
-          if (slug && slug !== "default") {
-              const qSos = query(collection(db, "sos_alerts"), where("community", "==", slug), where("status", "==", "active"));
+          
+          const listenSlug = slug || "default";
+          console.log("Starting SOS listener for community:", listenSlug);
+          
+          if (listenSlug) {
+              const qSos = query(collection(db, "sos_alerts"), where("community", "==", listenSlug), where("status", "==", "active"));
               sosUnsub = onSnapshot(qSos, (snap) => {
+                 console.log("SOS Snapshot update. Empty?", snap.empty, "Size:", snap.size);
+                 
                  // Check if any active alerts exist
                  if (snap.empty) {
                    const modal = document.getElementById("sos-alert-modal");
@@ -1332,6 +1360,8 @@ async function handleRoleRedirect(role) {
                  // If there are active alerts, show the latest one
                  const docs = snap.docs.map(d => ({id: d.id, ...d.data()}));
                  const latest = docs.sort((a,b) => b.createdAt - a.createdAt)[0];
+                 
+                 console.log("New Active SOS Alert:", latest);
                  
                  // Create or update modal
                  let modal = document.getElementById("sos-alert-modal");
@@ -1371,6 +1401,10 @@ async function handleRoleRedirect(role) {
                    btnClose.addEventListener("click", () => {
                      stopAlarm();
                      modal.remove();
+                     // Optional: Mark as viewed locally or just stop sound?
+                     // Requirement says: "Until closed". It doesn't strictly say it must mark as resolved in DB.
+                     // But usually it should be resolved in the "Resident Management" tab.
+                     // The modal is just an alert. Closing it stops the sound and removes modal.
                    });
                  }
               });
