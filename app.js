@@ -2510,6 +2510,17 @@ if (sysNav.subContainer) {
   }
   window.openEditModal = openEditModal;
   
+  async function getUserCommunity(uid) {
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+      if (snap.exists()) {
+        const d = snap.data();
+        if (d.community) return d.community;
+      }
+    } catch {}
+    return "default";
+  }
+  
   function openCreateModal() {
     const title = "新增系統管理員";
     const body = `
@@ -3433,7 +3444,7 @@ if (sysNav.subContainer) {
               <td>
                 <label style="display:flex;align-items:center;gap:6px;">
                   <input type="checkbox" class="btn-new-window" ${it.newWindow ? 'checked' : ''}>
-                  <span>另開</span>
+                  <span>另開視窗</span>
                 </label>
               </td>
               <td>
@@ -4024,6 +4035,11 @@ const adminSubMenus = {
 };
 
 function renderAdminContent(mainKey, subLabel) {
+  // Cleanup previous SOS list listener if exists
+  if (window.sosListUnsub) {
+    window.sosListUnsub();
+    window.sosListUnsub = null;
+  }
   if (!adminNav.content) return;
   const sub = (subLabel || "").replace(/\u200B/g, "").trim();
   if (mainKey === "shortcuts" && sub === "通知跑馬燈") {
@@ -4595,44 +4611,12 @@ function renderAdminContent(mainKey, subLabel) {
     }
     if (sub === "警報") {
       (async () => {
-        let alerts = [];
-        try {
-          let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
-          if (slug === "default" && auth.currentUser) {
-             slug = await getUserCommunity(auth.currentUser.uid);
-          }
-          // Simplify query to avoid Index requirements (sort in memory)
-          const q = query(collection(db, "sos_alerts"), where("community", "==", slug));
-          const snap = await getDocs(q);
-          alerts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.createdAt - a.createdAt);
-        } catch (e) {
-          console.error(e);
-        }
-
-        const rows = alerts.map(a => {
-          const time = new Date(a.createdAt).toLocaleString();
-          const statusClass = a.status === "active" ? "danger" : "success";
-          const statusText = a.status === "active" ? "警報中" : "已解除";
-          return `
-            <tr data-id="${a.id}">
-              <td>${time}</td>
-              <td>${a.houseNo || ""}</td>
-              <td>${a.subNo || ""}</td>
-              <td>${a.name || ""}</td>
-              <td>${a.address || ""}</td>
-              <td><span class="status ${statusClass}" style="color: ${a.status === 'active' ? '#ef4444' : '#10b981'}">${statusText}</span></td>
-              <td>
-                ${a.status === "active" ? `<button class="btn small action-btn btn-resolve-sos">解除</button>` : ""}
-              </td>
-            </tr>
-          `;
-        }).join("");
-
+        // 1. Initial Skeleton Render
         adminNav.content.innerHTML = `
           <div class="card data-card">
             <div class="card-head">
               <h1 class="card-title">住戶警報紀錄</h1>
-              <button id="btn-refresh-sos" class="btn small action-btn">重新整理</button>
+              <!-- Auto-refreshing via Firestore listener -->
             </div>
             <div class="table-wrap">
               <table class="table">
@@ -4647,30 +4631,142 @@ function renderAdminContent(mainKey, subLabel) {
                     <th>操作</th>
                   </tr>
                 </thead>
-                <tbody>${rows || '<tr><td colspan="7" style="text-align:center">無警報紀錄</td></tr>'}</tbody>
+                <tbody id="sos-list-tbody">
+                  <tr><td colspan="7" style="text-align:center">載入中...</td></tr>
+                </tbody>
               </table>
             </div>
           </div>
         `;
-        
-        const btnRefresh = adminNav.content.querySelector("#btn-refresh-sos");
-        if(btnRefresh) btnRefresh.addEventListener("click", () => renderAdminContent("residents", "警報"));
 
-        const btnResolves = adminNav.content.querySelectorAll(".btn-resolve-sos");
-        btnResolves.forEach(btn => {
-          btn.addEventListener("click", async () => {
-            if(!confirm("確定要解除此警報嗎？")) return;
-            const tr = btn.closest("tr");
-            const id = tr.getAttribute("data-id");
-            try {
-              await setDoc(doc(db, "sos_alerts", id), { status: "resolved" }, { merge: true });
-              renderAdminContent("residents", "警報");
-            } catch(e) {
-              console.error(e);
-              alert("操作失敗");
-            }
+        try {
+          // Wait for Auth to initialize if needed
+          if (!auth.currentUser) {
+            await new Promise(resolve => {
+               const unsub = onAuthStateChanged(auth, (u) => {
+                 unsub();
+                 resolve(u);
+               });
+            });
+          }
+
+          let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+          if (slug === "default" && auth.currentUser) {
+             try {
+                slug = await getUserCommunity(auth.currentUser.uid);
+             } catch(e) { console.error("Error getting user community:", e); }
+          }
+          
+          // 2. Setup Real-time Listener
+          const q = query(collection(db, "sos_alerts"), where("community", "==", slug));
+          
+          window.sosListUnsub = onSnapshot(q, (snap) => {
+             const alerts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.createdAt - a.createdAt);
+             
+             const rows = alerts.map(a => {
+               const time = new Date(a.createdAt).toLocaleString();
+               let statusClass = "danger";
+               let statusText = "警報中";
+               let actionBtns = "";
+
+               if (a.status === "resolved") {
+                   statusClass = "warning";
+                   statusText = "已解除";
+               } else if (a.status === "completed") {
+                   statusClass = "success";
+                   statusText = "後續處理完成";
+               }
+
+               // Status Column Display Logic
+               let badgeStyle = "color: #ef4444;"; // Red for active
+               if (a.status === "resolved") badgeStyle = "color: #f59e0b;"; // Amber for resolved
+               if (a.status === "completed") badgeStyle = "color: #10b981;"; // Green for completed
+
+               // Operation Column Buttons
+               if (a.status === "active" || !a.status) {
+                   actionBtns += `<button class="btn small action-btn btn-resolve-sos" style="margin-right: 5px;">解除</button>`;
+               } else if (a.status === "resolved") {
+                   actionBtns += `<button class="btn small action-btn btn-complete-sos" style="margin-right: 5px;">完成</button>`;
+               }
+               
+               // Delete button is always available
+               actionBtns += `<button class="btn small action-btn danger btn-delete-sos">刪除</button>`;
+
+               return `
+                 <tr data-id="${a.id}">
+                   <td>${time}</td>
+                   <td>${a.houseNo || ""}</td>
+                   <td>${a.subNo || ""}</td>
+                   <td>${a.name || ""}</td>
+                   <td>${a.address || ""}</td>
+                   <td><span class="status ${statusClass}" style="${badgeStyle}">${statusText}</span></td>
+                   <td>
+                     ${actionBtns}
+                   </td>
+                 </tr>
+               `;
+             }).join("");
+             
+             const tbody = document.getElementById("sos-list-tbody");
+             if(tbody) {
+                tbody.innerHTML = rows || '<tr><td colspan="7" style="text-align:center">無警報紀錄</td></tr>';
+                
+                // Bind Resolve Buttons
+                tbody.querySelectorAll(".btn-resolve-sos").forEach(btn => {
+                  btn.addEventListener("click", async () => {
+                    if(!confirm("確定要解除此警報嗎？")) return;
+                    const tr = btn.closest("tr");
+                    const id = tr.getAttribute("data-id");
+                    try {
+                      await setDoc(doc(db, "sos_alerts", id), { status: "resolved" }, { merge: true });
+                    } catch(e) {
+                      console.error(e);
+                      alert("操作失敗");
+                    }
+                  });
+                });
+
+                // Bind Complete Buttons
+                tbody.querySelectorAll(".btn-complete-sos").forEach(btn => {
+                  btn.addEventListener("click", async () => {
+                    if(!confirm("確定標記為後續處理完成？")) return;
+                    const tr = btn.closest("tr");
+                    const id = tr.getAttribute("data-id");
+                    try {
+                      await setDoc(doc(db, "sos_alerts", id), { status: "completed" }, { merge: true });
+                    } catch(e) {
+                      console.error(e);
+                      alert("操作失敗");
+                    }
+                  });
+                });
+
+                // Bind Delete Buttons
+                tbody.querySelectorAll(".btn-delete-sos").forEach(btn => {
+                  btn.addEventListener("click", async () => {
+                    if(!confirm("⚠️ 警告：確定要永久刪除此紀錄嗎？此動作無法復原。")) return;
+                    const tr = btn.closest("tr");
+                    const id = tr.getAttribute("data-id");
+                    try {
+                      await deleteDoc(doc(db, "sos_alerts", id));
+                    } catch(e) {
+                      console.error(e);
+                      alert("刪除失敗");
+                    }
+                  });
+                });
+             }
+          }, (error) => {
+             console.error("SOS Listener Error:", error);
+             const tbody = document.getElementById("sos-list-tbody");
+             if(tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:red">載入失敗: ${error.message}</td></tr>`;
           });
-        });
+
+        } catch (e) {
+          console.error(e);
+          const tbody = document.getElementById("sos-list-tbody");
+          if(tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red">載入失敗</td></tr>';
+        }
       })();
       return;
     }
@@ -5474,9 +5570,7 @@ async function loadFrontButtons(slug) {
             const title = (cfg.text || (textEl && textEl.textContent) || "連結");
             if (!url) return;
             if (cfg.newWindow) {
-              let win = null;
-              try { win = window.open(url, "_blank", "noopener"); } catch {}
-              if (!win) openLinkView(title, url);
+              try { window.open(url, "_blank", "noopener"); } catch {}
             } else {
               openLinkView(title, url);
             }
