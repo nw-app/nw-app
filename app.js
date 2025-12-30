@@ -2053,6 +2053,9 @@ if (sysNav.subContainer) {
         createPreview.src = URL.createObjectURL(f);
       }
     });
+    createPreview && createPreview.addEventListener("click", () => {
+      if (createFile) createFile.click();
+    });
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
       try {
@@ -2219,6 +2222,9 @@ if (sysNav.subContainer) {
         if (f) {
           editPreview.src = URL.createObjectURL(f);
         }
+      });
+      editPreview && editPreview.addEventListener("click", () => {
+        if (editFile) editFile.click();
       });
       editQrCodeInput && editQrCodeInput.addEventListener("input", async () => {
         const val = editQrCodeInput.value.trim();
@@ -2403,6 +2409,9 @@ if (sysNav.subContainer) {
         editPreview.src = URL.createObjectURL(f);
       }
     });
+    editPreview && editPreview.addEventListener("click", () => {
+      if (editFile) editFile.click();
+    });
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
       try {
@@ -2568,6 +2577,12 @@ if (sysNav.subContainer) {
       if (f) {
         createPreview.src = URL.createObjectURL(f);
       }
+    });
+    createPreview && createPreview.addEventListener("click", () => {
+      if (createFile) createFile.click();
+    });
+    createPreview && createPreview.addEventListener("click", () => {
+      if (createFile) createFile.click();
     });
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
@@ -4030,7 +4045,7 @@ const adminSubMenus = {
   mail: ["收件", "取件", "寄放", "設定"],
   facility: ["設定"],
   announce: ["公告", "財報", "修繕", "APP", "設定"],
-  residents: ["住戶", "通知", "警報", "設定"],
+  residents: ["住戶", "點數", "通知", "警報", "設定"],
   others: ["日誌", "班表", "通訊", "巡邏", "設定"]
 };
 
@@ -4108,6 +4123,14 @@ function renderAdminContent(mainKey, subLabel) {
   if (mainKey === "residents") {
     if (sub === "住戶") {
       (async () => {
+        if (!auth.currentUser) {
+          await new Promise(resolve => {
+            const unsub = onAuthStateChanged(auth, u => {
+              unsub();
+              resolve(u);
+            });
+          });
+        }
         const cu = auth.currentUser;
         if (!cu) {
           adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">請先登入後台</div></div>`;
@@ -4602,6 +4625,325 @@ function renderAdminContent(mainKey, subLabel) {
             return;
           }
         });
+      })();
+      return;
+    }
+    if (sub === "點數") {
+      adminNav.content.innerHTML = `
+        <div class="card data-card">
+          <div class="card-head">
+            <h1 class="card-title" style="white-space:nowrap;">點數紀錄</h1>
+            <div style="display:flex;gap:8px;margin-left:auto;">
+              <button id="btn-add-points" class="btn action-btn small">新增點數</button>
+              <button id="btn-auto-points" class="btn action-btn small">自動新增</button>
+            </div>
+          </div>
+          <div class="card-filters">
+            <select id="points-resident-select" style="min-width:120px;height:32px;border:1px solid #e5e7eb;border-radius:6px;padding:0 8px;margin-left:auto;">
+              <option value="">選擇住戶戶號</option>
+            </select>
+          </div>
+          <div id="points-summary" style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <div style="font-size:14px;color:#6b7280;">請選擇戶號以顯示摘要</div>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>變動日期</th>
+                  <th>變動點數</th>
+                  <th>點數餘額</th>
+                  <th>紀錄（操作人員）</th>
+                </tr>
+              </thead>
+              <tbody id="points-tbody">
+                <tr><td colspan="4" style="text-align:center">尚未建立內容</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      (async () => {
+        try {
+          let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+          if (slug === "default") {
+            try {
+              const snap = await getDocs(collection(db, "communities"));
+              const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+              if (list.length > 0) {
+                slug = list[0].id;
+                window.currentAdminCommunitySlug = slug;
+              } else if (auth.currentUser) {
+                slug = await getUserCommunity(auth.currentUser.uid);
+                window.currentAdminCommunitySlug = slug;
+              }
+            } catch {
+              if (auth.currentUser) {
+                slug = await getUserCommunity(auth.currentUser.uid);
+                window.currentAdminCommunitySlug = slug;
+              }
+            }
+          }
+          let residents = [];
+          try {
+            const qEq = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"));
+            const snapList = await getDocs(qEq);
+            residents = snapList.docs.map(d => ({ id: d.id, ...d.data() }));
+          } catch {}
+          const sel = adminNav.content.querySelector("#points-resident-select");
+          if (sel) {
+            const houseNos = Array.from(new Set(residents.map(r => r.houseNo).filter(Boolean)));
+            const opts = houseNos
+              .map(hn => `<option value="${hn}">${hn}</option>`)
+              .join("");
+            sel.innerHTML = `<option value="">選擇住戶戶號</option>${opts}`;
+            const summary = adminNav.content.querySelector("#points-summary");
+            sel.addEventListener("change", async () => {
+              const houseNo = sel.value;
+              if (!houseNo) {
+                if (summary) summary.innerHTML = `<div style="font-size:14px;color:#6b7280;">請選擇戶號以顯示摘要</div>`;
+                return;
+              }
+              try {
+                const qH = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"), where("houseNo", "==", houseNo));
+                const snapH = await getDocs(qH);
+                const members = snapH.docs.map(d => ({ id: d.id, ...d.data() }));
+                const names = members.map(m => m.displayName || (m.email || "").split("@")[0]).filter(Boolean);
+                const subCount = members.filter(m => typeof m.subNo === "number").length || members.length;
+                const address = (members[0] && members[0].address) || "";
+                let balance = 0;
+                try {
+                  const bdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`));
+                  if (bdoc.exists()) balance = bdoc.data().balance || 0;
+                } catch {
+                  try {
+                    const pdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
+                    if (pdoc.exists()) {
+                      const data = pdoc.data();
+                      const bmap = data.balances || {};
+                      balance = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+                    }
+                  } catch {}
+                }
+                if (summary) {
+                  summary.innerHTML = `
+                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-items:center;">
+                      <div><strong>戶號</strong>：${houseNo}</div>
+                      <div><strong>子戶號數量</strong>：${subCount}</div>
+                      <div><strong>子戶號姓名</strong>：${names.join("、") || "—"}</div>
+                      <div><strong>地址</strong>：${address || "—"}</div>
+                      <div style="grid-column:1 / -1;"><strong>點數</strong>：<span style="color:#f59e0b;font-weight:800;font-size:20px;">${balance}</span></div>
+                    </div>
+                  `;
+                }
+              } catch {
+                if (summary) summary.innerHTML = `<div style="color:#b71c1c;">載入失敗</div>`;
+              }
+            });
+            
+            const btnAdd = adminNav.content.querySelector("#btn-add-points");
+            btnAdd && btnAdd.addEventListener("click", async () => {
+              const currentHouse = sel.value || "";
+              const optionsHtml = houseNos.map(hn => `<option value="${hn}" ${hn===currentHouse?"selected":""}>${hn}</option>`).join("");
+              const body = `
+                <div class="modal-dialog">
+                  <div class="modal-head"><div class="modal-title">新增點數</div></div>
+                  <div class="modal-body">
+                    <div class="modal-row">
+                      <label>戶號</label>
+                      <select id="add-points-house">${optionsHtml}</select>
+                    </div>
+                    <div class="modal-row">
+                      <label>原因</label>
+                      <input type="text" id="add-points-reason" placeholder="例如：活動獎勵">
+                    </div>
+                    <div class="modal-row">
+                      <label>點數</label>
+                      <input type="number" id="add-points-amount" placeholder="例如：10">
+                    </div>
+                    <div class="hint" id="add-points-hint"></div>
+                  </div>
+                  <div class="modal-foot">
+                    <button id="add-points-cancel" class="btn action-btn danger">取消</button>
+                    <button id="add-points-save" class="btn action-btn">儲存</button>
+                  </div>
+                </div>
+              `;
+              openModal(body);
+              const cancel = document.getElementById("add-points-cancel");
+              const save = document.getElementById("add-points-save");
+              const houseEl = document.getElementById("add-points-house");
+              const reasonEl = document.getElementById("add-points-reason");
+              const amountEl = document.getElementById("add-points-amount");
+              const hintEl = document.getElementById("add-points-hint");
+              const showHintLocal = (msg, type="error") => {
+                if (hintEl) {
+                  hintEl.textContent = msg;
+                  hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
+                }
+              };
+              cancel && cancel.addEventListener("click", () => closeModal());
+              save && save.addEventListener("click", async () => {
+                try {
+                  const houseNo = (houseEl && houseEl.value.trim()) || "";
+                  const reason = (reasonEl && reasonEl.value.trim()) || "";
+                  const amount = amountEl ? parseInt(amountEl.value, 10) : NaN;
+                  if (!houseNo || isNaN(amount)) {
+                    showHintLocal("請選擇戶號並填入有效的點數", "error");
+                    return;
+                  }
+                  if (!auth.currentUser) {
+                    await new Promise(resolve => {
+                      const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
+                    });
+                  }
+                  const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "未知";
+                  let balance = 0;
+                  try {
+                    const bdoc = await getDoc(doc(db, `communities/${slug}/points_balances/${houseNo}`));
+                    if (bdoc.exists()) balance = bdoc.data().balance || 0;
+                  } catch {}
+                  const newBalance = balance + amount;
+                  try {
+                    await addDoc(collection(db, `communities/${slug}/app_modules/points_logs`), {
+                      houseNo,
+                      reason,
+                      delta: amount,
+                      operator,
+                      createdAt: Date.now()
+                    });
+                    await setDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`), {
+                      balance: newBalance,
+                      updatedAt: Date.now()
+                    }, { merge: true });
+                  } catch (werr) {
+                    const pointsDocRef = doc(db, `communities/${slug}/app_modules/points`);
+                    let prev = {};
+                    try {
+                      const psnap = await getDoc(pointsDocRef);
+                      if (psnap.exists()) prev = psnap.data() || {};
+                    } catch {}
+                    const logs = Array.isArray(prev.logs) ? prev.logs.slice() : [];
+                    logs.push({ houseNo, reason, delta: amount, operator, createdAt: Date.now() });
+                    const balances = typeof prev.balances === "object" && prev.balances ? { ...prev.balances } : {};
+                    balances[houseNo] = newBalance;
+                    await setDoc(pointsDocRef, { logs, balances, updatedAt: Date.now() }, { merge: true });
+                  }
+                  closeModal();
+                  showHint("已新增點數", "success");
+                  // trigger summary refresh if current selected
+                  const evt = new Event("change");
+                  sel.dispatchEvent(evt);
+                } catch (e) {
+                  console.error(e);
+                  showHintLocal("新增失敗", "error");
+                }
+              });
+            });
+            
+            const btnAuto = adminNav.content.querySelector("#btn-auto-points");
+            btnAuto && btnAuto.addEventListener("click", () => {
+              const optionsHtml = houseNos.map(hn => `
+                <label style="display:flex;align-items:center;gap:6px;">
+                  <input type="checkbox" class="auto-house" value="${hn}" style="width:14px;height:14px;"> <span>${hn}</span>
+                </label>
+              `).join("");
+              const body = `
+                <div class="modal-dialog">
+                  <div class="modal-head"><div class="modal-title">自動新增點數</div></div>
+                  <div class="modal-body">
+                    <div class="modal-row">
+                      <label>勾選該社區全部住戶戶號</label>
+                      <div id="auto-house-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-height:180px;overflow:auto;">${optionsHtml}</div>
+                      <div style="margin-top:8px;">
+                        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="auto-select-all" style="width:14px;height:14px;"> 全選</label>
+                      </div>
+                    </div>
+                    <div class="modal-row">
+                      <label>原因</label>
+                      <input type="text" id="auto-reason" value="每月新增">
+                    </div>
+                    <div class="modal-row">
+                      <label>點數</label>
+                      <input type="number" id="auto-amount" placeholder="例如：10">
+                    </div>
+                    <div class="modal-row">
+                      <label>自動新增日期時間</label>
+                      <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="number" id="auto-day" min="1" max="31" placeholder="日(1-31)" style="width:80px;">
+                        <input type="number" id="auto-hour" min="0" max="23" placeholder="時(0-23)" style="width:80px;">
+                        <input type="number" id="auto-minute" min="0" max="59" placeholder="分(0-59)" style="width:80px;">
+                      </div>
+                    </div>
+                    <div class="modal-row">
+                      <label>原點數是否再新增時歸0</label>
+                      <input type="checkbox" id="auto-reset" style="width:14px;height:14px;">
+                    </div>
+                    <div class="hint" id="auto-hint"></div>
+                  </div>
+                  <div class="modal-foot">
+                    <button id="auto-cancel" class="btn action-btn danger">取消</button>
+                    <button id="auto-save" class="btn action-btn">儲存</button>
+                  </div>
+                </div>
+              `;
+              openModal(body);
+              const elAll = document.getElementById("auto-select-all");
+              const elList = document.getElementById("auto-house-list");
+              elAll && elAll.addEventListener("change", () => {
+                elList && elList.querySelectorAll(".auto-house").forEach(cb => { cb.checked = elAll.checked; });
+              });
+              const cancel = document.getElementById("auto-cancel");
+              const save = document.getElementById("auto-save");
+              const hintEl = document.getElementById("auto-hint");
+              const showHintLocal = (msg, type="error") => {
+                if (hintEl) {
+                  hintEl.textContent = msg;
+                  hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
+                }
+              };
+              cancel && cancel.addEventListener("click", () => closeModal());
+              save && save.addEventListener("click", async () => {
+                try {
+                  const selected = Array.from(elList.querySelectorAll(".auto-house")).filter(cb => cb.checked).map(cb => cb.value);
+                  const reason = (document.getElementById("auto-reason").value || "").trim();
+                  const amount = parseInt(document.getElementById("auto-amount").value || "NaN", 10);
+                  const day = parseInt(document.getElementById("auto-day").value || "NaN", 10);
+                  const hour = parseInt(document.getElementById("auto-hour").value || "NaN", 10);
+                  const minute = parseInt(document.getElementById("auto-minute").value || "NaN", 10);
+                  const reset = !!document.getElementById("auto-reset").checked;
+                  if (!selected.length || isNaN(amount) || isNaN(day) || isNaN(hour) || isNaN(minute)) {
+                    showHintLocal("請選擇住戶並填寫有效的點數與時間", "error");
+                    return;
+                  }
+                  if (!auth.currentUser) {
+                    await new Promise(resolve => {
+                      const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
+                    });
+                  }
+                  const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "未知";
+                  await addDoc(collection(db, `communities/${slug}/app_modules/points_auto_jobs`), {
+                    houseNos: selected,
+                    reason: reason || "每月新增",
+                    amount,
+                    dayOfMonth: day,
+                    hour,
+                    minute,
+                    resetBeforeAdd: reset,
+                    createdBy: operator,
+                    createdAt: Date.now(),
+                    status: "active"
+                  });
+                  closeModal();
+                  showHint("已儲存自動新增設定", "success");
+                } catch (e) {
+                  console.error(e);
+                  showHintLocal("儲存失敗", "error");
+                }
+              });
+            });
+          }
+        } catch {}
       })();
       return;
     }

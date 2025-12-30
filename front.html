@@ -129,6 +129,27 @@
       </nav>
     </section>
   </main>
+  <script>
+    (function(){
+      var tip = document.getElementById('orientation-tip');
+      var main = document.getElementById('front-stack');
+      function update(){
+        var isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        var shortSide = Math.min(window.innerWidth, window.innerHeight);
+        var isPhone = shortSide <= 820 && /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent);
+        if(isLandscape && isPhone){
+          if(tip) tip.style.display = 'flex';
+          if(main) main.style.display = 'none';
+        } else {
+          if(tip) tip.style.display = 'none';
+          if(main) main.style.display = '';
+        }
+      }
+      update();
+      window.addEventListener('resize', update);
+      window.addEventListener('orientationchange', update);
+    })();
+  </script>
 
   <div class="modal hidden" id="sys-modal"></div>
   <script type="module" src="app.js"></script>
