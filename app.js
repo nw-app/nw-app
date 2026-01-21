@@ -1,9 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
-const firebaseConfig = {
+const defaultFirebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
   authDomain: "nw-app-all.firebaseapp.com",
   projectId: "nw-app-all",
@@ -12,6 +12,17 @@ const firebaseConfig = {
   appId: "1:205108931232:web:ee7868f73ed883253577c5",
   measurementId: "G-8F1WD772LP"
 };
+
+let firebaseConfig = defaultFirebaseConfig;
+try {
+  const savedConfig = localStorage.getItem("nw_firebase_config");
+  if (savedConfig) {
+    firebaseConfig = { ...defaultFirebaseConfig, ...JSON.parse(savedConfig) };
+    console.log("Loaded custom firebase config");
+  }
+} catch (e) {
+  console.warn("Failed to load custom config", e);
+}
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -84,8 +95,14 @@ function ensureTenant(slug) {
   return tenantApps[key];
 }
 function getQueryParam(name) {
-  const url = new URL(window.location.href);
-  return url.searchParams.get(name);
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has(name)) return params.get(name);
+  } catch {}
+  try {
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name);
+  } catch { return null; }
 }
 function getSlugFromPath() {
   try {
@@ -153,9 +170,9 @@ function checkPagePermission(role, path) {
   if (p.includes("sys")) {
     return role === "系統管理員";
   } else if (p.includes("admin")) {
-    return role === "系統管理員" || role === "管理員" || role === "總幹事";
+    return role === "系統管理員" || role === "管理員" || role === "總幹事" || role === "社區";
   } else if (p.includes("front")) {
-    return role === "系統管理員" || role === "住戶";
+    return role === "系統管理員" || role === "住戶" || role === "管理員" || role === "總幹事" || role === "社區";
   }
   return true;
 }
@@ -425,6 +442,14 @@ async function handleRoleRedirect(role) {
         toggleAuth(false);
         if (sysStack) sysStack.classList.remove("hidden");
         if (mainContainer) mainContainer.classList.add("hidden");
+        
+        const titleEl = sysStack.querySelector(".sys-title");
+        if (titleEl) {
+           titleEl.style.cursor = "pointer";
+           titleEl.style.textDecoration = "underline";
+           titleEl.title = "點擊切換社區";
+           titleEl.addEventListener("click", () => openCommunitySwitcher("front"));
+        }
       } else {
          showHint("權限不足", "error");
          await signOut(auth);
@@ -465,7 +490,8 @@ async function handleRoleRedirect(role) {
         : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
       return `
         <tr data-uid="${a.id}">
-          <td class="avatar-cell">${av}</td>
+          <td>${cname}</td>
+          <td>${av}</td>
           <td>${nm}</td>
           <td>${a.phone || ""}</td>
           <td>••••••</td>
@@ -487,10 +513,11 @@ async function handleRoleRedirect(role) {
         <div class="table-wrap">
           <table class="table">
             <colgroup>
-              <col><col><col><col><col><col><col><col>
+              <col><col><col><col><col><col><col><col><col>
             </colgroup>
             <thead>
               <tr>
+                <th>所屬社區</th>
                 <th>大頭照</th>
                 <th>姓名</th>
                 <th>手機號碼</th>
@@ -1016,16 +1043,8 @@ async function handleRoleRedirect(role) {
     }
   }
   
-  const u = auth.currentUser;
-  const slug = u ? await getUserCommunity(u.uid) : "default";
+  // Removed premature redirect logic that was causing parameter loss
 
-  if (role === "系統管理員") {
-    location.href = "sys.html";
-  } else if (role === "管理員" || role === "總幹事") {
-    location.href = (slug && slug !== "default") ? `admin.html?c=${slug}` : "admin.html";
-  } else {
-    location.href = (slug && slug !== "default") ? `front.html?c=${slug}` : "front.html";
-  }
 }
 
   // Auto login check
@@ -1034,6 +1053,8 @@ async function handleRoleRedirect(role) {
       if (el.authCard) el.authCard.classList.add("hidden");
       
       const pathNow = window.location.pathname || "";
+      // Explicitly disable root redirect for now to debug parameter stripping
+      /*
       if (
         (pathNow.endsWith("/") || pathNow.includes("index.html")) &&
         !pathNow.includes("front") && !pathNow.includes("admin") && !pathNow.includes("sys")
@@ -1041,6 +1062,7 @@ async function handleRoleRedirect(role) {
         try {
           const userSlug = await getUserCommunity(user.uid);
           const target = (userSlug && userSlug !== "default") ? `front.html?c=${userSlug}` : "front.html";
+          console.log("Root redirect to:", target);
           location.replace(target);
           return;
         } catch {
@@ -1048,6 +1070,7 @@ async function handleRoleRedirect(role) {
           return;
         }
       }
+      */
       
       let role = "住戶";
       try {
@@ -1064,6 +1087,22 @@ async function handleRoleRedirect(role) {
           showHint("權限不足，已自動登出", "error");
           await signOut(auth);
           return; 
+      }
+
+      
+      if (
+        (pathNow.endsWith("/") || pathNow.includes("index.html")) &&
+        !pathNow.includes("front") && !pathNow.includes("admin") && !pathNow.includes("sys")
+      ) {
+          const userSlug = await getUserCommunity(user.uid);
+          if (role === "系統管理員") {
+             location.href = "sys.html";
+          } else if (role === "管理員" || role === "總幹事" || role === "社區") {
+             location.href = `admin.html?c=${userSlug}`;
+          } else {
+             location.href = `front.html?c=${userSlug}`;
+          }
+          return;
       }
 
       // If we are on specific pages, handle display
@@ -1101,11 +1140,16 @@ async function handleRoleRedirect(role) {
         const qp = getQueryParam("c");
         const userSlug = await getUserCommunity(user.uid);
         const reqSlug = pathSlug || qp || null;
-        const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
-        if (role !== "系統管理員" && reqSlug && reqSlug !== userSlug) {
+        console.log("Front Page Check:", { role, reqSlug, userSlug, pathSlug, qp });
+
+        if (role === "系統管理員") {
+           // System Admin: Do NOT redirect
+        } else if (reqSlug && reqSlug !== userSlug) {
+          console.log("Redirecting to user slug:", userSlug);
           location.replace(`front.html?c=${userSlug}`);
           return;
         }
+        const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
         
         let cname = slug;
         try {
@@ -1127,17 +1171,39 @@ async function handleRoleRedirect(role) {
         const t = ensureTenant(slug);
         window.currentTenantSlug = slug;
         window.tenant = t;
-        const titleEl = document.querySelector(".sys-title");
+        const titleEl = frontStack ? frontStack.querySelector(".sys-title") : document.querySelector(".sys-title");
         if (titleEl) {
-           titleEl.textContent = `${cname} 社區`;
+           let displayName = cname;
+           // 如果是預設值(無社區)，系統管理員顯示"系統管理員"，住戶顯示"西北e生活"
+           if (!displayName || displayName === "default") {
+             displayName = role === "系統管理員" ? "系統管理員" : "西北e生活";
+           } else {
+             // 若有社區名稱，系統管理員也應顯示社區名稱
+             displayName = cname;
+           }
+           titleEl.textContent = displayName;
+           
            if (role === "系統管理員") {
              titleEl.style.cursor = "pointer";
              titleEl.style.textDecoration = "underline";
              titleEl.title = "點擊切換社區";
-             titleEl.addEventListener("click", () => openCommunitySwitcher("front"));
-           }
-        }
-        const wFront = document.getElementById("welcome-front");
+             // 移除舊的 event listener 比較麻煩，但這裡通常是頁面刷新或單次執行
+             // 為避免重複綁定，可以使用 onclick 屬性或確保只綁一次
+             titleEl.onclick = () => openCommunitySwitcher("front");
+         }
+      }
+
+      // Update branding elements for Front Page
+      const brandTextFront = document.getElementById("brand-text-front");
+      if (slug && slug !== "default") {
+         if (brandTextFront) brandTextFront.textContent = cname;
+         document.title = `${cname}｜前台`;
+      } else {
+         if (brandTextFront) brandTextFront.textContent = "西北e生活";
+         document.title = "西北e生活｜前台";
+      }
+
+      const wFront = document.getElementById("welcome-front");
         if (wFront) {
           const u = auth.currentUser;
           const emailPart = (u && u.email && u.email.split("@")[0]) || "";
@@ -1238,7 +1304,12 @@ async function handleRoleRedirect(role) {
           const qp = getQueryParam("c");
           const userSlug = await getUserCommunity(user.uid);
           const reqSlug = pathSlug || qp || null;
-          if (role !== "系統管理員" && reqSlug && reqSlug !== userSlug) {
+          console.log("Admin Page Check:", { role, reqSlug, userSlug, pathSlug, qp });
+
+          if (role === "系統管理員") {
+             // System Admin: Do NOT redirect, just use the requested slug
+          } else if (reqSlug && reqSlug !== userSlug) {
+            console.log("Redirecting to user slug:", userSlug);
             location.replace(`admin.html?c=${userSlug}`);
             return;
           }
@@ -1260,16 +1331,47 @@ async function handleRoleRedirect(role) {
              }
           } catch {}
           const titleEl = adminStack.querySelector(".sys-title");
-          if (titleEl && cname && cname !== "default") {
-             titleEl.textContent = `${cname} 社區管理後台`;
+          if (titleEl) {
+             let displayName = cname;
+             
+             if (slug && slug !== "default") {
+               // 顯示社區名稱
+               titleEl.textContent = `${displayName} 社區後台`;
+             } else {
+               titleEl.textContent = "西北e生活 社區後台";
+             }
+
              if (role === "系統管理員") {
                 titleEl.style.cursor = "pointer";
                 titleEl.style.textDecoration = "underline";
                 titleEl.title = "點擊切換社區";
-                titleEl.addEventListener("click", () => openCommunitySwitcher("admin"));
+                titleEl.onclick = () => openCommunitySwitcher("admin");
              }
           }
           
+          // Update branding elements
+          const brandText = document.getElementById("brand-text");
+          const brandTextMobile = document.getElementById("brand-text-mobile");
+          if (slug && slug !== "default") {
+             if (brandText) brandText.textContent = cname;
+             if (brandTextMobile) brandTextMobile.textContent = cname;
+             document.title = `${cname}｜後台登入`;
+          } else {
+             if (brandText) brandText.textContent = "西北e生活";
+             if (brandTextMobile) brandTextMobile.textContent = "西北e生活";
+             document.title = "西北e生活｜後台登入";
+          }
+          
+          const btnSysBack = document.getElementById("admin-tab-sys-back");
+          if (btnSysBack) {
+            if (role === "系統管理員") {
+              btnSysBack.classList.remove("hidden");
+              btnSysBack.onclick = () => location.href = "sys.html";
+            } else {
+              btnSysBack.classList.add("hidden");
+            }
+          }
+
           const btnAvatarAdmin = document.getElementById("btn-avatar-admin");
           if (btnAvatarAdmin) {
             const u = auth.currentUser;
@@ -1440,25 +1542,65 @@ async function openCommunitySwitcher(type) {
     return alert("無法載入社區列表");
   }
 
-  const listHtml = communities.map(c => `
-    <div class="modal-row" style="cursor:pointer; padding: 10px; border-bottom: 1px solid #eee;" onclick="location.href='${type}.html?c=${c.id}'">
-      <strong>${c.name || c.id}</strong> <span style="color:#888">(${c.id})</span>
-    </div>
-  `).join("");
-
   modal.innerHTML = `
     <div class="modal-dialog" style="max-height: 80vh; overflow-y: auto;">
       <div class="modal-head">
         <div class="modal-title">切換社區 (${type === 'admin' ? '後台' : '前台'})</div>
       </div>
-      <div class="modal-body">
-         ${listHtml || '<div style="padding:20px;text-align:center">無社區資料</div>'}
-      </div>
+      <div class="modal-body"></div>
       <div class="modal-foot">
-        <button class="btn action-btn" onclick="this.closest('.modal').remove()">關閉</button>
+        <button class="btn action-btn close-btn">關閉</button>
       </div>
     </div>
   `;
+
+  const bodyEl = modal.querySelector(".modal-body");
+  if (communities.length === 0) {
+    bodyEl.innerHTML = '<div style="padding:20px;text-align:center">無社區資料</div>';
+  } else {
+    communities.forEach(c => {
+      const row = document.createElement("div");
+      row.className = "modal-row";
+      row.style.cssText = "cursor:pointer; padding: 10px; border-bottom: 1px solid #eee;";
+      row.innerHTML = `<strong>${c.name || c.id}</strong> <span style="color:#888">(${c.id})</span>`;
+      row.addEventListener("click", async (e) => {
+        if (type === 'admin' && location.pathname.includes('admin')) {
+          e.preventDefault();
+          window.currentAdminCommunitySlug = c.id;
+          try {
+            localStorage.setItem("adminCurrentCommunity", c.id);
+            const url = new URL(window.location);
+            url.searchParams.set("c", c.id);
+            window.history.pushState({}, "", url);
+          } catch {}
+
+          if (typeof updateAdminBrandTitle === 'function') await updateAdminBrandTitle();
+          
+          const savedMain = localStorage.getItem('adminActiveMain') || 'shortcuts';
+          if (typeof setActiveAdminNav === 'function') {
+            setActiveAdminNav(savedMain);
+            // Force re-render to ensure content updates immediately
+            if (adminNav.subContainer) {
+              const activeSub = adminNav.subContainer.querySelector('.sub-nav-item.active');
+              if (activeSub) {
+                const label = (activeSub.getAttribute('data-label') || activeSub.textContent || '').replace(/\u200B/g, '').trim();
+                renderAdminContent(savedMain, label);
+              } else {
+                renderAdminSubNav(savedMain);
+              }
+            }
+          }
+          
+          modal.remove();
+        } else {
+          location.href = `${type}.html?c=${c.id}`;
+        }
+      });
+      bodyEl.appendChild(row);
+    });
+  }
+
+  modal.querySelector(".close-btn").addEventListener("click", () => modal.remove());
   document.body.appendChild(modal);
 }
 
@@ -1512,7 +1654,7 @@ const sysNav = {
 const sysSubMenus = {
   home: ["總覽", "社區"],
   notify: ["系統", "社區", "住戶"],
-  settings: ["一般", "社區", "住戶", "系統"],
+  settings: ["一般", "社區", "系統"],
   app: ["廣告", "按鈕"]
 };
 
@@ -1547,146 +1689,479 @@ if (sysNav.subContainer) {
     const avatarHtml = photoURL 
       ? `<img class="avatar" src="${photoURL}" alt="avatar">`
       : `<span class="avatar">${(name || email)[0]}</span>`;
-    // Fetch admin list from Firestore
+    // Fetch all users list from Firestore
     let admins = [];
+    let communities = [];
     try {
-      const q = query(collection(db, "users"), where("role", "==", "系統管理員"));
-      const snapList = await getDocs(q);
+      const [snapList, snapComm] = await Promise.all([
+        getDocs(query(collection(db, "users"))),
+        getDocs(query(collection(db, "communities")))
+      ]);
       admins = snapList.docs.map(d => ({ id: d.id, ...d.data() }));
+      communities = snapComm.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch (e) {
-      console.warn("Query admins failed", e);
+      console.warn("Query data failed", e);
     }
     if (!admins.length) {
       admins = [{ id: uid || "me", email, role, status, displayName: name, phone, photoURL }];
     }
-    const rows = admins.map(a => {
-      const nm = a.displayName || "系統管理員";
-      const av = a.photoURL 
-        ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
-        : `<span class="avatar">${(nm || a.email)[0]}</span>`;
-      return `
-        <tr data-uid="${a.id}">
-          <td class="avatar-cell">${av}</td>
-          <td>${nm}</td>
-          <td>${a.phone || ""}</td>
-          <td>••••••</td>
-          <td>${a.email}</td>
-          <td>${a.role}</td>
-          <td class="status">${a.status || "啟用"}</td>
-          <td class="actions">
-            <button class="btn small action-btn btn-edit-admin">編輯</button>
-            <button class="btn small action-btn danger btn-delete-admin">刪除</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
+
+    const communityOptions = communities.map(c => `<option value="${c.id}">${c.name || c.id}</option>`).join("");
+
     sysNav.content.innerHTML = `
       <div class="card data-card">
         <div class="card-head">
-          <h1 class="card-title">系統管理員帳號列表</h1>
-          <button id="btn-create-admin" class="btn small action-btn">新增</button>
+          <h1 class="card-title">帳號列表</h1>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-export-admin" class="btn small action-btn" style="background-color: #10b981; color: white;">匯出</button>
+            <button id="btn-create-admin" class="btn small action-btn" style="background-color: #ef4444; color: white;">新增</button>
+          </div>
         </div>
+        
+        <div class="card-filters" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap; padding: 0 20px 15px 20px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-weight:bold;">所屬社區:</label>
+            <select id="filter-community" style="padding: 6px; border-radius: 4px; border: 1px solid #ddd;">
+                <option value="全部">全部</option>
+                ${communityOptions}
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-weight:bold;">角色:</label>
+            <select id="filter-role" style="padding: 6px; border-radius: 4px; border: 1px solid #ddd;">
+                <option value="全部">全部</option>
+                <option value="系統管理員">系統管理員</option>
+                <option value="社區">社區</option>
+                <option value="住戶">住戶</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-weight:bold;">姓名關鍵字:</label>
+            <input type="text" id="filter-name" placeholder="輸入姓名搜尋" style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 150px;">
+          </div>
+        </div>
+
         <div class="table-wrap">
           <table class="table">
-            <colgroup>
-              <col>
-              <col>
-              <col>
-              <col>
-              <col>
-              <col>
-              <col>
-              <col>
-            </colgroup>
             <thead>
               <tr>
+                <th>角色</th>
+                <th>權限</th>
+                <th>所屬公司</th>
                 <th>大頭照</th>
                 <th>姓名</th>
+                <th>電子郵件</th>
                 <th>手機號碼</th>
                 <th>密碼</th>
-                <th>電子郵件</th>
-                <th>角色</th>
                 <th>狀態</th>
                 <th>操作</th>
               </tr>
             </thead>
-            <tbody>${rows}</tbody>
+            <tbody></tbody>
           </table>
         </div>
       </div>
     `;
-    // Bind actions for each row
-    const btnEdits = sysNav.content.querySelectorAll(".btn-edit-admin");
-    const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-admin");
-    btnEdits.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!sysNav.content) return;
-        const tr = btn.closest("tr");
-        const targetUid = tr && tr.getAttribute("data-uid");
-        const currentUser = auth.currentUser;
-        const isSelf = currentUser && currentUser.uid === targetUid;
-        // Fetch doc for target
-        let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "系統管理員", status: "啟用" };
-        try {
-          const snap = await getDoc(doc(db, "users", targetUid));
-          if (snap.exists()) {
-            const d = snap.data();
-            target.displayName = d.displayName || target.displayName;
-            target.email = d.email || target.email;
-            target.phone = d.phone || target.phone;
-            target.photoURL = d.photoURL || target.photoURL;
-            target.status = d.status || target.status;
-            target.seq = d.seq;
-            target.houseNo = d.houseNo;
-            target.subNo = d.subNo;
-            target.qrCodeText = d.qrCodeText;
-            target.address = d.address;
-            target.area = d.area;
-            target.ownershipRatio = d.ownershipRatio;
-          }
-        } catch {}
-        openEditModal(target, isSelf);
-      });
-    });
-    btnDeletes.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const ok1 = window.confirm("確定要刪除此帳號嗎？此操作不可恢復。");
-        if (!ok1) return;
-        const ok2 = window.confirm("再次確認：刪除後將立即登出。是否繼續？");
-        if (!ok2) return;
-        try {
-          const tr = btn.closest("tr");
-          const targetUid = tr && tr.getAttribute("data-uid");
-          const curr = auth.currentUser;
-          if (curr && curr.uid === targetUid) {
-            await curr.delete();
-            showHint("已刪除目前帳號", "success");
-            redirectAfterSignOut();
-          } else {
-            // Client SDK無法刪除其他用戶，這裡僅更新標記狀態
-            await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-            showHint("已標記該帳號為停用", "success");
-            await renderSettingsGeneral();
-          }
-        } catch (err) {
-          console.error(err);
-          showHint("刪除失敗，可能需要重新登入驗證", "error");
-        }
-      });
-    });
+
+    const renderTable = () => {
+        const commFilter = document.getElementById("filter-community").value;
+        const roleFilter = document.getElementById("filter-role").value;
+        const nameFilter = document.getElementById("filter-name").value.trim().toLowerCase();
+
+        let filtered = admins.filter(a => {
+            // Filter by Community
+            if (commFilter !== "全部") {
+                 // SysAdmin shows "All" so they don't belong to a specific community
+                 if (a.role === "系統管理員") return false; 
+                 if (a.community !== commFilter) return false;
+            }
+
+            // Filter by Role
+            if (roleFilter !== "全部" && a.role !== roleFilter) return false;
+            
+            // Filter by Name
+            if (nameFilter) {
+                const n = (a.displayName || "").toLowerCase();
+                if (!n.includes(nameFilter)) return false;
+            }
+            return true;
+        });
+
+        // Sort: System Admin -> Community -> Resident (by houseNo)
+        filtered.sort((a, b) => {
+            const getPriority = (role) => {
+                if (role === "系統管理員") return 1;
+                if (role === "住戶") return 3;
+                return 2;
+            };
+            const pA = getPriority(a.role);
+            const pB = getPriority(b.role);
+            if (pA !== pB) return pA - pB;
+            
+            if (a.role === "住戶") {
+                const hA = (a.houseNo || "").toString();
+                const hB = (b.houseNo || "").toString();
+                return hA.localeCompare(hB, undefined, { numeric: true, sensitivity: 'base' });
+            }
+            return 0;
+        });
+
+        const rows = filtered.map(a => {
+            const nm = a.displayName || a.role || "使用者";
+            let companyVal = "全部";
+            if (a.role !== "系統管理員") {
+                const cObj = communities.find(c => c.id === a.community);
+                companyVal = cObj ? (cObj.name || a.community) : (a.community || "");
+            }
+            const av = a.photoURL 
+                ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
+                : `<span class="avatar">${(nm || a.email)[0]}</span>`;
+            
+            // Determine permissions
+            const isSys = a.role === "系統管理員";
+            const isBack = isSys || ["社區管理員", "總幹事", "管理委員會", "社區"].includes(a.role);
+            const isFront = a.status === "啟用"; // Front is based on Status being active
+
+            const permButtons = `
+                <button class="perm-btn btn-perm-sys ${isSys ? 'active' : 'inactive'}">系</button>
+                <button class="perm-btn btn-perm-back ${isBack ? 'active' : 'inactive'}">後</button>
+                <button class="perm-btn btn-perm-front ${isFront ? 'active' : 'inactive'}">前</button>
+            `;
+
+            let statusHtml = "";
+            if (a.role === "系統管理員") {
+                statusHtml = `<span class="status">永遠啟用</span>`;
+            } else {
+                const isChecked = a.status === "停用" ? "checked" : "";
+                statusHtml = `
+                <label class="switch">
+                    <input type="checkbox" class="status-toggle" ${isChecked}>
+                    <span class="slider round"></span>
+                </label>
+                `;
+            }
+
+            return `
+                <tr data-uid="${a.id}">
+                <td>${a.role}</td>
+                <td class="perm-cell">${permButtons}</td>
+                <td>${companyVal}</td>
+                <td>${av}</td>
+                <td>${nm}</td>
+                <td>${a.email}</td>
+                <td>${a.phone || ""}</td>
+                <td><button class="btn small action-btn btn-reset-pwd">重設</button></td>
+                <td>${statusHtml}</td>
+                <td>
+                    <div class="actions">
+                    <button class="btn small action-btn btn-edit-admin">編輯</button>
+                    <button class="btn small action-btn danger btn-delete-admin">刪除</button>
+                    </div>
+                </td>
+                </tr>
+            `;
+        }).join("");
+
+        sysNav.content.querySelector("tbody").innerHTML = rows;
+        bindRowEvents();
+    };
+
+    const bindRowEvents = () => {
+        // Bind Permission Buttons
+        sysNav.content.querySelectorAll(".btn-perm-sys").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const tr = e.target.closest("tr");
+                const uid = tr.getAttribute("data-uid");
+                if (!uid) return;
+                const isActive = btn.classList.contains("active");
+                
+                let newRole = "社區"; // Default downgrade
+                if (!isActive) newRole = "系統管理員"; // Upgrade
+                
+                try {
+                    await setDoc(doc(db, "users", uid), { role: newRole }, { merge: true });
+                    showHint("權限已更新", "success");
+                    // Update local data and re-render to avoid full fetch
+                    const user = admins.find(u => u.id === uid);
+                    if(user) user.role = newRole;
+                    renderTable(); 
+                } catch (err) {
+                    console.error(err);
+                    showHint("更新失敗", "error");
+                }
+            });
+        });
+
+        sysNav.content.querySelectorAll(".btn-perm-back").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const tr = e.target.closest("tr");
+                const uid = tr.getAttribute("data-uid");
+                if (!uid) return;
+                const isActive = btn.classList.contains("active");
+
+                let newRole = "住戶"; // Default downgrade
+                if (!isActive) newRole = "社區"; // Upgrade
+                
+                try {
+                    await setDoc(doc(db, "users", uid), { role: newRole }, { merge: true });
+                    showHint("權限已更新", "success");
+                    const user = admins.find(u => u.id === uid);
+                    if(user) user.role = newRole;
+                    renderTable();
+                } catch (err) {
+                    console.error(err);
+                    showHint("更新失敗", "error");
+                }
+            });
+        });
+
+        sysNav.content.querySelectorAll(".btn-perm-front").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const tr = e.target.closest("tr");
+                const uid = tr.getAttribute("data-uid");
+                if (!uid) return;
+                const isActive = btn.classList.contains("active");
+
+                const newStatus = isActive ? "停用" : "啟用";
+                
+                if (isActive && auth.currentUser && auth.currentUser.uid === uid) {
+                    const ok = window.confirm("您正在停用自己的權限，這將導致您被登出。確定嗎？");
+                    if (!ok) return;
+                }
+
+                try {
+                    await setDoc(doc(db, "users", uid), { status: newStatus }, { merge: true });
+                    showHint(newStatus === "啟用" ? "已啟用前台權限" : "已停用前台權限", "success");
+                    if (newStatus === "停用" && auth.currentUser && auth.currentUser.uid === uid) {
+                        await signOut(auth);
+                        redirectAfterSignOut();
+                    } else {
+                        const user = admins.find(u => u.id === uid);
+                        if(user) user.status = newStatus;
+                        renderTable();
+                    }
+                } catch (err) {
+                    console.error(err);
+                    showHint("更新失敗", "error");
+                }
+            });
+        });
+
+        // Bind Reset Password Buttons
+        sysNav.content.querySelectorAll(".btn-reset-pwd").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                const tr = e.target.closest("tr");
+                const emailCell = tr.children[5]; // Index 5 is Email now? Check columns.
+                // Columns: Role(0), Perm(1), Company(2), Avatar(3), Name(4), Email(5)...
+                // Correct.
+                const email = emailCell ? emailCell.textContent.trim() : "";
+                
+                if (!email) {
+                    showHint("找不到電子郵件", "error");
+                    return;
+                }
+
+                const ok = window.confirm(`確定要重設 ${email} 的密碼嗎？\n(注意：系統將發送密碼重設信件至該信箱，因安全性限制無法直接設為123456)`);
+                if (!ok) return;
+
+                try {
+                    await sendPasswordResetEmail(auth, email);
+                    showHint("已發送密碼重設信", "success");
+                } catch (err) {
+                    console.error(err);
+                    showHint("發送失敗: " + err.message, "error");
+                }
+            });
+        });
+
+        // Bind Status Toggles
+        sysNav.content.querySelectorAll(".status-toggle").forEach(toggle => {
+            toggle.addEventListener("change", async (e) => {
+                const tr = e.target.closest("tr");
+                const targetUid = tr && tr.getAttribute("data-uid");
+                if (!targetUid) return;
+
+                const newStatus = e.target.checked ? "停用" : "啟用";
+                
+                const currentUser = auth.currentUser;
+                if (currentUser && currentUser.uid === targetUid && newStatus === "停用") {
+                    const ok = window.confirm("您正在停用自己的帳號，這將導致您被登出。確定嗎？");
+                    if (!ok) {
+                        e.target.checked = false; 
+                        return;
+                    }
+                }
+
+                try {
+                    await setDoc(doc(db, "users", targetUid), { status: newStatus }, { merge: true });
+                    showHint(newStatus === "啟用" ? "帳號已啟用" : "帳號已停用", "success");
+                    
+                    if (currentUser && currentUser.uid === targetUid && newStatus === "停用") {
+                        await signOut(auth);
+                        redirectAfterSignOut();
+                    }
+                    const user = admins.find(u => u.id === targetUid);
+                    if(user) user.status = newStatus;
+                    renderTable(); 
+                } catch (err) {
+                    console.error(err);
+                    showHint("更新狀態失敗", "error");
+                    e.target.checked = !e.target.checked;
+                }
+            });
+        });
+
+        // Bind actions for each row
+        sysNav.content.querySelectorAll(".btn-edit-admin").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                if (!sysNav.content) return;
+                const tr = btn.closest("tr");
+                const targetUid = tr && tr.getAttribute("data-uid");
+                const target = admins.find(a => a.id === targetUid);
+                if (target) openEditModal(target, targetUid === uid);
+            });
+        });
+
+        sysNav.content.querySelectorAll(".btn-delete-admin").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                if (!sysNav.content) return;
+                const tr = btn.closest("tr");
+                const targetUid = tr && tr.getAttribute("data-uid");
+                const target = admins.find(a => a.id === targetUid);
+                if (!target) return;
+
+                if (targetUid === uid) {
+                    showHint("無法刪除自己的帳號", "error");
+                    return;
+                }
+
+                const ok = window.confirm(`確定要刪除帳號 ${target.displayName || target.email} 嗎？`);
+                if (!ok) return;
+
+                try {
+                    await deleteDoc(doc(db, "users", targetUid));
+                    showHint("已刪除帳號", "success");
+                    // Remove from local list and re-render
+                    admins = admins.filter(a => a.id !== targetUid);
+                    renderTable();
+                } catch (e) {
+                    console.error(e);
+                    showHint("刪除失敗", "error");
+                }
+            });
+        });
+    };
+
+    // Attach Filter Events
+    document.getElementById("filter-community").addEventListener("change", renderTable);
+    document.getElementById("filter-role").addEventListener("change", renderTable);
+    document.getElementById("filter-name").addEventListener("input", renderTable);
+
+    // Initial Render
+    renderTable();
+
+    // Bind Export Button
+    const btnExport = document.getElementById("btn-export-admin");
+    if (btnExport) {
+        btnExport.addEventListener("click", () => {
+            const commFilter = document.getElementById("filter-community").value;
+            const roleFilter = document.getElementById("filter-role").value;
+            const nameFilter = document.getElementById("filter-name").value.trim().toLowerCase();
+
+            let filtered = admins.filter(a => {
+                if (commFilter !== "全部") {
+                     if (a.role === "系統管理員") return false; 
+                     if (a.community !== commFilter) return false;
+                }
+                if (roleFilter !== "全部" && a.role !== roleFilter) return false;
+                if (nameFilter) {
+                    const n = (a.displayName || "").toLowerCase();
+                    if (!n.includes(nameFilter)) return false;
+                }
+                return true;
+            });
+
+            filtered.sort((a, b) => {
+                const getPriority = (role) => {
+                    if (role === "系統管理員") return 1;
+                    if (role === "住戶") return 3;
+                    return 2;
+                };
+                const pA = getPriority(a.role);
+                const pB = getPriority(b.role);
+                if (pA !== pB) return pA - pB;
+                
+                if (a.role === "住戶") {
+                    const hA = (a.houseNo || "").toString();
+                    const hB = (b.houseNo || "").toString();
+                    return hA.localeCompare(hB, undefined, { numeric: true, sensitivity: 'base' });
+                }
+                return 0;
+            });
+
+            const data = filtered.map(a => {
+                let commName = "全部";
+                if (a.role !== "系統管理員") {
+                    const cObj = communities.find(c => c.id === a.community);
+                    commName = cObj ? (cObj.name || a.community) : (a.community || "");
+                }
+                return {
+                    "所屬社區": commName,
+                    "戶號": a.houseNo || "",
+                    "子戶號": a.subNo || "",
+                    "姓名": a.displayName || "",
+                    "帳號": a.email || "",
+                    "角色": a.role || ""
+                };
+            });
+
+            if (typeof XLSX === 'undefined') {
+                showHint("匯出功能尚未載入完成，請稍後再試", "error");
+                return;
+            }
+
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "帳號列表");
+            
+            const date = new Date().toISOString().slice(0,10);
+            XLSX.writeFile(wb, `帳號列表_${date}.xlsx`);
+        });
+    }
+
+    // Bind Create Button
     const btnCreate = document.getElementById("btn-create-admin");
     if (btnCreate) {
-      btnCreate.addEventListener("click", () => openCreateModal());
+        btnCreate.addEventListener("click", () => {
+            openCreateModal();
+        });
     }
   }
   
   async function renderSettingsCommunity() {
     if (!sysNav.content) return;
     let list = [];
+    let residentCounts = {};
     try {
-      const snap = await getDocs(collection(db, "communities"));
-      list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    } catch {}
+      const [snapComm, snapUsers] = await Promise.all([
+        getDocs(collection(db, "communities")),
+        getDocs(collection(db, "users"))
+      ]);
+      list = snapComm.docs.map(d => ({ id: d.id, ...d.data() }));
+      snapUsers.forEach(d => {
+        const u = d.data();
+        if (u.role === "住戶" && u.community) {
+          residentCounts[u.community] = (residentCounts[u.community] || 0) + 1;
+        }
+      });
+    } catch (e) {
+       console.error(e);
+       // Fallback: try fetching just communities
+       try {
+           const snap = await getDocs(collection(db, "communities"));
+           list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+       } catch {}
+    }
     list.forEach(c => {
       communityConfigs[c.id] = {
         apiKey: c.apiKey,
@@ -1703,61 +2178,25 @@ if (sysNav.subContainer) {
         <td>${c.id}</td>
         <td>${c.name || ""}</td>
         <td>${c.projectId || ""}</td>
-        <td>${c.status || "啟用"}</td>
-        <td class="actions">
-          <button class="btn small action-btn btn-edit-community">編輯</button>
-          <button class="btn small action-btn danger btn-delete-community">刪除</button>
-          <button class="btn small action-btn btn-go-community">進入社區</button>
+        <td>${residentCounts[c.id] || 0}</td>
+        <td>
+          <label class="switch">
+            <input type="checkbox" class="status-toggle-community-config" ${c.status === "停用" ? "checked" : ""}>
+            <span class="slider round"></span>
+          </label>
+        </td>
+        <td>
+          <div class="actions">
+            <button class="btn small action-btn btn-edit-community">編輯</button>
+            <button class="btn small action-btn danger btn-delete-community">刪除</button>
+            <button class="btn small action-btn btn-go-community" data-slug="${c.id}">進入後台</button>
+            <button class="btn small action-btn btn-go-front" data-slug="${c.id}">進入前台</button>
+          </div>
         </td>
       </tr>
     `).join("");
-    // 準備社區後台帳號（以目前使用者所在社區為基準）
-    const u = auth.currentUser;
-    let mySlug = u ? await getUserCommunity(u.uid) : "default";
-    
-    // 使用 window 變數記錄目前選擇的社區，若無則預設為使用者的社區
-    let selectedSlug = window.currentAdminCommunitySlug || mySlug;
+    // 社區後台帳號區塊已移除
 
-    if (selectedSlug === "default" && list.length > 0) {
-      selectedSlug = list[0].id;
-    }
-    let cname = selectedSlug;
-    const foundC = list.find(x => x.id === selectedSlug);
-    if (foundC) cname = foundC.name || selectedSlug;
-    
-    let admins = [];
-    try {
-      const qAdmins = query(collection(db, "users"), where("community", "==", selectedSlug), where("role", "in", ["管理員", "總幹事"]));
-      const snapAdmins = await getDocs(qAdmins);
-      admins = snapAdmins.docs.map(d => ({ id: d.id, ...d.data() }));
-    } catch {}
-    const adminRows = admins.map(a => {
-      const nm = a.displayName || (a.email || "").split("@")[0] || "管理員";
-      const av = a.photoURL
-        ? `<img class="avatar" src="${a.photoURL}" alt="avatar">`
-        : `<span class="avatar">${(nm || a.email || "管")[0]}</span>`;
-      return `
-        <tr data-uid="${a.id}" data-slug="${selectedSlug}">
-          <td class="avatar-cell">${av}</td>
-          <td>${nm}</td>
-          <td>${a.phone || ""}</td>
-          <td>${a.email || ""}</td>
-          <td>${a.role || "管理員"}</td>
-          <td class="status">${a.status || "啟用"}</td>
-          <td class="actions">
-            <button class="btn small action-btn btn-edit-community-admin">編輯</button>
-            <button class="btn small action-btn danger btn-delete-community-admin">刪除</button>
-            <button class="btn small action-btn btn-go-community-admin">進入後台</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-    const adminEmpty = adminRows ? "" : "目前沒有後台帳號";
-    
-    // 建立社區選擇器的選項
-    const adminCommunityOptions = list.map(c => 
-      `<option value="${c.id}"${c.id === selectedSlug ? " selected" : ""}>${c.name || c.id}</option>`
-    ).join("");
 
     sysNav.content.innerHTML = `
       <div class="card data-card">
@@ -1767,12 +2206,13 @@ if (sysNav.subContainer) {
         </div>
         <div class="table-wrap">
           <table class="table">
-            <colgroup><col><col><col><col><col></colgroup>
+            <colgroup><col><col><col><col><col><col></colgroup>
             <thead>
               <tr>
                 <th>社區代碼</th>
                 <th>名稱</th>
                 <th>Firebase 專案ID</th>
+                <th>住戶數</th>
                 <th>狀態</th>
                 <th>操作</th>
               </tr>
@@ -1781,42 +2221,8 @@ if (sysNav.subContainer) {
           </table>
         </div>
       </div>
-      <div class="card data-card mt-24">
-        <div class="card-filters">
-          <label for="admin-community-select">社區</label>
-          <select id="admin-community-select">${adminCommunityOptions}</select>
-        </div>
-        <div class="card-head">
-          <h1 class="card-title">社區後台帳號（${cname}）</h1>
-          <button id="btn-create-community-admin" class="btn small action-btn">新增</button>
-        </div>
-        <div class="table-wrap">
-          <table class="table">
-            <colgroup><col><col><col><col><col><col><col></colgroup>
-            <thead>
-              <tr>
-                <th>大頭照</th>
-                <th>姓名</th>
-                <th>手機號碼</th>
-                <th>電子郵件</th>
-                <th>角色</th>
-                <th>狀態</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>${adminRows}</tbody>
-          </table>
-          ${adminEmpty ? `<div class="empty-hint">${adminEmpty}</div>` : ""}
-        </div>
-      </div>
     `;
     
-    const adminSel = document.getElementById("admin-community-select");
-    adminSel && adminSel.addEventListener("change", async () => {
-      window.currentAdminCommunitySlug = adminSel.value;
-      await renderSettingsCommunity();
-    });
-
     const btnCreate = document.getElementById("btn-create-community");
     btnCreate && btnCreate.addEventListener("click", () => openCommunityModal());
     const btnEdits = sysNav.content.querySelectorAll(".btn-edit-community");
@@ -1844,9 +2250,34 @@ if (sysNav.subContainer) {
       }
     }));
     const btnGos = sysNav.content.querySelectorAll(".btn-go-community");
-    btnGos.forEach(b => b.addEventListener("click", () => {
-      const tr = b.closest("tr");
-      const slug = tr && tr.getAttribute("data-slug");
+    btnGos.forEach(b => b.addEventListener("click", (e) => {
+      e.preventDefault();
+      const slug = b.getAttribute("data-slug");
+      console.log("btn-go-community clicked: slug =", slug);
+      if (!slug) {
+        console.error("Missing slug for community button");
+        showHint("系統錯誤：無法取得社區參數", "error");
+        return;
+      }
+      const found = list.find(x => x.id === slug);
+      const status = (found && found.status) || "啟用";
+      if (status === "停用") {
+        showHint("該社區已停用，無法進入", "error");
+        return;
+      }
+      const url = `admin.html?c=${slug}`;
+      const w = window.open(url, "_blank");
+      if (w) w.opener = null;
+    }));
+    const btnGoFronts = sysNav.content.querySelectorAll(".btn-go-front");
+    btnGoFronts.forEach(b => b.addEventListener("click", (e) => {
+      e.preventDefault();
+      const slug = b.getAttribute("data-slug");
+      if (!slug) {
+        console.error("Missing slug for front button");
+        showHint("系統錯誤：無法取得社區參數", "error");
+        return;
+      }
       const found = list.find(x => x.id === slug);
       const status = (found && found.status) || "啟用";
       if (status === "停用") {
@@ -1857,71 +2288,24 @@ if (sysNav.subContainer) {
       const w = window.open(url, "_blank");
       if (w) w.opener = null;
     }));
-    const btnCreateAdmin = document.getElementById("btn-create-community-admin");
-    btnCreateAdmin && btnCreateAdmin.addEventListener("click", () => openCreateCommunityAdminModal(selectedSlug));
-    const btnEditAdmins = sysNav.content.querySelectorAll(".btn-edit-community-admin");
-    btnEditAdmins.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        if (!sysNav.content) return;
-        const tr = btn.closest("tr");
-        const targetUid = tr && tr.getAttribute("data-uid");
-        const currentUser = auth.currentUser;
-        const isSelf = currentUser && currentUser.uid === targetUid;
-        let target = { id: targetUid, displayName: "", email: "", phone: "", photoURL: "", role: "管理員", status: "啟用" };
-        try {
-          const snap = await getDoc(doc(db, "users", targetUid));
-          if (snap.exists()) {
-            const d = snap.data();
-            target.displayName = d.displayName || target.displayName;
-            target.email = d.email || target.email;
-            target.phone = d.phone || target.phone;
-            target.photoURL = d.photoURL || target.photoURL;
-            target.status = d.status || target.status;
-          }
-        } catch {}
-        openEditModal(target, isSelf);
-      });
-    });
-    const btnDeleteAdmins = sysNav.content.querySelectorAll(".btn-delete-community-admin");
-    btnDeleteAdmins.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const ok = window.confirm("確定要刪除此後台帳號嗎？此操作不可恢復。");
-        if (!ok) return;
-        try {
-          const tr = btn.closest("tr");
-          const targetUid = tr && tr.getAttribute("data-uid");
-          if (!targetUid) return;
-          await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-          showHint("已標記該後台帳號為停用", "success");
-          await renderSettingsCommunity();
-        } catch (e) {
-          console.error(e);
-          showHint("刪除失敗，請稍後再試", "error");
-        }
-      });
-    });
-    const btnGoAdmins = sysNav.content.querySelectorAll(".btn-go-community-admin");
-    btnGoAdmins.forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const tr = btn.closest("tr");
+    // 社區後台帳號綁定事件已移除
+    
+    // Bind Status Toggles for Community Configs (Top Table)
+    const configToggles = sysNav.content.querySelectorAll(".status-toggle-community-config");
+    configToggles.forEach(toggle => {
+      toggle.addEventListener("change", async (e) => {
+        const tr = e.target.closest("tr");
         const slug = tr && tr.getAttribute("data-slug");
         if (!slug) return;
-        
-        // Check role validation again just in case (though target page checks too)
-        const user = auth.currentUser;
-        if (user) {
-           const role = await getOrCreateUserRole(user.uid, user.email);
-           const userSlug = await getUserCommunity(user.uid);
-           if (role !== "系統管理員" && slug !== userSlug) {
-              // If not sys admin, ensure they only go to their own community
-              location.replace(`admin.html?c=${userSlug}`);
-              return;
-           }
+        const newStatus = e.target.checked ? "停用" : "啟用";
+        try {
+          await setDoc(doc(db, "communities", slug), { status: newStatus }, { merge: true });
+          showHint(newStatus === "啟用" ? "社區已啟用" : "社區已停用", "success");
+        } catch (err) {
+          console.error(err);
+          showHint("更新狀態失敗", "error");
+          e.target.checked = !e.target.checked;
         }
-        
-        const url = `admin.html?c=${slug}`;
-        const w = window.open(url, "_blank");
-        if (w) w.opener = null;
       });
     });
   }
@@ -2129,428 +2513,298 @@ if (sysNav.subContainer) {
     });
   }
   async function openEditModal(target, isSelf) {
-    const isResident = (target.role || "住戶") === "住戶";
-    if (isResident) {
-      const titleR = "編輯住戶";
-      const seqR = target.seq || "";
-      const bodyR = `
-        <div class="modal-dialog">
-          <div class="modal-head"><div class="modal-title">${titleR}</div></div>
-          <div class="modal-body">
-            <div class="modal-row">
-              <label>大頭照</label>
-              <input type="file" id="modal-photo-file" accept="image/png,image/jpeg">
-            </div>
-            <div class="modal-row">
-              <label>預覽</label>
-              <img id="modal-photo-preview" class="avatar-preview" src="${target.photoURL || ""}">
-            </div>
-            <div class="modal-row">
-              <label>序號</label>
-              <input type="text" id="modal-serial" value="${seqR}">
-            </div>
-            <div class="modal-row">
-              <label>戶號</label>
-              <input type="text" id="modal-house-no" value="${target.houseNo || ""}">
-            </div>
-            <div class="modal-row">
-              <label>子戶號</label>
-              <input type="number" id="modal-sub-no" value="${typeof target.subNo === "number" ? target.subNo : ""}">
-            </div>
-            <div class="modal-row">
-              <label>QR 預覽</label>
-              <img id="modal-qr-preview" class="qr-preview" src="">
-            </div>
-            <div class="modal-row">
-              <label>QR code 代碼</label>
-              <input type="text" id="modal-qr-code" value="${(target.qrCodeText || "")}">
-            </div>
-            <div class="modal-row">
-              <label>姓名</label>
-              <input type="text" id="modal-name" value="${target.displayName || ""}">
-            </div>
-            <div class="modal-row">
-              <label>地址</label>
-              <input type="text" id="modal-address" value="${target.address || ""}">
-            </div>
-            <div class="modal-row">
-              <label>坪數</label>
-              <input type="number" id="modal-area" value="${target.area || ""}">
-            </div>
-            <div class="modal-row">
-              <label>區分權比</label>
-              <input type="number" id="modal-ownership" value="${target.ownershipRatio || ""}">
-            </div>
-            <div class="modal-row">
-              <label>手機號碼</label>
-              <input type="tel" id="modal-phone" value="${target.phone || ""}">
-            </div>
-            <div class="modal-row">
-              <label>電子郵件</label>
-              <input type="email" id="modal-email" value="${target.email || ""}">
-            </div>
-            <div class="modal-row">
-              <label>新密碼</label>
-              <input type="text" id="modal-password" placeholder="至少6字元">
-            </div>
-            <div class="modal-row">
-              <label>狀態</label>
-              <select id="modal-status">
-                <option value="啟用">啟用</option>
-                <option value="停用">停用</option>
-              </select>
-            </div>
-          </div>
-          <div class="modal-foot">
-            <button id="modal-cancel" class="btn action-btn danger">取消</button>
-            <button id="modal-save" class="btn action-btn">儲存</button>
-          </div>
-        </div>
-      `;
-      openModal(bodyR);
-      const btnCancel = document.getElementById("modal-cancel");
-      const btnSave = document.getElementById("modal-save");
-      const editFile = document.getElementById("modal-photo-file");
-      const editPreview = document.getElementById("modal-photo-preview");
-      const statusSelect = document.getElementById("modal-status");
-      const editQrPreview = document.getElementById("modal-qr-preview");
-      const editQrCodeInput = document.getElementById("modal-qr-code");
-      if (editPreview) editPreview.src = target.photoURL || "";
-      if (statusSelect) statusSelect.value = target.status || "停用";
-      editFile && editFile.addEventListener("change", () => {
-        const f = editFile.files[0];
-        if (f) {
-          editPreview.src = URL.createObjectURL(f);
-        }
-      });
-      editPreview && editPreview.addEventListener("click", () => {
-        if (editFile) editFile.click();
-      });
-      editQrCodeInput && editQrCodeInput.addEventListener("input", async () => {
-        const val = editQrCodeInput.value.trim();
-        if (!editQrPreview) return;
-        if (!val) {
-          editQrPreview.src = "";
-        } else {
-          const url = await getQrDataUrl(val, 64);
-          editQrPreview.src = url;
-        }
-      });
-      (async () => {
-        const val = editQrCodeInput ? editQrCodeInput.value.trim() : "";
-        if (editQrPreview && val) {
-          const url = await getQrDataUrl(val, 64);
-          editQrPreview.src = url;
-        }
-      })();
-      btnCancel && btnCancel.addEventListener("click", () => closeModal());
-      btnSave && btnSave.addEventListener("click", async () => {
-        try {
-          const newName = document.getElementById("modal-name").value.trim();
-          const newSeq = document.getElementById("modal-serial").value.trim();
-          const newPhone = document.getElementById("modal-phone").value.trim();
-          const photoFile = document.getElementById("modal-photo-file").files[0];
-          const newPassword = document.getElementById("modal-password").value;
-          const newStatus = document.getElementById("modal-status").value;
-          const newHouseNo = document.getElementById("modal-house-no").value.trim();
-          const newSubNoRaw = document.getElementById("modal-sub-no").value.trim();
-          const newSubNo = newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : undefined;
-          const newAddress = document.getElementById("modal-address").value.trim();
-          const newArea = document.getElementById("modal-area").value.trim();
-          const newOwnership = document.getElementById("modal-ownership").value.trim();
-          const newQrCodeText = document.getElementById("modal-qr-code").value.trim();
-          const newEmail = document.getElementById("modal-email").value.trim();
-          let newPhotoURL = target.photoURL || "";
-          if (photoFile) {
-            try {
-              const ext = photoFile.type === "image/png" ? "png" : "jpg";
-              const path = `avatars/${target.id}.${ext}`;
-              const ref = storageRef(storage, path);
-              await uploadBytes(ref, photoFile, { contentType: photoFile.type });
-              newPhotoURL = await getDownloadURL(ref);
-            } catch (err) {
-              try {
-                const b64 = await new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onload = () => resolve(reader.result);
-                  reader.onerror = reject;
-                  reader.readAsDataURL(photoFile);
-                });
-                newPhotoURL = b64;
-                showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
-              } catch {
-                showHint("上傳大頭照失敗，先以原圖進行更新", "error");
-              }
-            }
-          }
-          const payload = {
-            displayName: newName || target.displayName,
-            seq: newSeq,
-            phone: newPhone || target.phone,
-            photoURL: newPhotoURL,
-            status: newStatus || target.status,
-            houseNo: newHouseNo || target.houseNo || "",
-            address: newAddress || target.address || "",
-            qrCodeText: newQrCodeText || target.qrCodeText || "",
-            area: newArea || target.area || "",
-            ownershipRatio: newOwnership || target.ownershipRatio || "",
-            email: newEmail || target.email || ""
-          };
-          if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
-          await setDoc(doc(db, "users", target.id), payload, { merge: true });
-          const curr = auth.currentUser;
-          if (isSelf && curr) {
-            const profilePatch = {};
-            if (newName && newName !== curr.displayName) profilePatch.displayName = newName;
-            if (newPhotoURL && newPhotoURL !== curr.photoURL) profilePatch.photoURL = newPhotoURL;
-            if (Object.keys(profilePatch).length) {
-              try {
-                await updateProfile(curr, profilePatch);
-              } catch (err) {
-                if (err && err.code === "auth/requires-recent-login") {
-                  const cp = window.prompt("請輸入目前密碼以完成更新");
-                  if (cp) {
-                    try {
-                      const cred = EmailAuthProvider.credential(curr.email, cp);
-                      await reauthenticateWithCredential(curr, cred);
-                      await updateProfile(curr, profilePatch);
-                    } catch {}
-                  }
-                }
-              }
-            }
-            if (newPassword && newPassword.length >= 6) {
-              try {
-                await updatePassword(curr, newPassword);
-              } catch (err) {
-                if (err && err.code === "auth/requires-recent-login") {
-                  const cp = window.prompt("請輸入目前密碼以完成設定新密碼");
-                  if (cp) {
-                    try {
-                      const cred = EmailAuthProvider.credential(curr.email, cp);
-                      await reauthenticateWithCredential(curr, cred);
-                      await updatePassword(curr, newPassword);
-                    } catch {}
-                  }
-                }
-              }
-            }
-          }
-          closeModal();
-          await renderSettingsResidents();
-          showHint("已更新住戶資料", "success");
-        } catch (e) {
-          showHint("更新失敗", "error");
-        }
-      });
-      return;
-    }
-    const title = (target.role === "系統管理員") ? "編輯系統管理員" : "編輯社區管理員";
+    const title = "編輯帳號";
     let commList = [];
     try {
-      const snapC = await getDocs(collection(db, "communities"));
-      commList = snapC.docs.map(d => ({ id: d.id, ...d.data() }));
+      const snap = await getDocs(collection(db, "communities"));
+      commList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch {}
-    const selectedCommunity = target.community || window.currentAdminCommunitySlug || "default";
-    const optionsHtml = commList.map(c => `<option value="${c.id}"${c.id === selectedCommunity ? " selected" : ""}>${c.name || c.id}</option>`).join("");
+    const currentComm = target.community || "";
+    const commOptions = `<option value="">(無)</option>` + commList.map(c => `<option value="${c.id}"${c.id === currentComm ? " selected" : ""}>${c.name || c.id}</option>`).join("");
+    
+    const role = target.role || "系統管理員";
+
     const body = `
       <div class="modal-dialog">
-        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-head">
+          <div class="modal-title">${title}</div>
+          <button class="btn top" onclick="closeModal()">關閉</button>
+        </div>
         <div class="modal-body">
           <div class="modal-row">
-            <label>所屬社區</label>
-            <select id="modal-community">${optionsHtml}</select>
+            <label>角色</label>
+            <select id="edit-role" ${isSelf ? "disabled" : ""}>
+              <option value="系統管理員" ${role === "系統管理員" ? "selected" : ""}>系統管理員</option>
+              <option value="社區" ${role === "社區" ? "selected" : ""}>社區</option>
+              <option value="住戶" ${role === "住戶" ? "selected" : ""}>住戶</option>
+            </select>
+          </div>
+          <div class="modal-row" id="row-edit-community" style="display:none;">
+            <label>所屬社區 <span style="color:red">*</span></label>
+            <select id="edit-community" ${isSelf && role === "社區" ? "disabled" : ""}>${commOptions}</select>
+          </div>
+          <div class="modal-row">
+            <label>權限</label>
+            <div id="edit-permission-display" style="padding: 8px; background: #f3f4f6; border-radius: 8px; color: #6b7280;"></div>
           </div>
           <div class="modal-row">
             <label>大頭照</label>
-            <input type="file" id="modal-photo-file" accept="image/png,image/jpeg">
+            <input type="file" id="edit-photo-file" accept="image/png,image/jpeg">
           </div>
           <div class="modal-row">
             <label>預覽</label>
-            <img id="modal-photo-preview" class="avatar-preview" src="${target.photoURL || ""}">
+            <img id="edit-photo-preview" class="avatar-preview" src="${target.photoURL || ""}">
           </div>
           <div class="modal-row">
             <label>姓名</label>
-            <input type="text" id="modal-name" value="${target.displayName || ""}">
+            <input type="text" id="edit-name" value="${target.displayName || ""}">
           </div>
           <div class="modal-row">
-            <label>手機號碼</label>
-            <input type="tel" id="modal-phone" value="${target.phone || ""}">
-          </div>
-          <div class="modal-row">
-            <label>狀態</label>
-            <select id="modal-status">
-              <option value="啟用">啟用</option>
-              <option value="停用">停用</option>
+            <label>稱謂</label>
+            <select id="edit-title">
+              <option value="區權人" ${target.title === "區權人" ? "selected" : ""}>區權人</option>
+              <option value="親屬" ${target.title === "親屬" ? "selected" : ""}>親屬</option>
+              <option value="承租人" ${target.title === "承租人" ? "selected" : ""}>承租人</option>
+              <option value="管理員" ${target.title === "管理員" ? "selected" : ""}>管理員</option>
             </select>
           </div>
           <div class="modal-row">
-            <label>新密碼</label>
-            <input type="password" id="modal-password" placeholder="至少6字元">
+            <label>電子郵件 (為登入帳號)</label>
+            <input type="text" id="edit-email" value="${target.email || ""}">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼 (與電子郵件同為帳號，擇一登入)</label>
+            <input type="tel" id="edit-phone" value="${target.phone || ""}">
+          </div>
+          <div class="modal-row">
+            <label>QR code碼</label>
+            <input type="text" id="edit-qr-code" value="${target.qrCodeText || ""}">
+          </div>
+          <div class="modal-row">
+            <label>QR code預覽</label>
+            <img id="edit-qr-preview" class="qr-preview">
+          </div>
+          <div class="modal-row">
+            <label>戶號</label>
+            <input type="text" id="edit-house-no" value="${target.houseNo || ""}">
+          </div>
+          <div class="modal-row">
+            <label>子戶號</label>
+            <input type="number" id="edit-sub-no" value="${target.subNo !== undefined ? target.subNo : ""}" placeholder="數字">
+          </div>
+          <div class="modal-row">
+            <label>地址</label>
+            <input type="text" id="edit-address" value="${target.address || ""}">
+          </div>
+          <div class="modal-row">
+            <label>狀態</label>
+            <select id="edit-status" ${isSelf ? "disabled" : ""}>
+              <option value="啟用" ${target.status === "啟用" ? "selected" : ""}>啟用</option>
+              <option value="停用" ${target.status === "停用" ? "selected" : ""}>停用</option>
+            </select>
+          </div>
+          <div class="modal-row">
+            <label>新密碼 (留空則不修改)</label>
+            <input type="password" id="edit-password" placeholder="至少6字元">
           </div>
         </div>
         <div class="modal-foot">
-          <button id="modal-cancel" class="btn action-btn danger">取消</button>
-          <button id="modal-save" class="btn action-btn">儲存</button>
+          <button class="btn action-btn danger" onclick="closeModal()">取消</button>
+          <button class="btn primary" id="btn-save-edit">儲存</button>
         </div>
       </div>
     `;
     openModal(body);
-    const btnCancel = document.getElementById("modal-cancel");
-    const btnSave = document.getElementById("modal-save");
-    const editFile = document.getElementById("modal-photo-file");
-    const editPreview = document.getElementById("modal-photo-preview");
-    const statusSelect = document.getElementById("modal-status");
-    if (editPreview) editPreview.src = target.photoURL || "";
-    if (statusSelect) statusSelect.value = target.status || "啟用";
-    editFile && editFile.addEventListener("change", () => {
-      const f = editFile.files[0];
-      if (f) {
-        editPreview.src = URL.createObjectURL(f);
+    
+    const roleSelect = document.getElementById("edit-role");
+    const commRow = document.getElementById("row-edit-community");
+    const permDisplay = document.getElementById("edit-permission-display");
+    const photoFile = document.getElementById("edit-photo-file");
+    const photoPreview = document.getElementById("edit-photo-preview");
+    const qrInput = document.getElementById("edit-qr-code");
+    const qrPreview = document.getElementById("edit-qr-preview");
+    const btnSave = document.getElementById("btn-save-edit");
+
+    const updateRoleUI = () => {
+      const r = roleSelect.value;
+      const tSelect = document.getElementById("edit-title");
+      if (r === "系統管理員") {
+        permDisplay.textContent = "系統、後台、前台";
+        commRow.style.display = "none";
+        if(tSelect) { tSelect.value = "管理員"; tSelect.disabled = true; }
+      } else if (r === "社區") {
+        permDisplay.textContent = "後台、前台";
+        commRow.style.display = "grid";
+        if(tSelect) { tSelect.value = "管理員"; tSelect.disabled = true; }
+      } else if (r === "住戶") {
+        permDisplay.textContent = "前台";
+        commRow.style.display = "grid";
+        if(tSelect) { 
+            tSelect.disabled = false;
+            if(tSelect.value === "管理員") tSelect.value = "區權人";
+        }
       }
+    };
+    roleSelect && roleSelect.addEventListener("change", updateRoleUI);
+    updateRoleUI();
+
+    photoFile && photoFile.addEventListener("change", () => {
+      const f = photoFile.files[0];
+      if (f) photoPreview.src = URL.createObjectURL(f);
     });
-    editPreview && editPreview.addEventListener("click", () => {
-      if (editFile) editFile.click();
-    });
-    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+
+    const updateQr = async () => {
+        const val = qrInput.value.trim();
+        if (!val) { qrPreview.src = ""; return; }
+        try {
+            const url = await getQrDataUrl(val, 150);
+            qrPreview.src = url;
+        } catch { qrPreview.src = ""; }
+    };
+    qrInput && qrInput.addEventListener("input", updateQr);
+    if(target.qrCodeText) updateQr();
+
     btnSave && btnSave.addEventListener("click", async () => {
       try {
-        const newName = document.getElementById("modal-name").value.trim();
-        const newPhone = document.getElementById("modal-phone").value.trim();
-        const photoFile = document.getElementById("modal-photo-file").files[0];
-        const newPassword = document.getElementById("modal-password").value;
-        const newStatus = document.getElementById("modal-status").value;
-        const newCommunity = (document.getElementById("modal-community") && document.getElementById("modal-community").value) || selectedCommunity;
+        const newRole = roleSelect.value;
+        const newComm = document.getElementById("edit-community").value;
+        const newName = document.getElementById("edit-name").value.trim();
+        const newTitle = document.getElementById("edit-title").value;
+        const newEmail = document.getElementById("edit-email").value.trim();
+        const newPhone = document.getElementById("edit-phone").value.trim();
+        const newQr = qrInput.value.trim();
+        const newHouse = document.getElementById("edit-house-no").value.trim();
+        const newSubNoRaw = document.getElementById("edit-sub-no").value.trim();
+        const newAddr = document.getElementById("edit-address").value.trim();
+        const newStatus = document.getElementById("edit-status").value;
+        const newPass = document.getElementById("edit-password").value;
+        const pFile = photoFile.files[0];
+
+        if ((newRole === "社區" || newRole === "住戶") && !newComm) {
+            showHint("請選擇所屬社區", "error");
+            return;
+        }
+
+        btnSave.disabled = true;
+        btnSave.textContent = "儲存中...";
+
         let newPhotoURL = target.photoURL || "";
-        if (photoFile) {
+        if (pFile) {
           try {
-            const ext = photoFile.type === "image/png" ? "png" : "jpg";
+            const ext = pFile.type === "image/png" ? "png" : "jpg";
             const path = `avatars/${target.id}.${ext}`;
             const ref = storageRef(storage, path);
-            await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+            await uploadBytes(ref, pFile, { contentType: pFile.type });
             newPhotoURL = await getDownloadURL(ref);
           } catch (err) {
-            try {
-              const b64 = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(photoFile);
-              });
-              newPhotoURL = b64;
-              showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
-            } catch {
-              showHint("上傳大頭照失敗，先以原圖進行更新", "error");
-            }
+             try {
+               const b64 = await new Promise((resolve) => {
+                 const reader = new FileReader();
+                 reader.onload = () => resolve(reader.result);
+                 reader.readAsDataURL(pFile);
+               });
+               newPhotoURL = b64;
+             } catch {}
           }
         }
-        // Update Firestore doc
-        await setDoc(doc(db, "users", target.id), {
+
+        const payload = {
+          role: newRole,
+          community: newComm || "",
           displayName: newName || target.displayName,
+          title: newTitle,
+          email: newEmail || target.email,
           phone: newPhone || target.phone,
-          photoURL: newPhotoURL,
-          status: newStatus || target.status,
-          community: newCommunity
-        }, { merge: true });
-        // If editing self, update profile and password where applicable
+          qrCodeText: newQr,
+          houseNo: newHouse,
+          subNo: newSubNoRaw !== "" ? parseInt(newSubNoRaw, 10) : deleteField(),
+          address: newAddr,
+          status: newStatus,
+          photoURL: newPhotoURL
+        };
+        
+        await setDoc(doc(db, "users", target.id), payload, { merge: true });
+
         const curr = auth.currentUser;
         if (isSelf && curr) {
-          const profilePatch = {};
-          if (newName && newName !== curr.displayName) profilePatch.displayName = newName;
-          if (newPhotoURL && newPhotoURL !== curr.photoURL) profilePatch.photoURL = newPhotoURL;
-          if (Object.keys(profilePatch).length) {
-            try {
-              await updateProfile(curr, profilePatch);
-            } catch (err) {
-              if (err && err.code === "auth/requires-recent-login") {
-                const cp = window.prompt("請輸入目前密碼以完成更新");
-                if (cp) {
-                  try {
-                    const cred = EmailAuthProvider.credential(curr.email, cp);
-                    await reauthenticateWithCredential(curr, cred);
-                    await updateProfile(curr, profilePatch);
-                  } catch {
-                    showHint("重新驗證失敗，請重新登入後再試", "error");
-                  }
-                } else {
-                  showHint("未提供目前密碼，無法更新", "error");
-                }
-              }
-            }
-          }
-          if (newPassword && newPassword.length >= 6) {
-            try {
-              await updatePassword(curr, newPassword);
-              showHint("密碼已更新", "success");
-            } catch (err) {
-              if (err && err.code === "auth/requires-recent-login") {
-                const cp = window.prompt("請輸入目前密碼以完成更新");
-                if (cp) {
-                  try {
-                    const cred = EmailAuthProvider.credential(curr.email, cp);
-                    await reauthenticateWithCredential(curr, cred);
-                    await updatePassword(curr, newPassword);
-                    showHint("密碼已更新", "success");
-                  } catch {
-                    showHint("重新驗證失敗，請重新登入後再試", "error");
-                  }
-                } else {
-                  showHint("未提供目前密碼，無法更新", "error");
-                }
-              } else {
-                showHint("密碼更新失敗，可能需要重新登入驗證", "error");
-              }
-            }
-          }
-          if (newStatus === "停用") {
-            showHint("已標記為停用，將登出目前帳號", "success");
-            await signOut(auth);
-            redirectAfterSignOut();
-            return;
-          }
+             const profilePatch = {};
+             if (newName && newName !== curr.displayName) profilePatch.displayName = newName;
+             if (newPhotoURL && newPhotoURL !== curr.photoURL) profilePatch.photoURL = newPhotoURL;
+             if (Object.keys(profilePatch).length) {
+               try { await updateProfile(curr, profilePatch); } catch {}
+             }
+             if (newPass && newPass.length >= 6) {
+               try { await updatePassword(curr, newPass); showHint("密碼已更新", "success"); } 
+               catch (e) { 
+                 if(e.code === 'auth/requires-recent-login') {
+                     const cp = window.prompt("請輸入目前密碼以更新新密碼");
+                     if(cp) {
+                         const cred = EmailAuthProvider.credential(curr.email, cp);
+                         await reauthenticateWithCredential(curr, cred);
+                         await updatePassword(curr, newPass);
+                         showHint("密碼已更新", "success");
+                     }
+                 } else {
+                     showHint("密碼更新失敗: " + e.message, "error");
+                 }
+               }
+             }
+             if (newStatus === "停用") {
+               await signOut(auth);
+               redirectAfterSignOut();
+               return;
+             }
         }
+
         closeModal();
-        await renderSettingsGeneral();
         showHint("已更新帳號資料", "success");
+        if (typeof renderSettingsGeneral === "function") await renderSettingsGeneral();
+        if (typeof renderSettingsCommunity === "function") await renderSettingsCommunity();
+        if (typeof renderSettingsResidents === "function") await renderSettingsResidents();
+
       } catch (e) {
-        showHint("更新失敗", "error");
+        console.error(e);
+        showHint("更新失敗: " + e.message, "error");
+      } finally {
+        if(btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = "儲存";
+        }
       }
     });
   }
   window.openEditModal = openEditModal;
   
-  async function getUserCommunity(uid) {
+  async function openCreateModal() {
+    let commList = [];
     try {
-      const snap = await getDoc(doc(db, "users", uid));
-      if (snap.exists()) {
-        const d = snap.data();
-        if (d.community) return d.community;
-      }
+      const snap = await getDocs(collection(db, "communities"));
+      commList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } catch {}
-    return "default";
-  }
-  
-  function openCreateModal() {
-    const title = "新增系統管理員";
+    const commOptions = `<option value="">(無)</option>` + commList.map(c => `<option value="${c.id}">${c.name || c.id}</option>`).join("");
+
     const body = `
       <div class="modal-dialog">
-        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-head">
+          <div class="modal-title">新增帳號</div>
+          <button class="btn top" onclick="closeModal()">關閉</button>
+        </div>
         <div class="modal-body">
           <div class="modal-row">
-            <label>電子郵件</label>
-            <input type="text" id="create-email" placeholder="example@domain.com">
+            <label>角色</label>
+            <select id="create-role">
+              <option value="系統管理員">系統管理員</option>
+              <option value="社區">社區</option>
+              <option value="住戶">住戶</option>
+            </select>
+          </div>
+          <div class="modal-row" id="row-create-community" style="display:none;">
+            <label>所屬社區 <span style="color:red">*</span></label>
+            <select id="create-community">${commOptions}</select>
           </div>
           <div class="modal-row">
-            <label>密碼</label>
-            <input type="password" id="create-password" placeholder="至少6字元">
-          </div>
-          <div class="modal-row">
-            <label>姓名</label>
-            <input type="text" id="create-name">
-          </div>
-          <div class="modal-row">
-            <label>手機號碼</label>
-            <input type="tel" id="create-phone">
+            <label>權限</label>
+            <div id="create-permission-display" style="padding: 8px; background: #f3f4f6; border-radius: 8px; color: #6b7280;">系統、後台、前台</div>
           </div>
           <div class="modal-row">
             <label>大頭照</label>
@@ -2560,83 +2814,204 @@ if (sysNav.subContainer) {
             <label>預覽</label>
             <img id="create-photo-preview" class="avatar-preview">
           </div>
+          <div class="modal-row">
+            <label>姓名</label>
+            <input type="text" id="create-name">
+          </div>
+          <div class="modal-row">
+            <label>稱謂</label>
+            <select id="create-title">
+              <option value="區權人">區權人</option>
+              <option value="親屬">親屬</option>
+              <option value="承租人">承租人</option>
+              <option value="管理員">管理員</option>
+            </select>
+          </div>
+          <div class="modal-row">
+            <label>電子郵件 (為登入帳號)</label>
+            <input type="text" id="create-email" placeholder="example@domain.com">
+          </div>
+          <div class="modal-row">
+            <label>手機號碼 (與電子郵件同為帳號，擇一登入)</label>
+            <input type="tel" id="create-phone">
+          </div>
+          <div class="modal-row">
+            <label>QR code碼</label>
+            <input type="text" id="create-qr-code">
+          </div>
+          <div class="modal-row">
+            <label>QR code預覽</label>
+            <img id="create-qr-preview" class="qr-preview">
+          </div>
+          <div class="modal-row">
+            <label>戶號</label>
+            <input type="text" id="create-house-no">
+          </div>
+          <div class="modal-row">
+            <label>子戶號</label>
+            <input type="number" id="create-sub-no" placeholder="數字">
+          </div>
+          <div class="modal-row">
+            <label>地址</label>
+            <input type="text" id="create-address">
+          </div>
+          <div class="modal-row">
+            <label>密碼 (預設)</label>
+            <input type="password" id="create-password" placeholder="至少6字元" value="123456">
+          </div>
         </div>
         <div class="modal-foot">
-          <button id="create-cancel" class="btn action-btn danger">取消</button>
-          <button id="create-save" class="btn action-btn">建立</button>
+          <button class="btn action-btn" onclick="closeModal()">取消</button>
+          <button class="btn primary" id="btn-save-create">儲存</button>
         </div>
       </div>
     `;
     openModal(body);
-    const btnCancel = document.getElementById("create-cancel");
-    const btnSave = document.getElementById("create-save");
-    const createFile = document.getElementById("create-photo-file");
-    const createPreview = document.getElementById("create-photo-preview");
-    createFile && createFile.addEventListener("change", () => {
-      const f = createFile.files[0];
-      if (f) {
-        createPreview.src = URL.createObjectURL(f);
+    
+    // Elements
+    const roleSelect = document.getElementById("create-role");
+    const commRow = document.getElementById("row-create-community");
+    const commSelect = document.getElementById("create-community");
+    const permDisplay = document.getElementById("create-permission-display");
+    const photoFile = document.getElementById("create-photo-file");
+    const photoPreview = document.getElementById("create-photo-preview");
+    const qrInput = document.getElementById("create-qr-code");
+    const qrPreview = document.getElementById("create-qr-preview");
+    const btnSave = document.getElementById("btn-save-create");
+
+    // Role Change Listener
+    const updateRoleUI = () => {
+      const r = roleSelect.value;
+      const tSelect = document.getElementById("create-title");
+      if (r === "系統管理員") {
+        permDisplay.textContent = "系統、後台、前台";
+        commRow.style.display = "none";
+        if(tSelect) { tSelect.value = "管理員"; tSelect.disabled = true; }
+      } else if (r === "社區") {
+        permDisplay.textContent = "後台、前台";
+        commRow.style.display = "grid";
+        if(tSelect) { tSelect.value = "管理員"; tSelect.disabled = true; }
+      } else if (r === "住戶") {
+        permDisplay.textContent = "前台";
+        commRow.style.display = "grid";
+        if(tSelect) { 
+            tSelect.disabled = false;
+            if(tSelect.value === "管理員") tSelect.value = "區權人";
+        }
+      }
+    };
+    roleSelect && roleSelect.addEventListener("change", updateRoleUI);
+    updateRoleUI();
+
+    // Photo Preview Listener
+    photoFile && photoFile.addEventListener("change", () => {
+      const f = photoFile.files[0];
+      if (f) photoPreview.src = URL.createObjectURL(f);
+    });
+
+    // QR Preview Listener
+    qrInput && qrInput.addEventListener("input", async () => {
+      const val = qrInput.value.trim();
+      if (!val) {
+        qrPreview.src = "";
+        return;
+      }
+      try {
+        const url = await getQrDataUrl(val, 150);
+        qrPreview.src = url;
+      } catch {
+        qrPreview.src = "";
       }
     });
-    createPreview && createPreview.addEventListener("click", () => {
-      if (createFile) createFile.click();
-    });
-    createPreview && createPreview.addEventListener("click", () => {
-      if (createFile) createFile.click();
-    });
-    btnCancel && btnCancel.addEventListener("click", () => closeModal());
+
+    // Save Listener
     btnSave && btnSave.addEventListener("click", async () => {
       try {
+        const role = roleSelect.value;
+        const community = commSelect.value;
+        const name = document.getElementById("create-name").value.trim();
+        const title = document.getElementById("create-title").value;
         const email = document.getElementById("create-email").value.trim();
-        const password = document.getElementById("create-password").value;
-        const displayName = document.getElementById("create-name").value.trim();
         const phone = document.getElementById("create-phone").value.trim();
-        const photoFile = document.getElementById("create-photo-file").files[0];
-        let photoURL = "";
+        const qrCodeText = qrInput.value.trim();
+        const houseNo = document.getElementById("create-house-no").value.trim();
+        const subNoRaw = document.getElementById("create-sub-no").value.trim();
+        const address = document.getElementById("create-address").value.trim();
+        const password = document.getElementById("create-password").value;
+        const pFile = photoFile.files[0];
+
         if (!email || !password || password.length < 6) {
           showHint("請填寫有效的信箱與至少6字元密碼", "error");
           return;
         }
+
+        if ((role === "社區" || role === "住戶") && !community) {
+          showHint("請選擇所屬社區", "error");
+          return;
+        }
+
+        btnSave.disabled = true;
+        btnSave.textContent = "建立中...";
+
+        // Create Auth User
         const cred = await createUserWithEmailAndPassword(createAuth, email, password);
-        if (photoFile) {
+        
+        // Upload Photo
+        let photoURL = "";
+        if (pFile) {
           try {
-            const ext = photoFile.type === "image/png" ? "png" : "jpg";
+            const ext = pFile.type === "image/png" ? "png" : "jpg";
             const path = `avatars/${cred.user.uid}.${ext}`;
             const ref = storageRef(storage, path);
-            await uploadBytes(ref, photoFile, { contentType: photoFile.type });
+            await uploadBytes(ref, pFile, { contentType: pFile.type });
             photoURL = await getDownloadURL(ref);
           } catch (err) {
-            try {
-              const b64 = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(photoFile);
-              });
-              photoURL = b64;
-              showHint("Storage 上傳失敗，已改用內嵌圖片儲存", "error");
-            } catch {
-              showHint("上傳大頭照失敗，帳號仍已建立", "error");
-            }
+             // Fallback to base64 if storage fails
+             try {
+               const b64 = await new Promise((resolve) => {
+                 const reader = new FileReader();
+                 reader.onload = () => resolve(reader.result);
+                 reader.readAsDataURL(pFile);
+               });
+               photoURL = b64;
+             } catch {}
           }
         }
-        await setDoc(doc(db, "users", cred.user.uid), {
+
+        // Save User Doc
+        const payload = {
           email,
-          role: "系統管理員",
-          status: "啟用",
-          displayName,
+          role,
+          community: community || "",
+          displayName: name,
+          title, 
           phone,
+          qrCodeText,
+          houseNo,
+          ...(subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
+          address,
           photoURL,
+          status: "啟用",
           createdAt: Date.now()
-        }, { merge: true });
-        // Set profile on secondary user
-        await updateProfile(cred.user, { displayName, photoURL });
+        };
+        
+        await setDoc(doc(db, "users", cred.user.uid), payload, { merge: true });
+        await updateProfile(cred.user, { displayName: name, photoURL });
+
         closeModal();
-        await renderSettingsGeneral();
-        showHint("已建立系統管理員帳號", "success");
+        showHint(`已建立 ${role} 帳號`, "success");
+        
+        // Refresh list if on admin page
+        if (typeof renderSettingsGeneral === "function") await renderSettingsGeneral();
+
       } catch (e) {
         console.error(e);
-        showHint("建立失敗，可能權限不足或輸入無效", "error");
+        showHint("建立失敗: " + e.message, "error");
+      } finally {
+        if(btnSave) {
+          btnSave.disabled = false;
+          btnSave.textContent = "儲存";
+        }
       }
     });
   }
@@ -2894,7 +3269,7 @@ if (sysNav.subContainer) {
       return `
         <tr data-uid="${a.id}">
           <td><input type="checkbox" class="check-resident" value="${a.id}"></td>
-          <td class="avatar-cell">${av}</td>
+          <td>${av}</td>
           <td>${a.seq || ""}</td>
           <td>${a.houseNo || ""}</td>
           <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
@@ -2905,7 +3280,12 @@ if (sysNav.subContainer) {
           <td>${a.phone || ""}</td>
           <td>${a.email || ""}</td>
           <td>••••••</td>
-          <td class="status">${a.status || "停用"}</td>
+          <td>
+            <label class="switch">
+              <input type="checkbox" class="status-toggle-resident" ${a.status === "停用" ? "checked" : ""}>
+              <span class="slider round"></span>
+            </label>
+          </td>
           <td class="actions">
             <button class="btn small action-btn btn-edit-resident">編輯</button>
           </td>
@@ -2958,6 +3338,23 @@ if (sysNav.subContainer) {
         </div>
       </div>
     `;
+    const toggles = sysNav.content.querySelectorAll(".status-toggle-resident");
+    toggles.forEach(toggle => {
+      toggle.addEventListener("change", async (e) => {
+        const tr = e.target.closest("tr");
+        const targetUid = tr && tr.getAttribute("data-uid");
+        if (!targetUid) return;
+        const newStatus = e.target.checked ? "停用" : "啟用";
+        try {
+          await setDoc(doc(db, "users", targetUid), { status: newStatus }, { merge: true });
+          showHint(newStatus === "啟用" ? "帳號已啟用" : "帳號已停用", "success");
+        } catch (err) {
+          console.error(err);
+          showHint("更新狀態失敗", "error");
+          e.target.checked = !e.target.checked;
+        }
+      });
+    });
     const sel = document.getElementById("resident-community-select");
     sel && sel.addEventListener("change", async () => {
       window.currentResidentsSlug = sel.value;
@@ -3254,6 +3651,84 @@ if (sysNav.subContainer) {
     });
   }
   
+  async function renderSettingsSystem() {
+    if (!sysNav.content) return;
+    const items = [
+      { key: "apiKey", value: firebaseConfig.apiKey },
+      { key: "authDomain", value: firebaseConfig.authDomain },
+      { key: "projectId", value: firebaseConfig.projectId },
+      { key: "storageBucket", value: firebaseConfig.storageBucket },
+      { key: "messagingSenderId", value: firebaseConfig.messagingSenderId },
+      { key: "appId", value: firebaseConfig.appId },
+      { key: "measurementId", value: firebaseConfig.measurementId }
+    ];
+    
+    const rows = items.map(item => `
+      <tr>
+        <td style="font-weight:600; color:var(--text);">${item.key}</td>
+        <td>
+          <input type="text" id="fc-${item.key}" value="${item.value || ""}" style="width:100%; font-family:monospace; padding:6px; border:1px solid #ddd; border-radius:4px;">
+        </td>
+      </tr>
+    `).join("");
+
+    sysNav.content.innerHTML = `
+      <div class="card data-card">
+        <div class="card-head">
+          <h1 class="card-title">系統配置 (Firebase Config)</h1>
+          <div style="display:flex; gap:8px;">
+             <button id="btn-reset-sys-config" class="btn small action-btn">重置預設</button>
+             <button id="btn-save-sys-config" class="btn small action-btn primary" style="background-color: var(--primary); color: white;">儲存並重載</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width: 200px;">鍵 (Key)</th>
+                <th>值 (Value)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+        <div style="padding: 16px; color: var(--muted); font-size: 0.9em; background:#f9fafb; border-top:1px solid var(--border);">
+            <p><strong>注意：</strong>修改此配置將改變網站連接的 Firebase 專案。儲存後頁面將重新載入以套用新設定。</p>
+            <p>若配置錯誤導致無法登入，請點擊「重置預設」恢復原始設定。</p>
+        </div>
+      </div>
+    `;
+
+    const btnSave = document.getElementById("btn-save-sys-config");
+    btnSave && btnSave.addEventListener("click", () => {
+        const newConfig = {};
+        items.forEach(item => {
+            const el = document.getElementById(`fc-${item.key}`);
+            if (el) newConfig[item.key] = el.value.trim();
+        });
+        
+        try {
+            localStorage.setItem("nw_firebase_config", JSON.stringify(newConfig));
+            if(confirm("配置已儲存。是否立即重新載入頁面以套用變更？")) {
+                window.location.reload();
+            }
+        } catch(e) {
+            console.error(e);
+            alert("儲存失敗: " + e.message);
+        }
+    });
+
+    const btnReset = document.getElementById("btn-reset-sys-config");
+    btnReset && btnReset.addEventListener("click", () => {
+        if(confirm("確定要重置為系統預設配置嗎？\n這將清除所有自訂的 Firebase 連線設定。")) {
+            localStorage.removeItem("nw_firebase_config");
+            window.location.reload();
+        }
+    });
+  }
+
   function renderContentFor(mainKey, subLabel) {
     if (!sysNav.content) return;
     sysNav.content.innerHTML = '';
@@ -3266,8 +3741,8 @@ if (sysNav.subContainer) {
       renderSettingsCommunity();
       return;
     }
-    if (mainKey === 'settings' && sub === '住戶') {
-      renderSettingsResidents();
+    if (mainKey === 'settings' && sub === '系統') {
+      renderSettingsSystem();
       return;
     }
     if (mainKey === 'app') {
@@ -3322,7 +3797,10 @@ if (sysNav.subContainer) {
           <tr data-idx="${i}">
             <td>${i}</td>
             <td>
-              <input type="text" class="ad-url-input" value="${item.url}" placeholder="圖片連結或 YouTube 網址">
+              <div class="ad-input-group" style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" class="ad-url-input" value="${item.url}" placeholder="圖片連結或 YouTube 網址" style="flex: 1;">
+                <input type="file" class="ad-image-upload" accept="image/png,image/jpeg" style="width: 200px;">
+              </div>
             </td>
             <td>
               <span class="ad-type-badge ${item.type}">${item.type === 'youtube' ? 'YouTube' : '圖片'}</span>
@@ -3853,6 +4331,49 @@ if (sysNav.subContainer) {
           if(el && el.tagName === 'INPUT' && el.type === 'number') el.addEventListener("input", updatePreview);
       });
       
+      // Ads image upload
+      const adFileInputs = sysNav.content.querySelectorAll(".ad-image-upload");
+      adFileInputs.forEach(input => {
+        input.addEventListener("change", async (e) => {
+           const f = e.target.files[0];
+           if (!f) return;
+           
+           const current = window.currentAppCommunitySlug || "all";
+           const targetSlug = current === 'all' ? 'default' : current;
+           
+           const uploadAdFile = async (idx, file) => {
+              const ext = file.type === "image/png" ? "png" : "jpg";
+              const path = `ads/${targetSlug}/${idx}.${ext}`;
+              const ref = storageRef(storage, path);
+              await uploadBytes(ref, file, { contentType: file.type });
+              return await getDownloadURL(ref);
+           };
+
+           const tr = input.closest("tr");
+           const idx = tr.getAttribute("data-idx");
+           const textInput = tr.querySelector(".ad-url-input");
+           
+           input.disabled = true;
+           textInput.disabled = true;
+           const originalVal = textInput.value;
+           textInput.value = "上傳中...";
+           
+           try {
+              const url = await uploadAdFile(idx, f);
+              textInput.value = url;
+              textInput.dispatchEvent(new Event('input'));
+           } catch (err) {
+              console.error(err);
+              alert("上傳失敗: " + err.message);
+              textInput.value = originalVal;
+           } finally {
+              input.disabled = false;
+              textInput.disabled = false;
+              input.value = ""; 
+           }
+        });
+      });
+
       // Start Carousel Logic for Admin Preview
       if (window.adsPreviewInterval) clearInterval(window.adsPreviewInterval);
       
@@ -3897,7 +4418,7 @@ if (sysNav.subContainer) {
           const a8Items = collect("a8-table");
           const uploadIcon = async (section, idx, file) => {
             const ext = file.type === "image/png" ? "png" : "jpg";
-            const path = `buttons/${targetSlug}/${section}_${idx}.${ext}`;
+            const path = `avatars/buttons/${targetSlug}/${section}_${idx}.${ext}`;
             const ref = storageRef(storage, path);
             await uploadBytes(ref, file, { contentType: file.type });
             return await getDownloadURL(ref);
@@ -4144,7 +4665,7 @@ function renderAdminContent(mainKey, subLabel) {
           adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">權限不足</div></div>`;
           return;
         }
-        let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+        let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || getSlugFromPath() || getQueryParam("c") || "default";
         if (slug === "default") {
           try {
             const snap = await getDocs(collection(db, "communities"));
@@ -4221,7 +4742,7 @@ function renderAdminContent(mainKey, subLabel) {
           return `
             <tr data-uid="${a.id}">
               <td><input type="checkbox" class="check-resident" value="${a.id}"></td>
-              <td class="avatar-cell">${av}</td>
+              <td>${av}</td>
               <td>${a.seq || ""}</td>
               <td>${a.houseNo || ""}</td>
               <td>${typeof a.subNo === "number" ? a.subNo : ""}</td>
@@ -4233,7 +4754,12 @@ function renderAdminContent(mainKey, subLabel) {
               <td>${a.phone || ""}</td>
               <td>${a.email || ""}</td>
               <td>••••••</td>
-              <td class="status">${a.status || "停用"}</td>
+              <td>
+                <label class="switch">
+                  <input type="checkbox" class="status-toggle-resident" ${a.status === "停用" ? "checked" : ""}>
+                  <span class="slider round"></span>
+                </label>
+              </td>
               <td class="actions">
                 <button class="btn small action-btn btn-edit-resident">編輯</button>
               </td>
@@ -4282,6 +4808,25 @@ function renderAdminContent(mainKey, subLabel) {
             </div>
           </div>
         `;
+
+        const toggles = adminNav.content.querySelectorAll(".status-toggle-resident");
+        toggles.forEach(toggle => {
+          toggle.addEventListener("change", async (e) => {
+            const tr = e.target.closest("tr");
+            const targetUid = tr && tr.getAttribute("data-uid");
+            if (!targetUid) return;
+            const newStatus = e.target.checked ? "停用" : "啟用";
+            try {
+              await setDoc(doc(db, "users", targetUid), { status: newStatus }, { merge: true });
+              showHint(newStatus === "啟用" ? "帳號已啟用" : "帳號已停用", "success");
+            } catch (err) {
+              console.error(err);
+              showHint("更新狀態失敗", "error");
+              e.target.checked = !e.target.checked;
+            }
+          });
+        });
+
         const btnCreate = document.getElementById("btn-create-resident");
         btnCreate && btnCreate.addEventListener("click", () => window.openCreateResidentModal && window.openCreateResidentModal(slug));
         
@@ -5258,9 +5803,36 @@ function openCommunitySwitchModal() {
         const slug = b.getAttribute("data-slug");
         if (slug) {
           window.currentAdminCommunitySlug = slug;
+          try {
+            localStorage.setItem("adminCurrentCommunity", slug);
+            const url = new URL(window.location);
+            url.searchParams.set("c", slug);
+            window.history.pushState({}, "", url);
+          } catch {}
           closeModal();
+          updateAdminBrandTitle();
           const savedMain = localStorage.getItem("adminActiveMain") || "shortcuts";
           setActiveAdminNav(savedMain);
+          // Force re-render of current sub-nav item content
+          if (adminNav.subContainer) {
+            const activeSub = adminNav.subContainer.querySelector('.sub-nav-item.active');
+            if (activeSub) {
+              const label = (activeSub.getAttribute('data-label') || activeSub.textContent || '').replace(/\u200B/g, '').trim();
+              renderAdminContent(savedMain, label);
+            } else {
+              // Fallback if no active sub-nav found, trigger renderAdminSubNav which defaults to first item
+              renderAdminSubNav(savedMain);
+            }
+          } else if (sysNav.subContainer) {
+             // Fallback for sys.html if applicable
+             const activeSub = sysNav.subContainer.querySelector('.sub-nav-item.active');
+             if (activeSub) {
+               const label = (activeSub.getAttribute('data-label') || activeSub.textContent || '').replace(/\u200B/g, '').trim();
+               renderContentFor(savedMain, label);
+             } else {
+               renderSubNav(savedMain);
+             }
+          }
         }
       });
     });
@@ -5272,7 +5844,7 @@ function openCommunitySwitchModal() {
 async function updateAdminBrandTitle() {
   const el = document.querySelector("#admin-stack .sys-title");
   if (!el) return;
-  let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+  let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || getSlugFromPath() || getQueryParam("c") || "default";
   if (slug === "default") {
     try {
       const snap = await getDocs(collection(db, "communities"));

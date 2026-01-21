@@ -151,5 +151,5 @@
   height: 100%;
 }
 .front .row.A3 .preview-slide img {
-  object-fit: contain;
+  object-fit: fill;
 }

@@ -13,7 +13,7 @@
 <body class="admin">
   <div id="orientation-tip">
     <div class="tip-card">
-      <div class="brand">西北e生活</div>
+      <div class="brand" id="brand-text-mobile">西北e生活</div>
       <div class="tip-title">建議以橫屏使用</div>
       <div class="tip-desc">平板與電腦使用者以橫屏獲得最佳體驗</div>
     </div>
@@ -24,7 +24,7 @@
       <div class="brand-wrap">
         <div class="brand-logo">
           <img src="favicon.svg" alt="Logo" class="logo-img">
-          <div>西北e生活</div>
+          <div id="brand-text">西北e生活</div>
         </div>
         <div class="brand-sub">物業與社區後台管理</div>
       </div>
@@ -114,6 +114,10 @@
         <button class="nav-item" id="admin-tab-others" type="button">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3"></path></svg>
           <span class="nav-text">其他功能</span>
+        </button>
+        <button class="nav-item hidden" id="admin-tab-sys-back" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span class="nav-text">回系統後台</span>
         </button>
       </nav>
     </section>
