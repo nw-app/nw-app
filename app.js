@@ -1395,6 +1395,16 @@ async function handleRoleRedirect(role) {
             return;
           }
           const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
+
+          // Ensure global slug is set and re-render nav to load custom names immediately
+          window.currentAdminCommunitySlug = slug;
+          localStorage.setItem("adminCurrentCommunity", slug);
+          const savedMain = localStorage.getItem("adminActiveMain");
+          // adminSubMenus is global, defined later but hoisted or available
+          const initialMain = (savedMain && typeof adminSubMenus !== 'undefined' && adminSubMenus[savedMain]) ? savedMain : "shortcuts";
+          if (typeof setActiveAdminNav === 'function') {
+            setActiveAdminNav(initialMain);
+          }
           
           toggleAuth(false);
           if (adminStack) adminStack.classList.remove("hidden");
@@ -5006,19 +5016,13 @@ async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) 
     let items = [];
     try {
         const ref = collection(db, "communities", slug, "announcements");
-        const q = query(ref, where("category", "==", category), orderBy("createdAt", "desc"));
+        const q = query(ref, where("category", "==", category));
         const snap = await getDocs(q);
         items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        // Sort in memory to avoid Firestore index requirement
+        items.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch (e) {
-        console.error(e);
-        // Fallback if index missing or error
-        try {
-          const ref = collection(db, "communities", slug, "announcements");
-          const q = query(ref, where("category", "==", category));
-          const snap = await getDocs(q);
-          items = snap.docs.map(d => ({id: d.id, ...d.data()}));
-          items.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
-        } catch {}
+        console.error("Failed to load announcements", e);
     }
 
     // Extract event dates
@@ -5095,6 +5099,7 @@ async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) 
           <h1 class="card-title">${displayTitle}</h1>
           <div style="display:flex; gap:8px;">
              <button id="btn-filter-date" class="btn small action-btn" style="background:#fff; color: #1f2937; border: 1px solid #e5e7eb;">日期篩選</button>
+             <button id="btn-preview-announce" class="btn small action-btn" style="background-color: #10b981; color: white;">預覽</button>
              <button id="btn-create-announce" class="btn small action-btn">新增${displayTitle}</button>
           </div>
         </div>
@@ -5137,6 +5142,46 @@ async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) 
     if(btnCreate) {
         btnCreate.addEventListener("click", () => {
             openAnnounceModal(null, displayTitle, slug, category);
+        });
+    }
+
+    const btnPreview = document.getElementById("btn-preview-announce");
+    if(btnPreview) {
+        btnPreview.addEventListener("click", () => {
+            const cName = window.currentCommunityName || "";
+            // Use 'preview' without extension to play nice with 'serve' clean URLs
+            // Encode all parameters strictly
+            const url = `preview?c=${encodeURIComponent(slug)}&tab=${encodeURIComponent(category)}&title=${encodeURIComponent(displayTitle)}&cn=${encodeURIComponent(cName)}`;
+            const fullUrl = new URL(url, window.location.href).href;
+            
+            const html = `
+              <div class="modal-dialog" style="max-width: 400px;">
+                <div class="modal-head">
+                  <div class="modal-title">預覽連結</div>
+                </div>
+                <div class="modal-body">
+                  <div style="margin-bottom: 8px; font-size: 14px; color: #374151;">連結網址</div>
+                  <input type="text" value="${fullUrl}" readonly style="width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; color: #4b5563; background: #f9fafb;" onclick="this.select()">
+                </div>
+                <div class="modal-foot">
+                  <button id="preview-cancel" class="btn small" style="background: #fff; border: 1px solid #e5e7eb; color: #374151;">取消</button>
+                  <button id="preview-go" class="btn small primary">前往</button>
+                </div>
+              </div>
+            `;
+            
+            openModal(html);
+            
+            const btnCancel = document.getElementById("preview-cancel");
+            if (btnCancel) btnCancel.addEventListener("click", closeModal);
+            
+            const btnGo = document.getElementById("preview-go");
+            if (btnGo) {
+                btnGo.addEventListener("click", () => {
+                    window.open(fullUrl, "previewWindow", "width=375,height=812,scrollbars=yes,resizable=yes");
+                    closeModal();
+                });
+            }
         });
     }
 
@@ -5283,6 +5328,15 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
              <div class="input-wrap"><textarea id="ann-content" rows="5" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item ? (item.content || "") : ""}</textarea></div>
            </label>
            <label class="field">
+             <div class="field-head">圖片</div>
+             <div class="input-wrap">
+               <input type="file" id="ann-image" accept="image/*">
+               <div id="ann-image-preview" style="margin-top:10px;">
+                 ${item && item.imageUrl ? `<div style="position:relative;display:inline-block;"><img src="${item.imageUrl}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>` : ""}
+               </div>
+             </div>
+           </label>
+           <label class="field">
              <div class="field-head">狀態</div>
              <div class="input-wrap">
                 <select id="ann-status">
@@ -5315,6 +5369,29 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
             });
         }
 
+        const imgInp = document.getElementById("ann-image");
+        const imgPrev = document.getElementById("ann-image-preview");
+        if(imgInp && imgPrev) {
+            imgInp.addEventListener("change", (e) => {
+                const f = e.target.files[0];
+                if(f) {
+                    const reader = new FileReader();
+                    reader.onload = (re) => {
+                        imgPrev.innerHTML = `<div style="position:relative;display:inline-block;"><img src="${re.target.result}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
+                    };
+                    reader.readAsDataURL(f);
+                }
+            });
+
+            imgPrev.addEventListener("click", (e) => {
+                if(e.target.closest(".btn-remove-img")) {
+                    e.stopPropagation(); // Prevent bubbling if needed
+                    imgPrev.innerHTML = "";
+                    imgInp.value = "";
+                }
+            });
+        }
+
         const btnSave = document.getElementById("btn-save-announce");
         if(btnSave) {
             btnSave.addEventListener("click", async () => {
@@ -5330,16 +5407,41 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
 
                 if(!titleVal) { alert("請輸入標題"); return; }
 
-                const data = {
-                    category: category,
-                    title: titleVal,
-                    content: contentVal,
-                    status: statusVal,
-                    author: authorVal,
-                    updatedAt: Date.now()
-                };
+                btnSave.disabled = true;
+                btnSave.textContent = "儲存中...";
+
+                let imageUrl = item ? (item.imageUrl || "") : "";
+                if (imgInp && imgInp.files[0]) {
+                    const f = imgInp.files[0];
+                    try {
+                        const ext = f.name.split('.').pop();
+                        const fname = `${Date.now()}_${Math.random().toString(36).substring(2)}.${ext}`;
+                        const sRef = storageRef(storage, `communities/${slug}/announcements/${fname}`);
+                        await uploadBytes(sRef, f);
+                        imageUrl = await getDownloadURL(sRef);
+                    } catch(err) {
+                        console.error("Upload failed", err);
+                        alert("圖片上傳失敗，但仍會儲存公告");
+                    }
+                }
 
                 try {
+                    // Check if category is valid (it should be passed from openAnnounceModal)
+                    // The parameter name is 'dbCategory' in function signature, not 'category'
+                    // So we must use 'dbCategory' here!
+                    
+                    const safeCategory = dbCategory || displayTitle || "公告";
+
+                    const data = {
+                        category: safeCategory,
+                        title: titleVal,
+                        content: contentVal,
+                        status: statusVal,
+                        author: authorVal,
+                        imageUrl: imageUrl,
+                        updatedAt: Date.now()
+                    };
+
                     if (isEdit) {
                         await setDoc(doc(db, "communities", slug, "announcements", item.id), data, { merge: true });
                     } else {
@@ -5347,10 +5449,13 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
                         await addDoc(collection(db, "communities", slug, "announcements"), data);
                     }
                     closeModal();
-                    renderAdminAnnounceList(category);
+                    // Pass the correct title/category back to render
+                    renderAdminAnnounceList(displayTitle, safeCategory);
                 } catch(err) {
                     console.error(err);
-                    alert("儲存失敗");
+                    alert("儲存失敗: " + err.message);
+                    btnSave.disabled = false;
+                    btnSave.textContent = "儲存";
                 }
             });
         }
@@ -6902,6 +7007,7 @@ async function updateAdminBrandTitle() {
       cname = c.name || slug;
     }
   } catch {}
+  window.currentCommunityName = cname;
   el.textContent = `西北e生活 社區後台（${cname}）`;
 }
 if (!window.openCreateResidentModal) {
@@ -7473,38 +7579,65 @@ function renderAdminSubNav(key) {
   
   // Logic to load custom tabs for announce
   if (key === 'announce') {
-      const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
-      navUnsubscribe = onSnapshot(doc(db, "communities", slug, "settings", "nav"), (snap) => {
-          let currentList = [...items]; // Default list
+      let localUnsub = null;
+      // Wrapper to allow cancellation before async setup completes
+      const wrapper = () => {
+          if (localUnsub) localUnsub();
+      };
+      navUnsubscribe = wrapper;
+
+      (async () => {
+          let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
           
-          if(snap.exists()) {
-              const data = snap.data();
-              // Check if full list exists
-              if(data.announce_tabs && Array.isArray(data.announce_tabs)) {
-                  currentList = data.announce_tabs;
-              } else {
-                  // Fallback: update labels of default list
-                  currentList = currentList.map(i => {
-                      if(data[i.key]) return { ...i, label: data[i.key] };
-                      return i;
-                  });
+          if (slug === "default" && auth.currentUser) {
+              try {
+                  const fetchedSlug = await getUserCommunity(auth.currentUser.uid);
+                  if (fetchedSlug !== "default") {
+                      slug = fetchedSlug;
+                      // Sync to globals to ensure save operations use the correct slug
+                      window.currentAdminCommunitySlug = slug;
+                      localStorage.setItem("adminCurrentCommunity", slug);
+                  }
+              } catch (e) { console.error(e); }
+          }
+
+          // If navUnsubscribe was replaced (component unmounted/re-rendered), stop here
+          if (navUnsubscribe !== wrapper) return;
+
+          if (slug === "default" || !auth.currentUser) return;
+
+          localUnsub = onSnapshot(doc(db, "communities", slug, "settings", "nav"), (snap) => {
+              let currentList = [...items]; // Default list
+              
+              if(snap.exists()) {
+                  const data = snap.data();
+                  // Check if full list exists
+                  if(data.announce_tabs && Array.isArray(data.announce_tabs)) {
+                      currentList = data.announce_tabs;
+                  } else {
+                      // Fallback: update labels of default list
+                      currentList = currentList.map(i => {
+                          if(data[i.key]) return { ...i, label: data[i.key] };
+                          return i;
+                      });
+                  }
               }
-          }
-          
-          // Re-render with fetched list
-          adminNav.subContainer.innerHTML = renderButtons(currentList);
-          attachListeners(currentList);
-          
-          // Update title if active tab matches
-          const activeBtn = adminNav.subContainer.querySelector(".sub-nav-item.active");
-          if(activeBtn) {
-               const titleEl = document.querySelector(".row.B3 .card-title");
-               if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
-          }
-      }, (e) => {
-          console.error(e);
-          attachListeners(items);
-      });
+              
+              // Re-render with fetched list
+              adminNav.subContainer.innerHTML = renderButtons(currentList);
+              attachListeners(currentList);
+              
+              // Update title if active tab matches
+              const activeBtn = adminNav.subContainer.querySelector(".sub-nav-item.active");
+              if(activeBtn) {
+                   const titleEl = document.querySelector(".row.B3 .card-title");
+                   if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
+              }
+          }, (e) => {
+              console.error(e);
+              attachListeners(items);
+          });
+      })();
   } else {
       attachListeners(items);
   }
@@ -7699,7 +7832,7 @@ function renderAdminSubNav(key) {
   }
 }
 
-function setActiveAdminNav(activeKey) {
+async function setActiveAdminNav(activeKey) {
   ["shortcuts", "mail", "facility", "announce", "residents", "others"].forEach(key => {
     const el = adminNav[key];
     if (el) {
@@ -7711,6 +7844,28 @@ function setActiveAdminNav(activeKey) {
     }
   });
   localStorage.setItem("adminActiveMain", activeKey);
+
+  // Pre-fetch for announce to ensure instant correct render
+  if (activeKey === 'announce') {
+      try {
+          const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+          if (slug !== "default" && auth.currentUser) {
+              const snap = await getDoc(doc(db, "communities", slug, "settings", "nav"));
+              // Check if we are still on the same tab
+              if (localStorage.getItem("adminActiveMain") !== activeKey) return;
+
+              if (snap.exists()) {
+                  const data = snap.data();
+                  if (data.announce_tabs && Array.isArray(data.announce_tabs)) {
+                      adminSubMenus[activeKey] = data.announce_tabs;
+                  }
+              }
+          }
+      } catch (e) {
+          console.error("Pre-fetch nav failed", e);
+      }
+  }
+
   renderAdminSubNav(activeKey);
   updateAdminBrandTitle();
 }

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>公告預覽</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background: #f3f4f6; color: #1f2937; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; min-height: 100vh; display: flex; flex-direction: column; }
+    .header { background: #fff; padding: 16px; position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .header-title { font-size: 18px; font-weight: 600; color: #111; }
+    .list { padding: 16px; display: flex; flex-direction: column; gap: 16px; flex: 1; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); overflow: hidden; }
+    .card-date { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+    .card-title { font-size: 18px; font-weight: 700; color: #111; margin-bottom: 12px; line-height: 1.4; }
+    .card-content { font-size: 15px; color: #374151; line-height: 1.6; word-wrap: break-word; }
+    .card-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; }
+    .empty { text-align: center; color: #6b7280; padding: 60px 0; font-size: 15px; }
+    .loading { text-align: center; padding: 40px; color: #6b7280; }
+    .card-footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3f4f6; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #9ca3af; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-title" id="page-title">公告列表</div>
+    </div>
+    <div class="list" id="list">
+      <div class="loading">載入中...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, query, where, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+      authDomain: "nw-app-all.firebaseapp.com",
+      projectId: "nw-app-all",
+      storageBucket: "nw-app-all.firebasestorage.app",
+      messagingSenderId: "205108931232",
+      appId: "1:205108931232:web:ee7868f73ed883253577c5",
+      measurementId: "G-8F1WD772LP"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    const params = new URLSearchParams(window.location.search);
+    const slug = params.get("c");
+    const category = params.get("tab");
+    const title = params.get("title");
+    const cnParam = params.get("cn");
+
+    // Initial title set (will be updated with community name later if needed)
+    if (title) {
+        if (cnParam) {
+             document.getElementById("page-title").textContent = `${cnParam} ${title} 公告列表`;
+             document.title = `${cnParam} ${title} 公告列表`;
+        } else {
+             document.getElementById("page-title").textContent = title + " 公告列表";
+        }
+    }
+
+    async function load() {
+      if (!slug || !category) {
+        document.getElementById("list").innerHTML = `<div class="empty">無效的連結參數<br><span style="font-size:12px;opacity:0.7">URL: ${window.location.href}</span></div>`;
+        return;
+      }
+
+      onAuthStateChanged(auth, async (user) => {
+          if (!user) {
+             // Try anonymous sign in if not logged in
+             try {
+                 await signInAnonymously(auth);
+             } catch(e) {
+                 console.warn("Auth failed", e);
+             }
+          }
+          fetchData();
+      });
+    }
+
+    async function fetchData() {
+      try {
+        // Fetch community name if not provided in param
+        let communityName = cnParam || "";
+        if (!communityName) {
+            try {
+                const commDoc = await getDoc(doc(db, "communities", slug));
+                if (commDoc.exists()) {
+                    communityName = commDoc.data().name || "";
+                }
+            } catch (e) {
+                console.warn("Fetch community name failed", e);
+            }
+        }
+
+        if (title) {
+            document.getElementById("page-title").textContent = `${communityName} ${title} 公告列表`;
+            document.title = `${communityName} ${title} 公告列表`;
+        }
+
+        const q = query(collection(db, "communities", slug, "announcements"), where("category", "==", category));
+        const snap = await getDocs(q);
+        let items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        items.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+        if (items.length === 0) {
+          document.getElementById("list").innerHTML = '<div class="empty">目前沒有公告</div>';
+          return;
+        }
+
+        document.getElementById("list").innerHTML = items.map(item => {
+            const date = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "";
+            const author = item.author || "管理員";
+            
+            return `
+              <div class="card">
+                <div class="card-date">${date}</div>
+                <div class="card-title">${escapeHtml(item.title)}</div>
+                <div class="card-content">${item.content}</div>
+                <div class="card-footer">
+                   <span>發布：${escapeHtml(author)}</span>
+                </div>
+              </div>
+            `;
+        }).join("");
+
+      } catch (e) {
+        console.error(e);
+        let msg = "載入失敗";
+        if (e.code === 'permission-denied') msg = "權限不足，無法瀏覽此內容";
+        document.getElementById("list").innerHTML = `<div class="empty">${msg}<br><span style="font-size:12px;opacity:0.7">${e.message}</span></div>`;
+      }
+    }
+
+    function escapeHtml(text) {
+      if (!text) return "";
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    load();
+  </script>
+</body>
+</html>
