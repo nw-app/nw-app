@@ -3,6 +3,33 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWith
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
 import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
+function initGlobalLayout() {
+  // Only apply to Community Admin (body has class "admin")
+  if (!document.body.classList.contains('admin')) return;
+  
+  if (document.getElementById('global-layout')) return;
+  const body = document.body;
+  const layout = document.createElement('div');
+  layout.id = 'global-layout';
+  layout.style.cssText = 'display: flex; width: 100vw; height: 100vh; overflow: hidden;';
+  const left = document.createElement('div');
+  left.id = 'layout-left';
+  left.style.cssText = 'width: 100%; height: 100%; position: relative; overflow-y: auto; overflow-x: hidden; transform: translate(0,0);';
+  const right = document.createElement('div');
+  right.id = 'layout-right';
+  right.style.cssText = 'display: none; width: 10%; height: 100%; background: #ffffff; border-left: 1px solid #e5e7eb; position: relative; z-index: 99999;';
+  while (body.firstChild) {
+    left.appendChild(body.firstChild);
+  }
+  layout.appendChild(left);
+  layout.appendChild(right);
+  body.appendChild(layout);
+  body.style.margin = '0';
+  body.style.padding = '0';
+  body.style.overflow = 'hidden';
+}
+initGlobalLayout();
+
 const defaultFirebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
   authDomain: "nw-app-all.firebaseapp.com",
@@ -240,6 +267,41 @@ window.addEventListener('online', () => {
   showHint("網路已恢復連線", "success");
 });
 
+function showConfirmModal(title, message, confirmText, confirmClass, onConfirm) {
+  const body = `
+    <div class="modal-dialog" style="max-width: 400px;">
+      <div class="modal-head">
+        <div class="modal-title">${title}</div>
+      </div>
+      <div class="modal-body">
+        <div style="padding: 20px; font-size: 16px; line-height: 1.5;">${message}</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn" onclick="closeModal()">取消</button>
+        <button id="btn-modal-confirm" class="btn action-btn ${confirmClass}">${confirmText}</button>
+      </div>
+    </div>
+  `;
+  openModal(body);
+  const btn = document.getElementById("btn-modal-confirm");
+  if (btn) {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = "處理中...";
+      try {
+        await onConfirm();
+        closeModal();
+      } catch (e) {
+        console.error(e);
+        btn.disabled = false;
+        btn.textContent = originalText;
+        alert("操作失敗: " + e.message);
+      }
+    };
+  }
+}
+
 function openModal(html) {
   let root = document.getElementById("sys-modal");
   if (!root) {
@@ -345,6 +407,19 @@ function redirectAfterSignOut() {
 }
 
 function toggleAuth(showAuth) {
+  if (document.body.classList.contains('admin')) {
+    const left = document.getElementById('layout-left');
+    const right = document.getElementById('layout-right');
+    if (left && right) {
+      if (showAuth) {
+        left.style.width = '100%';
+        right.style.display = 'none';
+      } else {
+        left.style.width = '90%';
+        right.style.display = 'block';
+      }
+    }
+  }
   if (showAuth) {
     if (el.authCard) el.authCard.classList.remove("hidden");
     el.profileCard && el.profileCard.classList.add("hidden");
@@ -1249,7 +1324,8 @@ async function handleRoleRedirect(role) {
                <div class="modal-dialog">
                  <div class="modal-head"><div class="modal-title" style="color: #ef4444;">緊急求救 SOS</div></div>
                  <div class="modal-body" style="text-align: center; padding: 20px;">
-                   <p style="font-size: 1.2rem; margin-bottom: 20px;">按下下方按鈕將發送緊急求救訊號至管理中心</p>
+                   <p style="font-size: 1.2rem; margin-bottom: 20px;">請輸入求救原因或訊息，並按下按鈕發送</p>
+                   <textarea id="sos-message" rows="3" placeholder="請輸入求救訊息..." style="width: 100%; margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem;"></textarea>
                    <button id="btn-sos-confirm" class="btn action-btn danger" style="width: 100%; height: 80px; font-size: 24px; border-radius: 12px;">送出</button>
                  </div>
                  <div class="modal-foot">
@@ -1262,6 +1338,10 @@ async function handleRoleRedirect(role) {
                 const btnConfirm = document.getElementById("btn-sos-confirm");
                 if(btnConfirm) {
                   btnConfirm.addEventListener("click", async () => {
+                    const txtMessage = document.getElementById("sos-message");
+                    const msgContent = txtMessage ? txtMessage.value.trim() : "";
+                    console.log("SOS Message Content:", msgContent);
+
                     btnConfirm.disabled = true;
                     btnConfirm.textContent = "發送中...";
                     try {
@@ -1278,6 +1358,7 @@ async function handleRoleRedirect(role) {
                         subNo: userData.subNo || "",
                         name: userData.displayName || "",
                         address: userData.address || "",
+                        message: msgContent,
                         status: "active",
                         createdAt: Date.now()
                       };
@@ -1315,6 +1396,7 @@ async function handleRoleRedirect(role) {
           }
           const slug = role === "系統管理員" ? (reqSlug || userSlug) : userSlug;
           
+          toggleAuth(false);
           if (adminStack) adminStack.classList.remove("hidden");
           if (mainContainer) mainContainer.classList.add("hidden");
           const tip2 = document.getElementById("orientation-tip");
@@ -1342,10 +1424,14 @@ async function handleRoleRedirect(role) {
              }
 
              if (role === "系統管理員") {
+                console.log("Binding click event to sys-title for System Admin");
                 titleEl.style.cursor = "pointer";
                 titleEl.style.textDecoration = "underline";
                 titleEl.title = "點擊切換社區";
-                titleEl.onclick = () => openCommunitySwitcher("admin");
+                titleEl.onclick = (e) => {
+                  console.log("sys-title clicked");
+                  openCommunitySwitcher("admin");
+                };
              }
           }
           
@@ -1396,13 +1482,25 @@ async function handleRoleRedirect(role) {
 
           // SOS System - Global Alert Listener
           let sosUnsub = null;
+          const activeAlertsState = new Map(); // Key: docId, Value: { data, snoozeTimer, visualInterval, modal, badge }
+
+          function checkGlobalSound() {
+             const ringing = Array.from(activeAlertsState.values()).some(state => state.modal !== null);
+             if (ringing) {
+                 startAlarm();
+             } else {
+                 stopAlarm();
+             }
+          }
+
           function stopAlarm() {
              if(window.sosAlarmTimer) {
                clearInterval(window.sosAlarmTimer);
                window.sosAlarmTimer = null;
              }
-             // Close audio context if possible, but usually just stopping oscillator is enough.
+             // Optional: close audio context if needed
           }
+          
           function startAlarm() {
              if(window.sosAlarmTimer) return;
              
@@ -1416,7 +1514,7 @@ async function handleRoleRedirect(role) {
              
              const beep = () => {
                if(ctx.state === 'suspended') {
-                 ctx.resume().catch(err => console.log("AudioContext resume failed (user interaction needed)", err));
+                 ctx.resume().catch(err => console.log("AudioContext resume failed", err));
                }
                
                try {
@@ -1436,9 +1534,358 @@ async function handleRoleRedirect(role) {
                }
              };
              
-             // Try one beep immediately
              beep();
              window.sosAlarmTimer = setInterval(beep, 1000);
+          }
+
+          function stopAlert(id) {
+            const state = activeAlertsState.get(id);
+            if (!state) return;
+
+            if (state.snoozeTimer) clearTimeout(state.snoozeTimer);
+            if (state.visualInterval) clearInterval(state.visualInterval);
+            if (state.modal) state.modal.remove();
+            if (state.badge) state.badge.remove();
+            
+            // Reset buttons for this ID
+            const trs = document.querySelectorAll(`tr[data-id="${id}"]`);
+            trs.forEach(tr => {
+                const btn = tr.querySelector(".btn-resolve-sos");
+                if (btn) btn.textContent = "解除";
+            });
+
+            activeAlertsState.delete(id);
+            checkGlobalSound();
+          }
+
+          function startAlert(docId, data) {
+             let state = activeAlertsState.get(docId);
+             
+             if (state) {
+                 state.data = data;
+                 // If modal is currently shown, update its content
+                 if (state.modal) {
+                     updateSOSModalContent(docId, data);
+                 }
+                 return;
+             }
+             
+             // New alert
+             state = {
+                 id: docId,
+                 data: data,
+                 snoozeTimer: null,
+                 visualInterval: null,
+                 modal: null,
+                 badge: null
+             };
+             activeAlertsState.set(docId, state);
+             showSOSModal(docId, data);
+             checkGlobalSound();
+          }
+
+          function getBadgeContainer() {
+             // 1. Check if we have a global layout right sidebar (Community Admin)
+             const layoutRight = document.getElementById('layout-right');
+             if (layoutRight) {
+                let container = document.getElementById("sos-badge-container");
+                if (!container) {
+                    container = document.createElement("div");
+                    container.id = "sos-badge-container";
+                    container.style.cssText = `
+                        display: flex;
+                        flex-direction: column;
+                        gap: 10px;
+                        padding: 10px;
+                        width: 100%;
+                        height: 100%;
+                        overflow-y: auto;
+                        align-items: center;
+                        /* Hide scrollbar for cleaner look but allow scrolling */
+                        scrollbar-width: thin;
+                        -ms-overflow-style: none;
+                    `;
+                    // Add style to hide scrollbar for webkit
+                    if (!document.getElementById('style-hide-scroll')) {
+                        const style = document.createElement('style');
+                        style.id = 'style-hide-scroll';
+                        style.innerHTML = '#sos-badge-container::-webkit-scrollbar { display: none; }';
+                        document.head.appendChild(style);
+                    }
+                    layoutRight.appendChild(container);
+                }
+                return container;
+             }
+
+             // 2. Fallback to existing logic for other pages
+             let container = document.getElementById("sos-badge-container");
+             if (container) return container;
+             
+             // Try to find the top bar in the current active stack
+             let targetBar = null;
+             if (document.querySelector('.stack.admin:not(.hidden) .bar')) {
+                 targetBar = document.querySelector('.stack.admin:not(.hidden) .bar');
+             } else if (document.querySelector('.stack.sys:not(.hidden) .bar')) {
+                 targetBar = document.querySelector('.stack.sys:not(.hidden) .bar');
+             } else if (document.querySelector('.stack.front:not(.hidden) .bar')) {
+                 targetBar = document.querySelector('.stack.front:not(.hidden) .bar');
+             }
+             
+             // Fallback
+             if (!targetBar) {
+                 targetBar = document.querySelector('.stack.admin .bar') || document.querySelector('.stack.sys .bar') || document.querySelector('.bar');
+             }
+             
+             container = document.createElement("div");
+             container.id = "sos-badge-container";
+             container.style.cssText = `
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                z-index: 100001;
+                pointer-events: none; /* Allow clicks to pass through container, but children will catch them */
+             `;
+             
+             if (targetBar) {
+                 const computedStyle = window.getComputedStyle(targetBar);
+                 if (computedStyle.position === 'static') {
+                     targetBar.style.position = 'relative';
+                 }
+                 targetBar.appendChild(container);
+             } else {
+                 // Absolute fallback
+                 container.style.position = "fixed";
+                 container.style.bottom = "20px";
+                 container.style.right = "20px";
+                 container.style.left = "auto";
+                 container.style.top = "auto";
+                 container.style.transform = "none";
+                 document.body.appendChild(container);
+             }
+             
+             return container;
+          }
+
+          function startSnoozeCountdown(docId, seconds) {
+             const state = activeAlertsState.get(docId);
+             if (!state) return;
+             
+             // Clear existing visual timers for this alert
+             if (state.visualInterval) clearInterval(state.visualInterval);
+             
+             // Create floating badge if not exists
+             if (!state.badge) {
+                 state.badge = document.createElement("div");
+                 state.badge.id = `sos-snooze-badge-${docId}`;
+                 state.badge.style.cssText = `
+                    background: #ef4444;
+                    color: white;
+                    padding: 8px 12px;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                    font-size: 0.9rem;
+                    font-weight: bold;
+                    display: flex;
+                    flex-direction: column; /* Stack content vertically for sidebar width */
+                    align-items: center;
+                    gap: 5px;
+                    cursor: pointer;
+                    animation: pulse-red 2s infinite;
+                    pointer-events: auto;
+                    width: 100%; /* Fill container width */
+                    text-align: center;
+                 `;
+                 
+                 const container = getBadgeContainer();
+                 container.appendChild(state.badge);
+                 
+                 // Handle Click
+                state.badge.onclick = () => {
+                    // Navigate
+                    localStorage.setItem("adminActiveSub", "警報");
+                    if (typeof setActiveAdminNav === "function") {
+                        setActiveAdminNav("residents");
+                    } else {
+                        const btn = document.getElementById("admin-tab-residents");
+                        if (btn) btn.click();
+                    }
+                    
+                    // Re-open modal WITHOUT resetting timer or triggering alarm
+                    showSOSModal(docId, state.data, true); // true = silent mode
+                };
+            }
+             
+             if (!document.getElementById("style-pulse-red")) {
+                 const style = document.createElement("style");
+                 style.id = "style-pulse-red";
+                 style.innerHTML = `@keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }`;
+                 document.head.appendChild(style);
+             }
+             
+             const render = (sec) => {
+                 const info = `${state.data.houseNo || '?'}戶<br>${state.data.name || '?'}`;
+                 state.badge.innerHTML = `<span style="font-size: 12px; line-height: 1.2;">⚠️ ${info}</span> <span style="background:white; color:#ef4444; padding:2px 8px; border-radius:10px; font-size:12px;">${sec}s</span>`;
+                 
+                 // Update SPECIFIC Table Button
+                 const trs = document.querySelectorAll(`tr[data-id="${docId}"]`);
+                 trs.forEach(tr => {
+                     const btn = tr.querySelector(".btn-resolve-sos");
+                     if (btn) btn.textContent = `解除...${sec}s`;
+                 });
+             };
+             
+             let left = seconds;
+             render(left);
+             
+             state.visualInterval = setInterval(() => {
+                 left--;
+                 if (left <= 0) {
+                     clearInterval(state.visualInterval);
+                     state.visualInterval = null;
+                     showSOSModal(docId, state.data);
+                 } else {
+                     render(left);
+                 }
+             }, 1000);
+          }
+
+          function showSOSModal(docId, data, silent = false) {
+             const state = activeAlertsState.get(docId);
+             if (!state) return; 
+
+             // If NOT silent (normal alert), clear timer and remove badge
+             if (!silent) {
+                 if (state.visualInterval) {
+                     clearInterval(state.visualInterval);
+                     state.visualInterval = null;
+                 }
+                 if (state.badge) {
+                     state.badge.remove();
+                     state.badge = null;
+                 }
+             }
+             
+             // Create or update modal
+             if (!state.modal) {
+               state.modal = document.createElement("div");
+               state.modal.id = `sos-alert-modal-${docId}`;
+               state.modal.className = "modal sos-alert-modal"; 
+               document.body.appendChild(state.modal);
+             }
+             
+             const allKeys = Array.from(activeAlertsState.keys());
+             const index = allKeys.indexOf(docId);
+             
+             state.modal.style.cssText = `
+       display: flex;
+       position: fixed;
+       z-index: ${99999 + index};
+       left: 0;
+       top: 0;
+       width: 100%;
+       height: 100%;
+       background-color: ${index === 0 ? 'rgba(0,0,0,0.1)' : 'transparent'};
+       align-items: center;
+       justify-content: center;
+       pointer-events: none;
+    `;
+    
+    // Dialog offset logic
+    const dialogStyle = `
+       border: 4px solid #ef4444; 
+       box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+       position: relative;
+       top: ${index * 30}px;
+       left: ${index * 30}px;
+       pointer-events: auto;
+    `;
+
+             state.modal.innerHTML = `
+               <div class="modal-dialog" style="${dialogStyle}">
+                 <div class="modal-head" style="background: #ef4444; color: white;">
+                   <div class="modal-title">⚠️ 緊急求救警報 (${index + 1}) ⚠️</div>
+                   <button type="button" class="btn-close-header" style="background:transparent; border:none; color:white; font-size:24px; cursor:pointer; padding:0 8px; line-height:1;">&times;</button>
+                 </div>
+                 <div class="modal-body" style="font-size: 1.2rem;">
+                   <div class="modal-row"><label>戶號：</label> <strong style="font-size:1.5rem">${data.houseNo || ""}</strong></div>
+                   <div class="modal-row"><label>子戶號：</label> <strong>${data.subNo || ""}</strong></div>
+                   <div class="modal-row"><label>姓名：</label> <strong>${data.name || ""}</strong></div>
+                   <div class="modal-row"><label>地址：</label> <strong>${data.address || ""}</strong></div>
+                   <div class="modal-row"><label>時間：</label> <span>${new Date(data.createdAt).toLocaleString()}</span></div>
+                 </div>
+                 <div class="modal-foot">
+                   <button class="btn action-btn danger btn-close-sos-alarm" style="width:100%; font-size:1.2rem;">${silent ? '關閉視窗 (倒數繼續)' : '收到，暫時關閉警報 (60秒後若未解除將再次提醒)'}</button>
+                 </div>
+               </div>
+             `;
+             state.modal.classList.remove("hidden");
+             
+             const handleClose = () => {
+                 state.modal.remove();
+                 state.modal = null;
+                 
+                 // If silent, DO NOT reset timer, just close window
+                 if (silent) {
+                    // Do nothing else, timer continues in background
+                 } else {
+                    checkGlobalSound(); 
+                    startSnoozeCountdown(docId, 60);
+                 }
+             };
+
+             const btnClose = state.modal.querySelector(".btn-close-sos-alarm");
+             if(btnClose) btnClose.addEventListener("click", handleClose);
+             
+             const btnCloseHeader = state.modal.querySelector(".btn-close-header");
+             if(btnCloseHeader) btnCloseHeader.addEventListener("click", handleClose);
+
+             // Enable Dragging (Draggable Modal)
+             const dialogEl = state.modal.querySelector(".modal-dialog");
+             const headerEl = state.modal.querySelector(".modal-head");
+             if (dialogEl && headerEl) {
+                 headerEl.style.cursor = "move";
+                 headerEl.style.userSelect = "none"; // Prevent text selection
+                 
+                 headerEl.addEventListener("mousedown", (e) => {
+                     // Prevent drag if clicking buttons (like close button)
+                     if (e.target.tagName.toLowerCase() === "button" || e.target.closest("button")) return;
+                     
+                     const startX = e.clientX;
+                     const startY = e.clientY;
+                     // Parse current top/left (which are relative offsets in this flex layout)
+                     const initialLeft = parseFloat(dialogEl.style.left) || 0;
+                     const initialTop = parseFloat(dialogEl.style.top) || 0;
+                     
+                     const onMouseMove = (ev) => {
+                         const dx = ev.clientX - startX;
+                         const dy = ev.clientY - startY;
+                         dialogEl.style.left = `${initialLeft + dx}px`;
+                         dialogEl.style.top = `${initialTop + dy}px`;
+                     };
+                     
+                     const onMouseUp = () => {
+                         document.removeEventListener("mousemove", onMouseMove);
+                         document.removeEventListener("mouseup", onMouseUp);
+                     };
+                     
+                     document.addEventListener("mousemove", onMouseMove);
+                     document.addEventListener("mouseup", onMouseUp);
+                 });
+             }
+             
+             if (!silent) {
+                checkGlobalSound();
+             }
+          }
+
+          function updateSOSModalContent(docId, data) {
+              const state = activeAlertsState.get(docId);
+              if (!state || !state.modal) return;
+              showSOSModal(docId, data);
           }
 
           if (sosUnsub) sosUnsub();
@@ -1447,71 +1894,28 @@ async function handleRoleRedirect(role) {
           console.log("Starting SOS listener for community:", listenSlug);
           
           if (listenSlug) {
-              // Simplify query to avoid Index requirements (filter status in memory)
               const qSos = query(collection(db, "sos_alerts"), where("community", "==", listenSlug));
               sosUnsub = onSnapshot(qSos, (snap) => {
-                 // Filter for active alerts in memory
-                 const activeDocs = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(d => d.status === "active");
+                 const activeDocs = snap.docs.map(d => ({id: d.id, ...d.data()}))
+                                           .filter(d => d.status === "active" || !d.status);
                  
                  console.log("SOS Snapshot update. Total:", snap.size, "Active:", activeDocs.length);
                  
-                 // Check if any active alerts exist
-                 if (activeDocs.length === 0) {
-                   const modal = document.getElementById("sos-alert-modal");
-                   if (modal) modal.remove();
-                   stopAlarm();
-                   return;
+                 const currentIds = new Set(activeDocs.map(d => d.id));
+                 
+                 // 1. Remove alerts that are no longer active
+                 for (const [id, state] of activeAlertsState) {
+                     if (!currentIds.has(id)) {
+                         stopAlert(id);
+                     }
                  }
                  
-                 // If there are active alerts, show the latest one
-                 const latest = activeDocs.sort((a,b) => b.createdAt - a.createdAt)[0];
+                 // 2. Add or Update active alerts
+                 activeDocs.forEach(doc => {
+                     startAlert(doc.id, doc);
+                 });
                  
-                 console.log("New Active SOS Alert:", latest);
-                 
-                 // Create or update modal
-                 let modal = document.getElementById("sos-alert-modal");
-                 if (!modal) {
-                   modal = document.createElement("div");
-                   modal.id = "sos-alert-modal";
-                   modal.className = "modal";
-                   modal.style.zIndex = "99999";
-                   document.body.appendChild(modal);
-                 }
-                 
-                 modal.innerHTML = `
-                   <div class="modal-dialog" style="border: 4px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);">
-                     <div class="modal-head" style="background: #ef4444; color: white;">
-                       <div class="modal-title">⚠️ 緊急求救警報 ⚠️</div>
-                     </div>
-                     <div class="modal-body" style="font-size: 1.2rem;">
-                       <div class="modal-row"><label>戶號：</label> <strong style="font-size:1.5rem">${latest.houseNo || ""}</strong></div>
-                       <div class="modal-row"><label>子戶號：</label> <strong>${latest.subNo || ""}</strong></div>
-                       <div class="modal-row"><label>姓名：</label> <strong>${latest.name || ""}</strong></div>
-                       <div class="modal-row"><label>地址：</label> <strong>${latest.address || ""}</strong></div>
-                       <div class="modal-row"><label>時間：</label> <span>${new Date(latest.createdAt).toLocaleString()}</span></div>
-                     </div>
-                     <div class="modal-foot">
-                       <button id="btn-close-sos-alarm" class="btn action-btn danger" style="width:100%; font-size:1.2rem;">收到，關閉警報</button>
-                     </div>
-                   </div>
-                 `;
-                 modal.classList.remove("hidden");
-                 
-                 // Only start alarm if not already running (to avoid restarting interval)
-                 // But startAlarm handles that check.
-                 startAlarm();
-                 
-                 const btnClose = document.getElementById("btn-close-sos-alarm");
-                 if(btnClose) {
-                   btnClose.addEventListener("click", () => {
-                     stopAlarm();
-                     modal.remove();
-                     // Optional: Mark as viewed locally or just stop sound?
-                     // Requirement says: "Until closed". It doesn't strictly say it must mark as resolved in DB.
-                     // But usually it should be resolved in the "Resident Management" tab.
-                     // The modal is just an alert. Closing it stops the sound and removes modal.
-                   });
-                 }
+                 checkGlobalSound();
               });
           }
     }
@@ -1529,8 +1933,10 @@ async function handleRoleRedirect(role) {
   });
 
 async function openCommunitySwitcher(type) {
+  console.log("openCommunitySwitcher called", type);
   const modal = document.createElement("div");
   modal.className = "modal";
+  modal.style.display = "flex"; // Force visible
   
   let communities = [];
   try {
@@ -4565,22 +4971,412 @@ const adminSubMenus = {
   shortcuts: ["通知跑馬燈"],
   mail: ["收件", "取件", "寄放", "設定"],
   facility: ["設定"],
-  announce: ["公告", "財報", "修繕", "APP", "設定"],
+  announce: [{ key: "announce_list", label: "社區園地" }],
   residents: ["住戶", "點數", "通知", "警報", "設定"],
   others: ["日誌", "班表", "通訊", "巡邏", "設定"]
 };
 
-function renderAdminContent(mainKey, subLabel) {
+async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) {
+  const category = dbCategoryOverride || displayTitle;
+  if (!adminNav.content) return;
+  
+  // Initial loading state
+  adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">${displayTitle}</h1></div><div class="empty-hint">載入中...</div></div>`;
+
+  // Cleanup previous listener
+  if (window.adminAnnounceUnsub) {
+    window.adminAnnounceUnsub();
+    window.adminAnnounceUnsub = null;
+  }
+  
+  // Setup persistent listener to handle auth state changes (late init)
+  window.adminAnnounceUnsub = onAuthStateChanged(auth, async (u) => {
+    if (!u) {
+       adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">${displayTitle}</h1></div><div class="empty-hint">請先登入</div></div>`;
+       return;
+    }
+    
+    let slug = window.currentAdminCommunitySlug || getSlugFromPath() || getQueryParam("c") || "default";
+    if (slug === "default") {
+        try {
+          slug = await getUserCommunity(u.uid);
+        } catch {}
+    }
+
+    let items = [];
+    try {
+        const ref = collection(db, "communities", slug, "announcements");
+        const q = query(ref, where("category", "==", category), orderBy("createdAt", "desc"));
+        const snap = await getDocs(q);
+        items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    } catch (e) {
+        console.error(e);
+        // Fallback if index missing or error
+        try {
+          const ref = collection(db, "communities", slug, "announcements");
+          const q = query(ref, where("category", "==", category));
+          const snap = await getDocs(q);
+          items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+          items.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+        } catch {}
+    }
+
+    // Extract event dates
+    const eventDates = new Set();
+    items.forEach(item => {
+        if(item.createdAt) {
+            const d = new Date(item.createdAt);
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            eventDates.add(`${y}-${m}-${day}`);
+        }
+    });
+
+    let currentItems = [...items];
+    let currentFilterDate = null;
+
+    const renderTable = () => {
+        const tbody = document.querySelector("#announce-table-body");
+        const emptyHint = document.querySelector("#announce-empty-hint");
+        if(!tbody) return;
+
+        const rows = currentItems.map(item => {
+            const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
+            return `
+                <tr data-id="${item.id}">
+                    <td>${dateStr}</td>
+                    <td>${item.title || ""}</td>
+                    <td>${item.author || ""}</td>
+                    <td>${item.status || "顯示"}</td>
+                    <td class="actions">
+                        <button class="btn small action-btn btn-edit-announce">編輯</button>
+                        <button class="btn small action-btn danger btn-delete-announce">刪除</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+        
+        tbody.innerHTML = rows;
+        if(emptyHint) {
+            emptyHint.style.display = currentItems.length === 0 ? "block" : "none";
+            emptyHint.textContent = currentFilterDate ? "該日期無公告" : "尚未建立內容";
+        }
+
+        // Re-attach listeners for edit/delete
+        tbody.querySelectorAll(".btn-edit-announce").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const tr = btn.closest("tr");
+                const id = tr.getAttribute("data-id");
+                const item = items.find(i => i.id === id);
+                openAnnounceModal(item, displayTitle, slug, category);
+            });
+        });
+
+        tbody.querySelectorAll(".btn-delete-announce").forEach(btn => {
+            btn.addEventListener("click", async (e) => {
+                if(!confirm("確定要刪除嗎？")) return;
+                const tr = btn.closest("tr");
+                const id = tr.getAttribute("data-id");
+                try {
+                    await deleteDoc(doc(db, "communities", slug, "announcements", id));
+                    renderAdminAnnounceList(displayTitle, category);
+                } catch(err) {
+                    console.error(err);
+                    alert("刪除失敗");
+                }
+            });
+        });
+    };
+
+    adminNav.content.innerHTML = `
+      <div class="card data-card">
+        <div class="card-head">
+          <h1 class="card-title">${displayTitle}</h1>
+          <div style="display:flex; gap:8px;">
+             <button id="btn-filter-date" class="btn small action-btn" style="background:#fff; color: #1f2937; border: 1px solid #e5e7eb;">日期篩選</button>
+             <button id="btn-create-announce" class="btn small action-btn">新增${displayTitle}</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+             <thead>
+               <tr>
+                 <th>日期</th>
+                 <th>標題</th>
+                 <th>發起人</th>
+                 <th>狀態</th>
+                 <th>操作</th>
+               </tr>
+             </thead>
+             <tbody id="announce-table-body"></tbody>
+          </table>
+          <div id="announce-empty-hint" class="empty-hint" style="display:none;">尚未建立內容</div>
+        </div>
+      </div>
+      
+      <div id="calendar-modal" class="calendar-modal hidden">
+         <div class="calendar-container">
+            <div class="calendar-header">
+               <button class="btn small" id="cal-prev" style="min-width:40px;">&lt;</button>
+               <div class="calendar-title" id="cal-title"></div>
+               <button class="btn small" id="cal-next" style="min-width:40px;">&gt;</button>
+            </div>
+            <div class="calendar-grid" id="cal-grid"></div>
+            <div class="calendar-actions">
+               <button class="btn small" id="cal-clear">清除篩選</button>
+               <button class="btn small primary" id="cal-close">關閉</button>
+            </div>
+         </div>
+      </div>
+    `;
+
+    renderTable();
+
+    const btnCreate = document.getElementById("btn-create-announce");
+    if(btnCreate) {
+        btnCreate.addEventListener("click", () => {
+            openAnnounceModal(null, displayTitle, slug, category);
+        });
+    }
+
+    // Date Filter Logic
+    const btnFilter = document.getElementById("btn-filter-date");
+    const modal = document.getElementById("calendar-modal");
+    const calTitle = document.getElementById("cal-title");
+    const calGrid = document.getElementById("cal-grid");
+    const btnPrev = document.getElementById("cal-prev");
+    const btnNext = document.getElementById("cal-next");
+    const btnClear = document.getElementById("cal-clear");
+    const btnClose = document.getElementById("cal-close");
+
+    let viewDate = new Date();
+
+    function renderCalendar() {
+        const y = viewDate.getFullYear();
+        const m = viewDate.getMonth();
+        calTitle.textContent = `${y}年 ${m+1}月`;
+        
+        const firstDay = new Date(y, m, 1).getDay();
+        const daysInMonth = new Date(y, m+1, 0).getDate();
+        
+        let html = '';
+        const weekDays = ['日','一','二','三','四','五','六'];
+        weekDays.forEach(d => html += `<div class="calendar-day-header">${d}</div>`);
+        
+        for(let i=0; i<firstDay; i++) {
+            html += `<div class="calendar-day empty"></div>`;
+        }
+        
+        for(let d=1; d<=daysInMonth; d++) {
+            const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+            const hasEvent = eventDates.has(dateStr);
+            const isSelected = currentFilterDate === dateStr;
+            
+            let classes = 'calendar-day';
+            if(hasEvent) classes += ' has-event';
+            else classes += ' no-event';
+            if(isSelected) classes += ' selected';
+            
+            html += `<div class="${classes}" data-date="${dateStr}">${d}</div>`;
+        }
+        
+        calGrid.innerHTML = html;
+        
+        calGrid.querySelectorAll('.calendar-day:not(.empty)').forEach(el => {
+            el.addEventListener('click', () => {
+                const dateStr = el.getAttribute('data-date');
+                currentFilterDate = dateStr;
+                currentItems = items.filter(i => {
+                    if(!i.createdAt) return false;
+                    const d = new Date(i.createdAt);
+                    const iY = d.getFullYear();
+                    const iM = String(d.getMonth() + 1).padStart(2, '0');
+                    const iD = String(d.getDate()).padStart(2, '0');
+                    return `${iY}-${iM}-${iD}` === dateStr;
+                });
+                renderTable();
+                modal.classList.add('hidden');
+                btnFilter.textContent = `篩選: ${dateStr}`;
+                btnFilter.style.background = '#fff';
+                btnFilter.style.border = '1px solid #ef4444';
+                btnFilter.style.color = '#ef4444';
+            });
+        });
+    }
+
+    if(btnFilter) {
+        btnFilter.addEventListener("click", () => {
+            viewDate = new Date(); 
+            renderCalendar();
+            modal.classList.remove("hidden");
+        });
+    }
+    
+    if(btnPrev) {
+        btnPrev.addEventListener("click", () => {
+            viewDate.setMonth(viewDate.getMonth() - 1);
+            renderCalendar();
+        });
+    }
+    
+    if(btnNext) {
+        btnNext.addEventListener("click", () => {
+            viewDate.setMonth(viewDate.getMonth() + 1);
+            renderCalendar();
+        });
+    }
+    
+    if(btnClear) {
+        btnClear.addEventListener("click", () => {
+            currentFilterDate = null;
+            currentItems = [...items];
+            renderTable();
+            modal.classList.add("hidden");
+            btnFilter.textContent = "日期篩選";
+            btnFilter.style.background = '#fff';
+            btnFilter.style.border = '1px solid #e5e7eb';
+            btnFilter.style.color = '#1f2937';
+        });
+    }
+    
+    if(btnClose) {
+        btnClose.addEventListener("click", () => {
+            modal.classList.add("hidden");
+        });
+    }
+
+  });
+}
+
+function openAnnounceModal(item, displayTitle, slug, dbCategory) {
+    const isEdit = !!item;
+    const title = isEdit ? `編輯${displayTitle}` : `新增${displayTitle}`;
+    
+    const existingAuthor = item ? (item.author || "社區總幹事") : "社區總幹事";
+    const isCustom = existingAuthor !== "社區總幹事" && existingAuthor !== "管委會";
+    const selectVal = isCustom ? "其他" : existingAuthor;
+    const customVal = isCustom ? existingAuthor : "";
+    const showCustom = isCustom ? "block" : "none";
+
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+           <label class="field">
+             <div class="field-head">標題</div>
+             <div class="input-wrap"><input type="text" id="ann-title" value="${item ? (item.title || "") : ""}"></div>
+           </label>
+           <label class="field">
+             <div class="field-head">發起人</div>
+             <div class="input-wrap">
+               <select id="ann-author-select" style="margin-bottom: 5px;">
+                 <option value="社區總幹事" ${selectVal === "社區總幹事" ? "selected" : ""}>社區總幹事</option>
+                 <option value="管委會" ${selectVal === "管委會" ? "selected" : ""}>管委會</option>
+                 <option value="其他" ${selectVal === "其他" ? "selected" : ""}>其他</option>
+               </select>
+               <input type="text" id="ann-author-custom" value="${customVal}" placeholder="請輸入發起人名稱" style="display: ${showCustom};">
+             </div>
+           </label>
+           <label class="field">
+             <div class="field-head">內容</div>
+             <div class="input-wrap"><textarea id="ann-content" rows="5" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item ? (item.content || "") : ""}</textarea></div>
+           </label>
+           <label class="field">
+             <div class="field-head">狀態</div>
+             <div class="input-wrap">
+                <select id="ann-status">
+                  <option value="顯示" ${item && item.status === "顯示" ? "selected" : ""}>顯示</option>
+                  <option value="隱藏" ${item && item.status === "隱藏" ? "selected" : ""}>隱藏</option>
+                </select>
+             </div>
+           </label>
+        </div>
+        <div class="modal-foot">
+          <button class="btn action-btn" onclick="closeModal()">取消</button>
+          <button class="btn action-btn primary" id="btn-save-announce">儲存</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+
+    setTimeout(() => {
+        const sel = document.getElementById("ann-author-select");
+        const inp = document.getElementById("ann-author-custom");
+        if (sel && inp) {
+            sel.addEventListener("change", () => {
+                if (sel.value === "其他") {
+                    inp.style.display = "block";
+                    inp.focus();
+                } else {
+                    inp.style.display = "none";
+                    inp.value = "";
+                }
+            });
+        }
+
+        const btnSave = document.getElementById("btn-save-announce");
+        if(btnSave) {
+            btnSave.addEventListener("click", async () => {
+                const titleVal = document.getElementById("ann-title").value.trim();
+                const contentVal = document.getElementById("ann-content").value.trim();
+                const statusVal = document.getElementById("ann-status").value;
+                
+                let authorVal = document.getElementById("ann-author-select").value;
+                if (authorVal === "其他") {
+                    authorVal = document.getElementById("ann-author-custom").value.trim();
+                    if (!authorVal) { alert("請輸入發起人名稱"); return; }
+                }
+
+                if(!titleVal) { alert("請輸入標題"); return; }
+
+                const data = {
+                    category: category,
+                    title: titleVal,
+                    content: contentVal,
+                    status: statusVal,
+                    author: authorVal,
+                    updatedAt: Date.now()
+                };
+
+                try {
+                    if (isEdit) {
+                        await setDoc(doc(db, "communities", slug, "announcements", item.id), data, { merge: true });
+                    } else {
+                        data.createdAt = Date.now();
+                        await addDoc(collection(db, "communities", slug, "announcements"), data);
+                    }
+                    closeModal();
+                    renderAdminAnnounceList(category);
+                } catch(err) {
+                    console.error(err);
+                    alert("儲存失敗");
+                }
+            });
+        }
+    }, 100);
+}
+
+function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
   // Cleanup previous SOS list listener if exists
   if (window.sosListUnsub) {
     window.sosListUnsub();
     window.sosListUnsub = null;
   }
+  if (window.adminAnnounceUnsub) {
+    window.adminAnnounceUnsub();
+    window.adminAnnounceUnsub = null;
+  }
   if (!adminNav.content) return;
-  const sub = (subLabel || "").replace(/\u200B/g, "").trim();
+  
+  // Backwards compatibility: if 2nd arg is label (old style), use it as key/label
+  // If called from new renderAdminSubNav, subKeyOrLabel is KEY, subLabelOverride is LABEL.
+  const sub = (subKeyOrLabel || "").replace(/\u200B/g, "").trim();
+  const displayLabel = subLabelOverride || sub;
+
   if (mainKey === "shortcuts" && sub === "通知跑馬燈") {
     adminNav.content.innerHTML = `
-      <div class="card marquee-card">
+      <div class="card data-card marquee-card">
         <div class="marquee">
           <div class="marquee-track">
             <span>系統通知：請於本週完成電力設備巡檢。</span>
@@ -4599,47 +5395,37 @@ function renderAdminContent(mainKey, subLabel) {
   }
   if (mainKey === "mail") {
     if (sub === "收件") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">收件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">收件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
       return;
     }
     if (sub === "取件") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">取件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">取件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
       return;
     }
     if (sub === "寄放") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">寄放</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">寄放</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
       return;
     }
     if (sub === "設定") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">郵件包裹設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">郵件包裹設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
       return;
     }
   }
   if (mainKey === "facility") {
-    adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">設施預約設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+    adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">設施預約設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
     return;
   }
   if (mainKey === "announce") {
-    if (sub === "公告") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">社區公告</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+    // If it's a known key or legacy label, handle it.
+    // Dynamic keys are also handled here: if subKeyOrLabel is 'ann_xxx', we use it as key.
+    if (sub === "announce_list" || sub === "社區園地" || sub === "公告") {
+      renderAdminAnnounceList(displayLabel, "社區公告");
       return;
     }
-    if (sub === "財報") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">財報</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
-      return;
-    }
-    if (sub === "修繕") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">修繕</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
-      return;
-    }
-    if (sub === "APP") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">APP</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
-      return;
-    }
-    if (sub === "設定") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">公告設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
-      return;
-    }
+    // For any other key (dynamic categories), use the key itself (or the label if preferred, but key is safer)
+    // Here we use 'sub' (the key) as the DB category ID.
+    renderAdminAnnounceList(displayLabel, sub);
+    return;
   }
   if (mainKey === "residents") {
     if (sub === "住戶") {
@@ -4654,7 +5440,7 @@ function renderAdminContent(mainKey, subLabel) {
         }
         const cu = auth.currentUser;
         if (!cu) {
-          adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">請先登入後台</div></div>`;
+          adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">請先登入後台</div></div>`;
           return;
         }
         let roleNow = "住戶";
@@ -4662,7 +5448,7 @@ function renderAdminContent(mainKey, subLabel) {
           roleNow = await getOrCreateUserRole(cu.uid, cu.email);
         } catch {}
         if (roleNow === "停用" || !checkPagePermission(roleNow, window.location.pathname)) {
-          adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">權限不足</div></div>`;
+          adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">住戶帳號列表</h1></div><div class="empty-hint">權限不足</div></div>`;
           return;
         }
         let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || getSlugFromPath() || getQueryParam("c") || "default";
@@ -5580,33 +6366,39 @@ function renderAdminContent(mainKey, subLabel) {
       return;
     }
     if (sub === "通知") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶通知</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">住戶通知</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "警報") {
       (async () => {
         // 1. Initial Skeleton Render
         adminNav.content.innerHTML = `
-          <div class="card data-card">
-            <div class="card-head">
+          <div class="card data-card" style="height: 96%; display: flex; flex-direction: column;">
+            <div class="card-head" style="flex-wrap: wrap; gap: 10px;">
               <h1 class="card-title">住戶警報紀錄</h1>
-              <!-- Auto-refreshing via Firestore listener -->
+              <div class="card-filters" style="display: flex; gap: 8px; margin-left: auto; align-items: center;">
+                <input type="date" id="sos-filter-date" style="padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+                <input type="text" id="sos-filter-house" placeholder="搜尋戶號" style="padding: 6px; border: 1px solid #ddd; border-radius: 4px; width: 100px;">
+                <button class="btn small" id="btn-export-sos" style="background-color: #10b981; color: white;">匯出</button>
+              </div>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" style="flex: 1; overflow: auto;">
               <table class="table">
                 <thead>
                   <tr>
-                    <th>時間</th>
-                    <th>戶號</th>
-                    <th>子戶號</th>
-                    <th>姓名</th>
-                    <th>地址</th>
-                    <th>狀態</th>
-                    <th>操作</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">時間</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">戶號</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">子戶號</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">姓名</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">地址</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">狀態</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">操作</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">解除時間</th>
+                    <th style="position: sticky; top: 0; z-index: 10;">完成時間</th>
                   </tr>
                 </thead>
                 <tbody id="sos-list-tbody">
-                  <tr><td colspan="7" style="text-align:center">載入中...</td></tr>
+                  <tr><td colspan="9" style="text-align:center">載入中...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -5631,13 +6423,193 @@ function renderAdminContent(mainKey, subLabel) {
              } catch(e) { console.error("Error getting user community:", e); }
           }
           
+          let communityName = "社區";
+          try {
+             const cDoc = await getDoc(doc(db, "communities", slug));
+             if (cDoc.exists()) communityName = cDoc.data().name || slug;
+          } catch(e) {}
+
+          let allAlerts = [];
+          
           // 2. Setup Real-time Listener
           const q = query(collection(db, "sos_alerts"), where("community", "==", slug));
           
-          window.sosListUnsub = onSnapshot(q, (snap) => {
-             const alerts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.createdAt - a.createdAt);
+          // Define Custom Modals for SOS
+          function showCompleteSOSModal(docId, currentData, onSuccess) {
+             const modal = document.createElement("div");
+             modal.className = "modal";
+             modal.style.display = "flex";
+             modal.style.zIndex = "100002"; // Higher than normal
              
-             const rows = alerts.map(a => {
+             let handlers = [];
+             try {
+                 handlers = JSON.parse(localStorage.getItem("sos_handlers_history") || "[]");
+             } catch {}
+             const handlerOptions = handlers.map(h => `<option value="${h}">`).join("");
+             
+             // Current time in local ISO format for input
+             const now = new Date();
+             now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+             const nowStr = now.toISOString().slice(0, 16);
+
+             modal.innerHTML = `
+               <div class="modal-dialog">
+                 <div class="modal-head">
+                   <div class="modal-title">完成處理回報</div>
+                 </div>
+                 <div class="modal-body">
+                     <label class="field">
+                         <div class="field-head">處理時間</div>
+                         <input type="datetime-local" id="sos-complete-time" value="${nowStr}" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                     </label>
+                     <label class="field">
+                         <div class="field-head">處理人</div>
+                         <input type="text" id="sos-complete-handler" list="sos-handler-list" placeholder="請輸入處理人員姓名" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                         <datalist id="sos-handler-list">${handlerOptions}</datalist>
+                     </label>
+                     <label class="field">
+                         <div class="field-head">處理紀錄</div>
+                         <textarea id="sos-complete-record" rows="4" placeholder="請輸入詳細處理過程..." style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;"></textarea>
+                     </label>
+                     <label class="field">
+                         <div class="field-head">上傳照片</div>
+                         <input type="file" id="sos-complete-photo" accept="image/*" style="width:100%;">
+                     </label>
+                 </div>
+                 <div class="modal-foot">
+                   <button class="btn" id="btn-cancel-complete">取消</button>
+                   <button class="btn primary" id="btn-confirm-complete">確認完成</button>
+                 </div>
+               </div>
+             `;
+             
+             document.body.appendChild(modal);
+             
+             const close = () => { modal.remove(); };
+             
+             modal.querySelector("#btn-cancel-complete").addEventListener("click", close);
+             
+             modal.querySelector("#btn-confirm-complete").addEventListener("click", async () => {
+                 const btn = modal.querySelector("#btn-confirm-complete");
+                 const timeVal = modal.querySelector("#sos-complete-time").value;
+                 const handlerVal = modal.querySelector("#sos-complete-handler").value.trim();
+                 const recordVal = modal.querySelector("#sos-complete-record").value.trim();
+                 const fileInput = modal.querySelector("#sos-complete-photo");
+                 
+                 if (!timeVal || !handlerVal || !recordVal) {
+                     alert("請填寫所有必填欄位 (時間、處理人、紀錄)");
+                     return;
+                 }
+                 
+                 btn.disabled = true;
+                 btn.textContent = "處理中...";
+                 
+                 try {
+                     if (handlerVal && !handlers.includes(handlerVal)) {
+                         handlers.push(handlerVal);
+                         localStorage.setItem("sos_handlers_history", JSON.stringify(handlers));
+                     }
+                     
+                     let photoUrl = "";
+                     if (fileInput.files[0]) {
+                         const file = fileInput.files[0];
+                         const storage = getStorage();
+                         const fileRef = storageRef(storage, `sos_evidence/${currentData.community}/${docId}/${Date.now()}_${file.name}`);
+                         await uploadBytes(fileRef, file);
+                         photoUrl = await getDownloadURL(fileRef);
+                     }
+                     
+                     const updateData = {
+                         status: "completed",
+                         completedAt: new Date(timeVal).toISOString(),
+                         handler: handlerVal,
+                         processRecord: recordVal,
+                         processPhotoUrl: photoUrl
+                     };
+                     
+                     await onSuccess(updateData);
+                     close();
+                 } catch (e) {
+                     console.error(e);
+                     alert("儲存失敗: " + e.message);
+                     btn.disabled = false;
+                     btn.textContent = "確認完成";
+                 }
+             });
+          }
+
+          function showProcessViewModal(data) {
+             if (!data) return;
+             const modal = document.createElement("div");
+             modal.className = "modal"; // Outer modal container for backdrop and centering
+             modal.style.display = "flex"; // Ensure visible
+             modal.style.zIndex = "100005";
+             
+             const timeStr = data.createdAt ? new Date(data.createdAt).toLocaleString() : "未知時間";
+             const completeTimeStr = data.completedAt ? new Date(data.completedAt).toLocaleString() : "未記錄";
+             
+             modal.innerHTML = `
+               <div class="link-view-dialog">
+                 <div class="link-view-head">
+                     <div class="link-view-title">警報處理詳情</div>
+                     <button class="link-view-close" style="font-size:24px;">&times;</button>
+                 </div>
+                 <div class="link-view-body" style="padding: 20px; overflow-y: auto;">
+                     <div style="max-width: 800px; margin: 0 auto;">
+                         <h3 style="border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;">基本資訊</h3>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">時間：</label> <span>${timeStr}</span></div>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">戶號：</label> <span>${data.houseNo || "-"}</span></div>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">住戶：</label> <span>${data.name || "-"}</span></div>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">地址：</label> <span>${data.address || "-"}</span></div>
+                        <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">訊息：</label> <span style="color: #ef4444; font-weight: bold;">${data.message || "無訊息"}</span></div>
+                        
+                        <h3 style="border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px; margin-top: 40px;">處理紀錄</h3>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">完成時間：</label> <span>${completeTimeStr}</span></div>
+                         <div class="field" style="margin-bottom: 10px;"><label style="font-weight:bold; width:80px; display:inline-block;">處理人：</label> <span>${data.handler || "-"}</span></div>
+                         <div class="field" style="margin-bottom: 10px;">
+                            <label style="font-weight:bold; display:block; margin-bottom:5px;">處理過程：</label> 
+                            <p style="white-space: pre-wrap; background: #f9f9f9; padding: 15px; border-radius: 8px; border:1px solid #eee; margin:0;">${data.processRecord || "無紀錄"}</p>
+                         </div>
+                         
+                         ${data.processPhotoUrl ? `
+                         <div class="field" style="margin-top: 20px;">
+                             <label style="font-weight:bold; display:block; margin-bottom:5px;">現場照片：</label>
+                             <div style="margin-top: 10px;">
+                                 <img src="${data.processPhotoUrl}" style="max-width: 100%; max-height: 500px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                             </div>
+                         </div>` : ""}
+                     </div>
+                 </div>
+               </div>
+             `;
+             
+             document.body.appendChild(modal);
+             
+             modal.querySelector(".link-view-close").addEventListener("click", () => modal.remove());
+          }
+
+          function renderSOSList() {
+             const dateFilter = document.getElementById("sos-filter-date").value;
+             const houseFilter = (document.getElementById("sos-filter-house").value || "").trim().toLowerCase();
+             
+             let filtered = allAlerts;
+             
+             if (dateFilter) {
+                 filtered = filtered.filter(a => {
+                     const d = new Date(a.createdAt);
+                     // Create date string YYYY-MM-DD in local time
+                     const y = d.getFullYear();
+                     const m = String(d.getMonth() + 1).padStart(2, "0");
+                     const day = String(d.getDate()).padStart(2, "0");
+                     return `${y}-${m}-${day}` === dateFilter;
+                 });
+             }
+             
+             if (houseFilter) {
+                 filtered = filtered.filter(a => (a.houseNo || "").toLowerCase().includes(houseFilter));
+             }
+             
+             const rows = filtered.map(a => {
                const time = new Date(a.createdAt).toLocaleString();
                let statusClass = "danger";
                let statusText = "警報中";
@@ -5661,10 +6633,15 @@ function renderAdminContent(mainKey, subLabel) {
                    actionBtns += `<button class="btn small action-btn btn-resolve-sos" style="margin-right: 5px;">解除</button>`;
                } else if (a.status === "resolved") {
                    actionBtns += `<button class="btn small action-btn btn-complete-sos" style="margin-right: 5px;">完成</button>`;
+               } else if (a.status === "completed") {
+                   actionBtns += `<button class="btn small action-btn btn-view-process" style="margin-right: 5px; background-color: #8b5cf6; color: white;">處理</button>`;
                }
                
                // Delete button is always available
                actionBtns += `<button class="btn small action-btn danger btn-delete-sos">刪除</button>`;
+
+               const resolvedTime = a.resolvedAt ? new Date(a.resolvedAt).toLocaleString() : "-";
+               const completedTime = a.completedAt ? new Date(a.completedAt).toLocaleString() : "-";
 
                return `
                  <tr data-id="${a.id}">
@@ -5677,97 +6654,158 @@ function renderAdminContent(mainKey, subLabel) {
                    <td>
                      ${actionBtns}
                    </td>
+                   <td>${resolvedTime}</td>
+                   <td>${completedTime}</td>
                  </tr>
                `;
              }).join("");
              
              const tbody = document.getElementById("sos-list-tbody");
              if(tbody) {
-                tbody.innerHTML = rows || '<tr><td colspan="7" style="text-align:center">無警報紀錄</td></tr>';
+                tbody.innerHTML = rows || '<tr><td colspan="9" style="text-align:center">無符合條件的警報紀錄</td></tr>';
                 
                 // Bind Resolve Buttons
                 tbody.querySelectorAll(".btn-resolve-sos").forEach(btn => {
-                  btn.addEventListener("click", async () => {
-                    if(!confirm("確定要解除此警報嗎？")) return;
+                  btn.addEventListener("click", () => {
                     const tr = btn.closest("tr");
                     const id = tr.getAttribute("data-id");
-                    try {
-                      await setDoc(doc(db, "sos_alerts", id), { status: "resolved" }, { merge: true });
-                    } catch(e) {
-                      console.error(e);
-                      alert("操作失敗");
-                    }
+                    showConfirmModal(
+                      "解除警報確認",
+                      "確定要解除此警報嗎？<br>解除後狀態將變更為「已解除」。",
+                      "確認解除",
+                      "primary",
+                      async () => {
+                        await setDoc(doc(db, "sos_alerts", id), { 
+                            status: "resolved",
+                            resolvedAt: new Date().toISOString()
+                        }, { merge: true });
+                      }
+                    );
                   });
                 });
 
                 // Bind Complete Buttons
                 tbody.querySelectorAll(".btn-complete-sos").forEach(btn => {
-                  btn.addEventListener("click", async () => {
-                    if(!confirm("確定標記為後續處理完成？")) return;
+                  btn.addEventListener("click", () => {
                     const tr = btn.closest("tr");
                     const id = tr.getAttribute("data-id");
-                    try {
-                      await setDoc(doc(db, "sos_alerts", id), { status: "completed" }, { merge: true });
-                    } catch(e) {
-                      console.error(e);
-                      alert("操作失敗");
-                    }
+                    const currentData = allAlerts.find(a => a.id === id);
+                    
+                    showCompleteSOSModal(id, currentData, async (updateData) => {
+                         await setDoc(doc(db, "sos_alerts", id), updateData, { merge: true });
+                    });
+                  });
+                });
+
+                // Bind View Process Buttons
+                tbody.querySelectorAll(".btn-view-process").forEach(btn => {
+                  btn.addEventListener("click", () => {
+                    const tr = btn.closest("tr");
+                    const id = tr.getAttribute("data-id");
+                    const data = allAlerts.find(a => a.id === id);
+                    showProcessViewModal(data);
                   });
                 });
 
                 // Bind Delete Buttons
                 tbody.querySelectorAll(".btn-delete-sos").forEach(btn => {
-                  btn.addEventListener("click", async () => {
-                    if(!confirm("⚠️ 警告：確定要永久刪除此紀錄嗎？此動作無法復原。")) return;
+                  btn.addEventListener("click", () => {
                     const tr = btn.closest("tr");
                     const id = tr.getAttribute("data-id");
-                    try {
-                      await deleteDoc(doc(db, "sos_alerts", id));
-                    } catch(e) {
-                      console.error(e);
-                      alert("刪除失敗");
-                    }
+                    showConfirmModal(
+                      "刪除紀錄確認",
+                      "⚠️ 警告：確定要永久刪除此紀錄嗎？<br>此動作無法復原。",
+                      "確認刪除",
+                      "danger",
+                      async () => {
+                        await deleteDoc(doc(db, "sos_alerts", id));
+                      }
+                    );
                   });
                 });
              }
+             return filtered; // Return for export
+          }
+          
+          // Bind Filter Events
+          document.getElementById("sos-filter-date").addEventListener("change", renderSOSList);
+          document.getElementById("sos-filter-house").addEventListener("input", renderSOSList);
+          
+          // Bind Export Event
+          document.getElementById("btn-export-sos").addEventListener("click", () => {
+              const filtered = renderSOSList();
+              if (!filtered || !filtered.length) {
+                  alert("目前無資料可匯出");
+                  return;
+              }
+              
+              const exportData = filtered.map(a => ({
+                  "時間": new Date(a.createdAt).toLocaleString(),
+                  "戶號": a.houseNo || "",
+                  "子戶號": a.subNo || "",
+                  "姓名": a.name || "",
+                  "地址": a.address || "",
+                  "狀態": a.status === "resolved" ? "已解除" : (a.status === "completed" ? "後續處理完成" : "警報中"),
+                  "解除時間": a.resolvedAt ? new Date(a.resolvedAt).toLocaleString() : "",
+                  "完成時間": a.completedAt ? new Date(a.completedAt).toLocaleString() : "",
+                  "處理人": a.handler || "",
+                  "處理紀錄": a.processRecord || ""
+              }));
+              
+              const wb = XLSX.utils.book_new();
+              const ws = XLSX.utils.json_to_sheet(exportData);
+              XLSX.utils.book_append_sheet(wb, ws, "警報紀錄");
+              
+              const now = new Date();
+              const y = now.getFullYear();
+              const m = String(now.getMonth() + 1).padStart(2, "0");
+              const d = String(now.getDate()).padStart(2, "0");
+              const filename = `${communityName}住戶警報紀錄_${y}${m}${d}.xlsx`;
+              
+              XLSX.writeFile(wb, filename);
+          });
+
+          window.sosListUnsub = onSnapshot(q, (snap) => {
+             allAlerts = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => b.createdAt - a.createdAt);
+             renderSOSList();
           }, (error) => {
              console.error("SOS Listener Error:", error);
              const tbody = document.getElementById("sos-list-tbody");
-             if(tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:red">載入失敗: ${error.message}</td></tr>`;
+             if(tbody) tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:red">載入失敗: ${error.message}</td></tr>`;
           });
 
         } catch (e) {
           console.error(e);
           const tbody = document.getElementById("sos-list-tbody");
-          if(tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red">載入失敗</td></tr>';
+          if(tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:red">載入失敗</td></tr>';
         }
       })();
       return;
     }
     if (sub === "設定") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">住戶設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">住戶設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
       return;
     }
   }
   if (mainKey === "others") {
     if (sub === "日誌") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">日誌</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">日誌</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "班表") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">班表</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">班表</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "通訊") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">通訊</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">通訊</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "巡邏") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">巡邏</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">巡邏</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
       return;
     }
     if (sub === "設定") {
-      adminNav.content.innerHTML = `<div class="card"><div class="card-head"><h1 class="card-title">其他設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">其他設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
       return;
     }
   }
@@ -5799,7 +6837,7 @@ function openCommunitySwitchModal() {
     openModal(body);
     const btns = Array.from(document.querySelectorAll(".modal-body .btn.action-btn"));
     btns.forEach(b => {
-      b.addEventListener("click", () => {
+      b.addEventListener("click", async () => {
         const slug = b.getAttribute("data-slug");
         if (slug) {
           window.currentAdminCommunitySlug = slug;
@@ -5809,22 +6847,23 @@ function openCommunitySwitchModal() {
             url.searchParams.set("c", slug);
             window.history.pushState({}, "", url);
           } catch {}
+          
           closeModal();
-          updateAdminBrandTitle();
+          
+          // Show loading to indicate change
+          if (adminNav.content) adminNav.content.innerHTML = '<div style="padding:40px;text-align:center;color:#666;">載入中...</div>';
+          
+          await updateAdminBrandTitle();
+          
           const savedMain = localStorage.getItem("adminActiveMain") || "shortcuts";
           setActiveAdminNav(savedMain);
-          // Force re-render of current sub-nav item content
+          
+          // Re-trigger content render if setActiveAdminNav didn't do it (though it should)
+          // or if we need to ensure the correct sub-tab is loaded
           if (adminNav.subContainer) {
-            const activeSub = adminNav.subContainer.querySelector('.sub-nav-item.active');
-            if (activeSub) {
-              const label = (activeSub.getAttribute('data-label') || activeSub.textContent || '').replace(/\u200B/g, '').trim();
-              renderAdminContent(savedMain, label);
-            } else {
-              // Fallback if no active sub-nav found, trigger renderAdminSubNav which defaults to first item
-              renderAdminSubNav(savedMain);
-            }
+             // setActiveAdminNav calls renderAdminSubNav which renders the initial/saved sub-tab.
+             // So we don't need to do much else.
           } else if (sysNav.subContainer) {
-             // Fallback for sys.html if applicable
              const activeSub = sysNav.subContainer.querySelector('.sub-nav-item.active');
              if (activeSub) {
                const label = (activeSub.getAttribute('data-label') || activeSub.textContent || '').replace(/\u200B/g, '').trim();
@@ -6288,33 +7327,375 @@ if (!window.openEditModal) {
   }
   window.openEditModal = openEditModal;
 }
+
+function openRenameModal(currentLabel, onConfirm, title = "編輯名稱", onDelete = null) {
+  let modal = document.getElementById("sys-modal");
+  
+  // Ensure modal exists
+  if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "sys-modal";
+      modal.className = "modal hidden";
+      document.body.appendChild(modal);
+  }
+  
+  // Move to body to avoid transform/scroll issues in layout
+  if (modal.parentNode !== document.body) {
+      document.body.appendChild(modal);
+  }
+
+  const deleteBtnHtml = onDelete ? `<button id="rename-delete" style="margin-right:auto; padding:8px 16px; background:#fee2e2; color:#b91c1c; border:none; border-radius:6px; cursor:pointer; font-weight:500;">刪除</button>` : '';
+
+  modal.innerHTML = `
+    <div class="modal-box" style="width:300px; background:white; padding:20px; border-radius:8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); position:relative; z-index:10;">
+      <h3 style="margin-top:0; margin-bottom:16px; font-size:18px; font-weight:600;">${title}</h3>
+      <input type="text" id="rename-input" value="${currentLabel}" style="width:100%; padding:8px 12px; margin-bottom:20px; border:1px solid #ddd; border-radius:6px; font-size:14px;">
+      <div style="display:flex; justify-content:flex-end; gap:12px;">
+        ${deleteBtnHtml}
+        <button id="rename-cancel" style="padding:8px 16px; background:#f3f4f6; border:none; border-radius:6px; cursor:pointer; font-weight:500;">取消</button>
+        <button id="rename-confirm" style="padding:8px 16px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:500;">確定</button>
+      </div>
+    </div>
+  `;
+  
+  // Ensure z-index is high enough
+  modal.style.zIndex = "999999";
+  modal.classList.remove("hidden");
+  
+  const input = modal.querySelector("#rename-input");
+  // Small delay to ensure visibility before focus
+  setTimeout(() => {
+      input.focus();
+      input.select();
+  }, 50);
+
+  const close = () => {
+    modal.classList.add("hidden");
+    modal.innerHTML = "";
+  };
+
+  if(onDelete) {
+      modal.querySelector("#rename-delete").onclick = () => {
+          close();
+          onDelete();
+      };
+  }
+
+  modal.querySelector("#rename-cancel").onclick = close;
+  modal.querySelector("#rename-confirm").onclick = () => {
+    const val = input.value;
+    onConfirm(val);
+    close();
+  };
+  
+  input.addEventListener("keyup", (e) => {
+    if(e.key === "Enter") {
+       const val = input.value;
+       onConfirm(val);
+       close();
+    }
+  });
+  
+  // Click outside to close
+  modal.onclick = (e) => {
+      if(e.target === modal) close();
+  };
+}
+
+function openConfirmModal(message, onConfirm) {
+  let modal = document.getElementById("sys-modal");
+  if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "sys-modal";
+      modal.className = "modal hidden";
+      document.body.appendChild(modal);
+  }
+  if (modal.parentNode !== document.body) {
+      document.body.appendChild(modal);
+  }
+
+  modal.innerHTML = `
+    <div class="modal-box" style="width:300px; background:white; padding:20px; border-radius:8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); position:relative; z-index:10;">
+      <h3 style="margin-top:0; margin-bottom:16px; font-size:18px; font-weight:600; color:#b91c1c;">確認刪除</h3>
+      <p style="margin-bottom:20px; font-size:14px; color:#374151;">${message}</p>
+      <div style="display:flex; justify-content:flex-end; gap:12px;">
+        <button id="confirm-cancel" style="padding:8px 16px; background:#f3f4f6; border:none; border-radius:6px; cursor:pointer; font-weight:500;">取消</button>
+        <button id="confirm-ok" style="padding:8px 16px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:500;">確認刪除</button>
+      </div>
+    </div>
+  `;
+  
+  modal.style.zIndex = "999999";
+  modal.classList.remove("hidden");
+
+  const close = () => {
+    modal.classList.add("hidden");
+    modal.innerHTML = "";
+  };
+
+  modal.querySelector("#confirm-cancel").onclick = close;
+  modal.querySelector("#confirm-ok").onclick = () => {
+    onConfirm();
+    close();
+  };
+  
+  modal.onclick = (e) => {
+      if(e.target === modal) close();
+  };
+}
+
+
+let navUnsubscribe = null;
 function renderAdminSubNav(key) {
+  if (navUnsubscribe) { navUnsubscribe(); navUnsubscribe = null; }
   if (!adminNav.subContainer) return;
   const items = adminSubMenus[key] || [];
-  adminNav.subContainer.innerHTML = items.map((item, index) => 
-    `<button class="sub-nav-item ${index === 0 ? "active" : ""}" data-label="${item}">${item}</button>`
-  ).join("");
-  const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item");
-  buttons.forEach(btn => {
-    btn.addEventListener("click", () => {
-      buttons.forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      const label = (btn.getAttribute("data-label") || btn.textContent || "").replace(/\u200B/g, "").trim();
-      localStorage.setItem("adminActiveSub", label);
-      renderAdminContent(key, label);
-    });
-  });
-  const savedSub = localStorage.getItem("adminActiveSub");
-  const initial = savedSub && items.includes(savedSub) ? savedSub : (items[0] || "");
-  if (initial) {
-    const targetBtn = Array.from(buttons).find(b => (b.getAttribute("data-label") || b.textContent || "").trim() === initial);
-    if (targetBtn) {
-      buttons.forEach(b => b.classList.remove("active"));
-      targetBtn.classList.add("active");
-    }
-    renderAdminContent(key, initial);
+  
+  // Render buttons
+  const renderButtons = (list) => {
+      let html = list.map((item, index) => {
+        const isObj = typeof item === 'object';
+        const label = isObj ? item.label : item;
+        const itemKey = isObj ? item.key : item;
+        const titleAttr = ' title="雙擊可編輯名稱"';
+        // Check if this tab is active
+        const isActive = (localStorage.getItem("adminActiveSub") === itemKey) || (index === 0 && !localStorage.getItem("adminActiveSub"));
+        return `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}"${titleAttr}>${label}</button>`;
+      }).join("");
+
+      if (key === 'announce') {
+          html += `<button class="sub-nav-item add-btn" title="新增分類" style="min-width: 30px; padding: 0 10px; font-weight:bold;">+</button>`;
+      }
+      return html;
+  };
+
+  adminNav.subContainer.innerHTML = renderButtons(items);
+  
+  // Logic to load custom tabs for announce
+  if (key === 'announce') {
+      const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+      navUnsubscribe = onSnapshot(doc(db, "communities", slug, "settings", "nav"), (snap) => {
+          let currentList = [...items]; // Default list
+          
+          if(snap.exists()) {
+              const data = snap.data();
+              // Check if full list exists
+              if(data.announce_tabs && Array.isArray(data.announce_tabs)) {
+                  currentList = data.announce_tabs;
+              } else {
+                  // Fallback: update labels of default list
+                  currentList = currentList.map(i => {
+                      if(data[i.key]) return { ...i, label: data[i.key] };
+                      return i;
+                  });
+              }
+          }
+          
+          // Re-render with fetched list
+          adminNav.subContainer.innerHTML = renderButtons(currentList);
+          attachListeners(currentList);
+          
+          // Update title if active tab matches
+          const activeBtn = adminNav.subContainer.querySelector(".sub-nav-item.active");
+          if(activeBtn) {
+               const titleEl = document.querySelector(".row.B3 .card-title");
+               if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
+          }
+      }, (e) => {
+          console.error(e);
+          attachListeners(items);
+      });
   } else {
-    adminNav.content && (adminNav.content.innerHTML = "");
+      attachListeners(items);
+  }
+
+  function attachListeners(currentList) {
+      const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item:not(.add-btn)");
+      const addBtn = adminNav.subContainer.querySelector(".add-btn");
+
+      buttons.forEach((btn, index) => {
+        // Click to switch
+        btn.addEventListener("click", () => {
+          buttons.forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          const k = btn.getAttribute("data-key");
+          const l = btn.getAttribute("data-label");
+          localStorage.setItem("adminActiveSub", k); 
+          renderAdminContent(key, k, l); 
+        });
+
+        // Double click to edit
+        btn.addEventListener("dblclick", async () => {
+            const k = btn.getAttribute("data-key");
+            
+            // Allow all items to be editable
+            // const isCustomizable = items.some(i => typeof i === 'object' && i.key === k);
+            // if(!isCustomizable) return;
+
+            const currentLabel = btn.getAttribute("data-label");
+            
+            const onDelete = (index > 0) ? () => {
+                 openConfirmModal(`確定要刪除 "${currentLabel}" 嗎？此操作無法復原。`, async () => {
+                     // Filter out the deleted item
+                     // Note: We need to filter based on key, but currentList might have mixed types
+                     // For safety, let's normalize check
+                     const newList = currentList.filter(item => {
+                          if (typeof item === 'object') return item.key !== k;
+                          return item !== k;
+                     });
+                     
+                     // Save to DB
+                     try {
+                         const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+                         if (key === 'announce') {
+                             const normalizedList = newList.map(i => {
+                                  if (typeof i === 'string') return { key: i, label: i }; 
+                                  return i;
+                             });
+                             
+                             await setDoc(doc(db, "communities", slug, "settings", "nav"), {
+                                 announce_tabs: normalizedList
+                             }, { merge: true });
+                             
+                             // If active was deleted, switch to first
+                             if(btn.classList.contains("active")) {
+                                 const firstBtn = adminNav.subContainer.querySelector(".sub-nav-item");
+                                 if(firstBtn) firstBtn.click();
+                             }
+
+                         } else {
+                             // For non-array structure (should not happen for announce tabs list but just in case)
+                             await setDoc(doc(db, "communities", slug, "settings", "nav"), {
+                                 [k]: deleteField()
+                             }, { merge: true });
+                         }
+                     } catch(e) {
+                         console.error("Delete nav item error", e);
+                         showHint("刪除失敗: " + e.message, "error");
+                     }
+                 });
+            } : null;
+
+            // Use custom modal instead of prompt
+            openRenameModal(currentLabel, async (newLabel) => {
+                if(!newLabel || newLabel.trim() === "") return;
+                const finalLabel = newLabel.trim();
+                
+                // Update local list
+                const newList = currentList.map(item => {
+                    if (typeof item === 'object' && item.key === k) {
+                        return { ...item, label: finalLabel };
+                    }
+                    // For default items which might be strings or objects without label
+                    if (typeof item === 'string' && item === k) {
+                        // Convert string item to object to support label change
+                        return { key: k, label: finalLabel };
+                    }
+                    if (typeof item === 'object' && item.key === k) {
+                         return { ...item, label: finalLabel };
+                    }
+                    return item;
+                });
+
+                // Optimistic update
+                btn.textContent = finalLabel;
+                btn.setAttribute("data-label", finalLabel);
+                
+                if(btn.classList.contains("active")) {
+                     const titleEl = document.querySelector(".row.B3 .card-title");
+                     if(titleEl) {
+                         titleEl.textContent = finalLabel;
+                     }
+                }
+
+                // Save to DB
+                try {
+                    const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+                    if (key === 'announce') {
+                        // For announce, we always save the full list to announce_tabs
+                        // But first ensure all items in list are normalized to objects if needed
+                        const normalizedList = newList.map(i => {
+                             if (typeof i === 'string') return { key: i, label: i }; // Should handle mapping if we have defaults
+                             // Wait, if it's a string from default list, we need its original label?
+                             // Actually, currentList comes from snapshot which might be mix.
+                             // But renderButtons handles string vs object.
+                             return i;
+                        });
+                        
+                        await setDoc(doc(db, "communities", slug, "settings", "nav"), {
+                            announce_tabs: normalizedList
+                        }, { merge: true });
+                    } else {
+                        await setDoc(doc(db, "communities", slug, "settings", "nav"), {
+                            [k]: finalLabel
+                        }, { merge: true });
+                    }
+                } catch(e) {
+                    console.error("Save nav label error", e);
+                    showHint("儲存名稱失敗: " + e.message, "error");
+                }
+            }, "編輯名稱", onDelete);
+        });
+      });
+
+      if (addBtn) {
+          addBtn.addEventListener("click", async () => {
+              openRenameModal("", async (name) => {
+                  if (name && name.trim()) {
+                      const newKey = "ann_" + Date.now();
+                      const newItem = { key: newKey, label: name.trim() };
+                      const newList = [...currentList, newItem];
+                      
+                      // Save
+                      try {
+                        const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+                        await setDoc(doc(db, "communities", slug, "settings", "nav"), {
+                            announce_tabs: newList
+                        }, { merge: true });
+                        
+                        // Re-render
+                        adminNav.subContainer.innerHTML = renderButtons(newList);
+                        attachListeners(newList);
+                        
+                        // Auto-select new tab
+                        const newBtns = adminNav.subContainer.querySelectorAll(".sub-nav-item:not(.add-btn)");
+                        const target = Array.from(newBtns).find(b => b.getAttribute("data-key") === newKey);
+                        if(target) target.click();
+
+                      } catch(e) {
+                          console.error(e);
+                          if(typeof showHint === 'function') showHint("新增失敗: " + e.message, "error");
+                          else alert("新增失敗: " + e.message);
+                      }
+                  }
+              }, "新增分類");
+          });
+      }
+      
+      // Handle Initial Selection (if not handled by click)
+      const savedSub = localStorage.getItem("adminActiveSub");
+      let initialBtn = null;
+      if(savedSub) {
+          initialBtn = Array.from(buttons).find(b => b.getAttribute("data-key") === savedSub || b.getAttribute("data-label") === savedSub);
+      }
+      if (!initialBtn && buttons.length > 0) initialBtn = buttons[0];
+
+      // Only force render if content is empty or mismatched (avoid double render loop)
+      // But we need to ensure the correct tab is visually active
+      if (initialBtn) {
+           // Ensure active class is correct
+           buttons.forEach(b => b.classList.remove("active"));
+           initialBtn.classList.add("active");
+           
+           // If we are in the async load phase, we might need to trigger render content if it wasn't done
+           // logic: check if content title matches
+           const titleEl = document.querySelector(".card-title");
+           const k = initialBtn.getAttribute("data-key");
+           const l = initialBtn.getAttribute("data-label");
+           if (!titleEl || titleEl.textContent !== l) {
+               renderAdminContent(key, k, l);
+           }
+      }
   }
 }
 
