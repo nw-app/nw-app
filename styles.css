@@ -1000,6 +1000,109 @@ select:focus {
   color: #6b7280;
 }
 
+/* Facility Reservation Layout */
+.facility-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0; /* Important for nested scroll */
+  width: 100%;
+  margin-top: 16px;
+}
+.facility-col-left {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+  min-width: 0;
+}
+.facility-col-mid {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  min-width: 0;
+}
+.facility-col-right {
+  flex: 5;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  min-width: 0;
+}
+.cal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  text-align: center;
+}
+.cal-head-day {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  padding-bottom: 4px;
+}
+.cal-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+  font-size: 14px;
+  position: relative;
+  transition: all 0.2s;
+}
+.cal-day:hover { background: #f3f4f6; }
+.cal-day.active { background: var(--primary); color: #fff; }
+.cal-day.today { border: 1px solid var(--primary); }
+.cal-day.has-res::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  background: var(--primary);
+  border-radius: 50%;
+}
+.cal-day.active.has-res::after { background: #fff; }
+.cal-day.other-month { color: #d1d5db; pointer-events: none; }
+
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+.schedule-item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.schedule-time { font-weight: 700; color: var(--primary); display: block; margin-bottom: 2px; }
+.schedule-info { color: var(--text); }
+.schedule-status { float: right; font-size: 12px; padding: 2px 6px; border-radius: 4px; background: #eee; }
+
+
 /* Switch Toggle */
 .switch {
   position: relative;
@@ -1116,4 +1219,34 @@ input:checked + .slider:before {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  flex-direction: column;
+}
+.loading-spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #3498db;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+.loading-text {
+  color: #fff;
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: 500;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

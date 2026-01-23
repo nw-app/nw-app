@@ -30,6 +30,22 @@ function initGlobalLayout() {
 }
 initGlobalLayout();
 
+function showLoading(text = "處理中...") {
+  const overlay = document.createElement("div");
+  overlay.className = "loading-overlay";
+  overlay.id = "global-loading-overlay";
+  overlay.innerHTML = `
+    <div class="loading-spinner"></div>
+    <div class="loading-text">${text}</div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function hideLoading() {
+  const overlay = document.getElementById("global-loading-overlay");
+  if (overlay) overlay.remove();
+}
+
 const defaultFirebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
   authDomain: "nw-app-all.firebaseapp.com",
@@ -5409,8 +5425,20 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
 
                 btnSave.disabled = true;
                 btnSave.textContent = "儲存中...";
+                showLoading("正在儲存公告並上傳圖片...");
 
-                let imageUrl = item ? (item.imageUrl || "") : "";
+                let imageUrl = "";
+                // If no new file is selected, check if we should keep the existing image
+                if (!imgInp || !imgInp.files[0]) {
+                    if (imgPrev && imgPrev.querySelector("img")) {
+                        // Image is still in preview, so keep the existing URL
+                        if (item && item.imageUrl) {
+                            imageUrl = item.imageUrl;
+                        }
+                    }
+                    // If preview is empty, imageUrl remains "" (deleted)
+                }
+
                 if (imgInp && imgInp.files[0]) {
                     const f = imgInp.files[0];
                     try {
@@ -5448,12 +5476,378 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
                         data.createdAt = Date.now();
                         await addDoc(collection(db, "communities", slug, "announcements"), data);
                     }
+                    hideLoading();
                     closeModal();
                     // Pass the correct title/category back to render
                     renderAdminAnnounceList(displayTitle, safeCategory);
                 } catch(err) {
+                    hideLoading();
                     console.error(err);
                     alert("儲存失敗: " + err.message);
+                    btnSave.disabled = false;
+                    btnSave.textContent = "儲存";
+                }
+            });
+        }
+    }, 100);
+}
+
+
+async function renderAdminFacilityList(displayTitle, facilityKey) {
+  if (!adminNav.content) return;
+  
+  // Cleanup previous listeners
+  if (window.adminFacilityUnsub) {
+    window.adminFacilityUnsub();
+    window.adminFacilityUnsub = null;
+  }
+  
+  adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">${displayTitle} - 預約管理</h1></div><div class="empty-hint">載入中...</div></div>`;
+  
+  window.adminFacilityUnsub = onAuthStateChanged(auth, async (u) => {
+    if (!u) {
+       adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">${displayTitle}</h1></div><div class="empty-hint">請先登入</div></div>`;
+       return;
+    }
+    
+    let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+    if (slug === "default") {
+        try {
+          slug = await getUserCommunity(u.uid);
+        } catch {}
+    }
+
+    let items = [];
+    try {
+        const ref = collection(db, "communities", slug, "reservations");
+        const q = query(ref, where("facility", "==", facilityKey));
+        // Use onSnapshot for realtime updates? The previous code used getDocs inside onAuthStateChanged.
+        // But let's stick to single fetch for now to match the pattern, or upgrade to onSnapshot if I want realtime.
+        // Actually, the previous code was inside onAuthStateChanged which runs once on login.
+        // It didn't have a real-time listener for the collection itself.
+        // Let's use getDocs for now as per previous implementation to avoid complexity with multiple listeners.
+        const snap = await getDocs(q);
+        items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+        // Sort by date/time desc
+        items.sort((a,b) => {
+            const dateA = a.date + (a.startTime || "");
+            const dateB = b.date + (b.startTime || "");
+            return dateB.localeCompare(dateA);
+        });
+    } catch (e) {
+        console.error("Failed to load reservations", e);
+    }
+
+    // State for Calendar
+    let currentYear = new Date().getFullYear();
+    let currentMonth = new Date().getMonth(); // 0-11
+    let selectedDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD (Default today)
+
+    // Helper: Get formatted date string YYYY-MM-DD
+    const formatDate = (y, m, d) => {
+        return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    };
+
+    const renderUI = () => {
+        const monthNames = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
+        
+        adminNav.content.innerHTML = `
+          <div class="card data-card" style="height: calc(70vh - 24px); margin: 12px auto; display: flex; flex-direction: column; padding: 20px; overflow: hidden;">
+            <div class="card-head">
+              <h1 class="card-title">${displayTitle} - 預約管理</h1>
+              <div style="display:flex; gap:8px;">
+                 <button id="btn-create-res" class="btn small action-btn">新增預約</button>
+              </div>
+            </div>
+            
+            <div class="facility-layout">
+               <!-- Left: Calendar (30%) -->
+               <div class="facility-col-left">
+                  <div class="cal-header">
+                     <button id="cal-prev" class="btn small" style="padding:0 8px;">&lt;</button>
+                     <span style="font-weight:700;">${currentYear}年 ${monthNames[currentMonth]}</span>
+                     <button id="cal-next" class="btn small" style="padding:0 8px;">&gt;</button>
+                  </div>
+                  <div class="cal-grid">
+                     <div class="cal-head-day">日</div>
+                     <div class="cal-head-day">一</div>
+                     <div class="cal-head-day">二</div>
+                     <div class="cal-head-day">三</div>
+                     <div class="cal-head-day">四</div>
+                     <div class="cal-head-day">五</div>
+                     <div class="cal-head-day">六</div>
+                     ${generateCalendarHTML()}
+                  </div>
+               </div>
+
+               <!-- Middle: Daily Schedule (20%) -->
+               <div class="facility-col-mid">
+                  <h3 style="font-size:16px; margin:0 0 12px 0; text-align:center; font-weight:700;">
+                     ${selectedDate} 行程
+                  </h3>
+                  <div class="schedule-list">
+                     ${generateScheduleHTML()}
+                  </div>
+               </div>
+
+               <!-- Right: Management List (50%) -->
+               <div class="facility-col-right">
+                  <div class="table-wrap" style="height:100%; overflow-y:auto;">
+                    <table class="table">
+                       <thead style="position:sticky; top:0; z-index:10;">
+                         <tr>
+                           <th>日期</th>
+                           <th>時間</th>
+                           <th>預約人</th>
+                           <th>狀態</th>
+                           <th>操作</th>
+                         </tr>
+                       </thead>
+                       <tbody id="facility-table-body">
+                          ${generateTableHTML()}
+                       </tbody>
+                    </table>
+                    ${items.length === 0 ? '<div class="empty-hint">目前無預約</div>' : ''}
+                  </div>
+               </div>
+            </div>
+          </div>
+        `;
+
+        // Attach Event Listeners
+        
+        // Calendar Nav
+        document.getElementById("cal-prev").addEventListener("click", () => {
+            currentMonth--;
+            if(currentMonth < 0) { currentMonth = 11; currentYear--; }
+            renderUI();
+        });
+        document.getElementById("cal-next").addEventListener("click", () => {
+            currentMonth++;
+            if(currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderUI();
+        });
+
+        // Calendar Day Click
+        document.querySelectorAll(".cal-day:not(.other-month)").forEach(el => {
+            el.addEventListener("click", () => {
+                selectedDate = el.dataset.date;
+                renderUI();
+            });
+        });
+
+        // Create Button
+        const btnCreate = document.getElementById("btn-create-res");
+        if(btnCreate) {
+            btnCreate.addEventListener("click", () => {
+                // Pass selectedDate as default
+                openFacilityReservationModal({date: selectedDate}, displayTitle, slug, facilityKey, true);
+            });
+        }
+
+        // Table Actions
+        document.querySelectorAll(".btn-edit-res").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const id = btn.closest("tr").getAttribute("data-id");
+                const item = items.find(i => i.id === id);
+                openFacilityReservationModal(item, displayTitle, slug, facilityKey);
+            });
+        });
+
+        document.querySelectorAll(".btn-delete-res").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                if(!confirm("確定要刪除此預約嗎？")) return;
+                const id = btn.closest("tr").getAttribute("data-id");
+                try {
+                    await deleteDoc(doc(db, "communities", slug, "reservations", id));
+                    // Reload data and render
+                    const ref = collection(db, "communities", slug, "reservations");
+                    const q = query(ref, where("facility", "==", facilityKey));
+                    const snap = await getDocs(q);
+                    items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                    items.sort((a,b) => {
+                        const dateA = a.date + (a.startTime || "");
+                        const dateB = b.date + (b.startTime || "");
+                        return dateB.localeCompare(dateA);
+                    });
+                    renderUI();
+                } catch(err) {
+                    console.error(err);
+                    alert("刪除失敗");
+                }
+            });
+        });
+    };
+
+    const generateCalendarHTML = () => {
+        const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        let html = "";
+        
+        // Empty slots for previous month
+        for(let i=0; i<firstDay; i++) {
+            html += `<div class="cal-day other-month"></div>`;
+        }
+        
+        // Days
+        const todayStr = formatDate(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+        
+        for(let d=1; d<=daysInMonth; d++) {
+            const dateStr = formatDate(currentYear, currentMonth, d);
+            const isSelected = dateStr === selectedDate;
+            const isToday = dateStr === todayStr;
+            const hasRes = items.some(i => i.date === dateStr);
+            
+            let classes = "cal-day";
+            if(isSelected) classes += " active";
+            if(isToday) classes += " today";
+            if(hasRes) classes += " has-res";
+            
+            html += `<div class="${classes}" data-date="${dateStr}">${d}</div>`;
+        }
+        return html;
+    };
+
+    const generateScheduleHTML = () => {
+        const dayItems = items.filter(i => i.date === selectedDate);
+        // Sort by start time asc
+        dayItems.sort((a,b) => (a.startTime || "").localeCompare(b.startTime || ""));
+        
+        if(dayItems.length === 0) return `<div style="text-align:center; color:#999; padding:20px;">無預約</div>`;
+        
+        return dayItems.map(item => `
+            <div class="schedule-item">
+               <span class="schedule-status">${item.status || "已預約"}</span>
+               <span class="schedule-time">${item.startTime} - ${item.endTime}</span>
+               <div class="schedule-info">${item.bookerName || ""}</div>
+               ${item.note ? `<div style="color:#666; font-size:12px; margin-top:4px;">${item.note}</div>` : ""}
+            </div>
+        `).join("");
+    };
+
+    const generateTableHTML = () => {
+        // Show all items
+        return items.map(item => {
+            return `
+                <tr data-id="${item.id}" style="${item.date === selectedDate ? 'background:#f0f9ff;' : ''}">
+                    <td>${item.date}</td>
+                    <td>${item.startTime} - ${item.endTime}</td>
+                    <td>${item.bookerName || ""}</td>
+                    <td>${item.status || "已預約"}</td>
+                    <td class="actions">
+                        <button class="btn small action-btn btn-edit-res">編輯</button>
+                        <button class="btn small action-btn danger btn-delete-res">刪除</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    };
+
+    renderUI();
+  });
+}
+
+function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isNewWithDate = false) {
+    // isNewWithDate: item contains {date: "YYYY-MM-DD"} but is not a DB item
+    const isEdit = !!(item && item.id);
+    const title = isEdit ? `編輯預約` : `新增預約`;
+    
+    // Default values
+    let defaultDate = "";
+    if (isEdit) defaultDate = item.date;
+    else if (isNewWithDate) defaultDate = item.date;
+    else {
+        const d = new Date();
+        defaultDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    const body = `
+      <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">${title}</div></div>
+        <div class="modal-body">
+           <label class="field">
+             <div class="field-head">日期</div>
+             <div class="input-wrap"><input type="date" id="res-date" value="${defaultDate}"></div>
+           </label>
+           <div style="display:flex; gap:10px;">
+               <label class="field" style="flex:1;">
+                 <div class="field-head">開始時間</div>
+                 <div class="input-wrap"><input type="time" id="res-start" value="${item && item.startTime ? item.startTime : "09:00"}"></div>
+               </label>
+               <label class="field" style="flex:1;">
+                 <div class="field-head">結束時間</div>
+                 <div class="input-wrap"><input type="time" id="res-end" value="${item && item.endTime ? item.endTime : "10:00"}"></div>
+               </label>
+           </div>
+           <label class="field">
+             <div class="field-head">預約人</div>
+             <div class="input-wrap"><input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入住戶姓名或房號"></div>
+           </label>
+           <label class="field">
+             <div class="field-head">狀態</div>
+             <div class="input-wrap">
+                <select id="res-status">
+                  <option value="已預約" ${item && item.status === "已預約" ? "selected" : ""}>已預約</option>
+                  <option value="已取消" ${item && item.status === "已取消" ? "selected" : ""}>已取消</option>
+                  <option value="已完成" ${item && item.status === "已完成" ? "selected" : ""}>已完成</option>
+                </select>
+             </div>
+           </label>
+           <label class="field">
+             <div class="field-head">備註</div>
+             <div class="input-wrap"><textarea id="res-note" rows="3" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item && item.note ? item.note : ""}</textarea></div>
+           </label>
+        </div>
+        <div class="modal-foot">
+          <button class="btn action-btn" onclick="closeModal()">取消</button>
+          <button class="btn action-btn primary" id="btn-save-res">儲存</button>
+        </div>
+      </div>
+    `;
+    openModal(body);
+
+    setTimeout(() => {
+        const btnSave = document.getElementById("btn-save-res");
+        if(btnSave) {
+            btnSave.addEventListener("click", async () => {
+                const dateVal = document.getElementById("res-date").value;
+                const startVal = document.getElementById("res-start").value;
+                const endVal = document.getElementById("res-end").value;
+                const bookerVal = document.getElementById("res-booker").value;
+                const statusVal = document.getElementById("res-status").value;
+                const noteVal = document.getElementById("res-note").value;
+
+                if (!dateVal || !startVal || !endVal || !bookerVal) {
+                    alert("請填寫所有必填欄位");
+                    return;
+                }
+
+                btnSave.disabled = true;
+                btnSave.textContent = "儲存中...";
+
+                try {
+                    const data = {
+                        facility: facilityKey,
+                        date: dateVal,
+                        startTime: startVal,
+                        endTime: endVal,
+                        bookerName: bookerVal,
+                        status: statusVal,
+                        note: noteVal,
+                        updatedAt: Date.now()
+                    };
+
+                    if (isEdit) {
+                        await setDoc(doc(db, "communities", slug, "reservations", item.id), data, { merge: true });
+                    } else {
+                        data.createdAt = Date.now();
+                        await addDoc(collection(db, "communities", slug, "reservations"), data);
+                    }
+                    closeModal();
+                    renderAdminFacilityList(displayTitle, facilityKey);
+                } catch(err) {
+                    console.error(err);
+                    alert("儲存失敗");
                     btnSave.disabled = false;
                     btnSave.textContent = "儲存";
                 }
@@ -5517,7 +5911,8 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
     }
   }
   if (mainKey === "facility") {
-    adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">設施預約設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+    // sub is the facility key (e.g., 'gym'), displayLabel is the facility name (e.g., '健身房')
+    renderAdminFacilityList(displayLabel, sub);
     return;
   }
   if (mainKey === "announce") {
@@ -7569,7 +7964,7 @@ function renderAdminSubNav(key) {
         return `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}"${titleAttr}>${label}</button>`;
       }).join("");
 
-      if (key === 'announce') {
+      if (key === 'announce' || key === 'facility') {
           html += `<button class="sub-nav-item add-btn" title="新增分類" style="min-width: 30px; padding: 0 10px; font-weight:bold;">+</button>`;
       }
       return html;
@@ -7638,6 +8033,52 @@ function renderAdminSubNav(key) {
               attachListeners(items);
           });
       })();
+  } else if (key === 'facility') {
+      let localUnsub = null;
+      const wrapper = () => { if (localUnsub) localUnsub(); };
+      navUnsubscribe = wrapper;
+
+      (async () => {
+          let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+          
+          if (slug === "default" && auth.currentUser) {
+              try {
+                  const fetchedSlug = await getUserCommunity(auth.currentUser.uid);
+                  if (fetchedSlug !== "default") {
+                      slug = fetchedSlug;
+                      window.currentAdminCommunitySlug = slug;
+                      localStorage.setItem("adminCurrentCommunity", slug);
+                  }
+              } catch (e) { console.error(e); }
+          }
+
+          if (navUnsubscribe !== wrapper) return;
+          if (slug === "default" || !auth.currentUser) return;
+
+          localUnsub = onSnapshot(doc(db, "communities", slug, "settings", "nav"), (snap) => {
+              // Default list for facility
+              let currentList = [{ key: 'gym', label: '健身房' }];
+              
+              if(snap.exists()) {
+                  const data = snap.data();
+                  if(data.facility_tabs && Array.isArray(data.facility_tabs)) {
+                      currentList = data.facility_tabs;
+                  }
+              }
+              
+              adminNav.subContainer.innerHTML = renderButtons(currentList);
+              attachListeners(currentList);
+              
+              const activeBtn = adminNav.subContainer.querySelector(".sub-nav-item.active");
+              if(activeBtn) {
+                   const titleEl = document.querySelector(".row.B3 .card-title");
+                   if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
+              }
+          }, (e) => {
+              console.error(e);
+              attachListeners([{ key: 'gym', label: '健身房' }]);
+          });
+      })();
   } else {
       attachListeners(items);
   }
@@ -7680,15 +8121,17 @@ function renderAdminSubNav(key) {
                      // Save to DB
                      try {
                          const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
-                         if (key === 'announce') {
+                         if (key === 'announce' || key === 'facility') {
                              const normalizedList = newList.map(i => {
                                   if (typeof i === 'string') return { key: i, label: i }; 
                                   return i;
                              });
                              
-                             await setDoc(doc(db, "communities", slug, "settings", "nav"), {
-                                 announce_tabs: normalizedList
-                             }, { merge: true });
+                             const updateData = {};
+                             if (key === 'announce') updateData.announce_tabs = normalizedList;
+                             if (key === 'facility') updateData.facility_tabs = normalizedList;
+
+                             await setDoc(doc(db, "communities", slug, "settings", "nav"), updateData, { merge: true });
                              
                              // If active was deleted, switch to first
                              if(btn.classList.contains("active")) {
@@ -7697,7 +8140,7 @@ function renderAdminSubNav(key) {
                              }
 
                          } else {
-                             // For non-array structure (should not happen for announce tabs list but just in case)
+                             // For non-array structure
                              await setDoc(doc(db, "communities", slug, "settings", "nav"), {
                                  [k]: deleteField()
                              }, { merge: true });
@@ -7744,20 +8187,19 @@ function renderAdminSubNav(key) {
                 // Save to DB
                 try {
                     const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
-                    if (key === 'announce') {
-                        // For announce, we always save the full list to announce_tabs
+                    if (key === 'announce' || key === 'facility') {
+                        // For announce/facility, we always save the full list to announce_tabs/facility_tabs
                         // But first ensure all items in list are normalized to objects if needed
                         const normalizedList = newList.map(i => {
-                             if (typeof i === 'string') return { key: i, label: i }; // Should handle mapping if we have defaults
-                             // Wait, if it's a string from default list, we need its original label?
-                             // Actually, currentList comes from snapshot which might be mix.
-                             // But renderButtons handles string vs object.
+                             if (typeof i === 'string') return { key: i, label: i }; 
                              return i;
                         });
                         
-                        await setDoc(doc(db, "communities", slug, "settings", "nav"), {
-                            announce_tabs: normalizedList
-                        }, { merge: true });
+                        const updateData = {};
+                        if (key === 'announce') updateData.announce_tabs = normalizedList;
+                        if (key === 'facility') updateData.facility_tabs = normalizedList;
+
+                        await setDoc(doc(db, "communities", slug, "settings", "nav"), updateData, { merge: true });
                     } else {
                         await setDoc(doc(db, "communities", slug, "settings", "nav"), {
                             [k]: finalLabel
@@ -7775,16 +8217,18 @@ function renderAdminSubNav(key) {
           addBtn.addEventListener("click", async () => {
               openRenameModal("", async (name) => {
                   if (name && name.trim()) {
-                      const newKey = "ann_" + Date.now();
+                      const newKey = (key === 'facility' ? "fac_" : "ann_") + Date.now();
                       const newItem = { key: newKey, label: name.trim() };
                       const newList = [...currentList, newItem];
                       
                       // Save
                       try {
                         const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
-                        await setDoc(doc(db, "communities", slug, "settings", "nav"), {
-                            announce_tabs: newList
-                        }, { merge: true });
+                        const updateData = {};
+                        if (key === 'announce') updateData.announce_tabs = newList;
+                        if (key === 'facility') updateData.facility_tabs = newList;
+                        
+                        await setDoc(doc(db, "communities", slug, "settings", "nav"), updateData, { merge: true });
                         
                         // Re-render
                         adminNav.subContainer.innerHTML = renderButtons(newList);
@@ -7845,8 +8289,8 @@ async function setActiveAdminNav(activeKey) {
   });
   localStorage.setItem("adminActiveMain", activeKey);
 
-  // Pre-fetch for announce to ensure instant correct render
-  if (activeKey === 'announce') {
+  // Pre-fetch for announce/facility to ensure instant correct render
+  if (activeKey === 'announce' || activeKey === 'facility') {
       try {
           const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
           if (slug !== "default" && auth.currentUser) {
@@ -7856,8 +8300,11 @@ async function setActiveAdminNav(activeKey) {
 
               if (snap.exists()) {
                   const data = snap.data();
-                  if (data.announce_tabs && Array.isArray(data.announce_tabs)) {
+                  if (activeKey === 'announce' && data.announce_tabs && Array.isArray(data.announce_tabs)) {
                       adminSubMenus[activeKey] = data.announce_tabs;
+                  }
+                  if (activeKey === 'facility' && data.facility_tabs && Array.isArray(data.facility_tabs)) {
+                      adminSubMenus[activeKey] = data.facility_tabs;
                   }
               }
           }
