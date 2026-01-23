@@ -5545,16 +5545,16 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
           const formHtml = `
             <div class="modal-dialog">
               <div class="modal-head">
-                 <div class="modal-title">預約設定 - ${navItem.label}</div>
+                 <div class="modal-title">設施預約設定 - ${navItem.label}</div>
               </div>
               <div class="modal-body">
                 <div class="field">
-                    <div class="field-head">預約名稱</div>
+                    <div class="field-head">設施預約名稱</div>
                     <div class="input-wrap"><input type="text" id="set-name" value="${navItem.label}"></div>
                 </div>
 
                 <div class="field">
-                    <div class="field-head">按鈕顏色</div>
+                    <div class="field-head">底線顏色</div>
                     <div class="input-wrap" style="display:flex; gap:10px;">
                         <input type="color" id="set-color-picker" value="${navItem.buttonColor}" style="height:44px; width:60px; padding:0; border:none; cursor:pointer;">
                         <input type="text" id="set-color-text" value="${navItem.buttonColor}" style="flex:1;">
@@ -5622,12 +5622,10 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
               const btnDelete = document.getElementById("set-delete");
               if(btnDelete) {
                   btnDelete.onclick = async () => {
-                      // Use openConfirmModal for custom UI confirmation
+                      // Use openConfirmModal for custom confirmation UI
                       openConfirmModal(`確定要刪除 "${navItem.label}" 嗎？此操作無法復原。`, async () => {
-                          // The modal has been closed/replaced by confirm modal.
-                          // We can proceed with deletion.
-                          // Note: btnDelete is no longer in DOM or valid if we needed to update it, 
-                          // but we are just running async logic here.
+                          btnDelete.disabled = true;
+                          btnDelete.textContent = "刪除中...";
                           
                           try {
                               // 1. Remove from Nav
@@ -5646,16 +5644,19 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                               await deleteDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
 
                               showHint("已刪除", "success");
-                              // No need to close modal as openConfirmModal closes itself.
+                              closeModal();
                               
-                              // Reload Page
-                              renderAdminContent('facility'); 
+                              // Reload Page or Switch Tab
+                              // Since we are in SPA, we should switch to another tab.
+                              // But we don't have easy access to switch tab from here without knowing the list.
+                              // Easiest is to reload admin facility view.
+                              // renderAdminContent('facility'); // Handled by onSnapshot in renderAdminSubNav 
 
                           } catch(e) {
                               console.error("Delete facility error", e);
                               showHint("刪除失敗", "error");
-                              // Since the original modal is gone, we can't easily reset the button state.
-                              // But showing an error hint is enough.
+                              btnDelete.disabled = false;
+                              btnDelete.textContent = "刪除此設施";
                           }
                       });
                   };
@@ -5676,6 +5677,7 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                       const newStatus = document.getElementById("set-status").value;
 
                       if(!newName) { alert("請輸入預約名稱"); return; }
+                      if(newName.length > 10) { alert("設施預約名稱不能超過 10 個字"); return; }
                       if(newUnit < 1 || newUnit > 24) { alert("時段單位需介於 1 至 24 小時"); return; }
                       
                       btnSave.textContent = "儲存中...";
@@ -5725,9 +5727,17 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                           showHint("設定已儲存", "success");
                           closeModal();
                           
-                          // Update UI
-                          const titleEl = document.querySelector(".card-title");
-                          if(titleEl) titleEl.innerHTML = `${newName} - 預約管理`;
+                          // Reload view to reflect changes (config & name)
+                          if (typeof renderAdminFacilityList === 'function') {
+                              renderAdminFacilityList(newName, facilityKey);
+                          } else {
+                              // Fallback if function not found/hoisted
+                              const titleEl = document.querySelector(".card-title");
+                              if(titleEl) titleEl.innerHTML = `${newName} - 預約管理`;
+                              // We can't easily update schedule without reloading
+                              // But reloading page is too drastic.
+                              // Assuming renderAdminFacilityList is available.
+                          }
                           
                       } catch(e) {
                           console.error("Save settings error", e);
@@ -5771,6 +5781,16 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         } catch {}
     }
 
+    let config = {};
+    try {
+        const configSnap = await getDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
+        if (configSnap.exists()) {
+            config = configSnap.data();
+        }
+    } catch (e) {
+        console.error("Failed to load facility config", e);
+    }
+
     let items = [];
     try {
         const ref = collection(db, "communities", slug, "reservations");
@@ -5809,13 +5829,14 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
           <div class="card data-card" style="height: calc(70vh - 24px); margin: 12px auto; display: flex; flex-direction: column; padding: 20px; overflow: hidden;">
             <div class="card-head">
               <div style="display:flex; align-items:center; gap:8px;">
-                 <h1 class="card-title" style="margin:0;">${displayTitle} - 預約管理</h1>
+                 <h1 class="card-title" style="margin:0;">${displayTitle} - 設施預約管理</h1>
                  <button id="btn-fac-settings" class="btn small icon-btn" title="設定" style="padding:4px; height:auto; background:transparent; border:none; color:#666; cursor:pointer;">
                     <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                  </button>
               </div>
               <div style="display:flex; gap:8px;">
-                 <button id="btn-create-res" class="btn small action-btn">新增預約</button>
+                 <button id="btn-preview-res" class="btn small action-btn" style="background:#fff; border:1px solid #ddd; color:#333;">預覽</button>
+                 <button id="btn-create-res" class="btn small action-btn">設施預約</button>
               </div>
             </div>
             
@@ -5903,6 +5924,79 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             });
         });
 
+        // Slot Buttons
+        document.querySelectorAll(".slot-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const resId = btn.dataset.resId;
+                if (resId) {
+                    const item = items.find(i => i.id === resId);
+                    openFacilityReservationModal(item, displayTitle, slug, facilityKey);
+                } else {
+                    const startTime = btn.dataset.start;
+                    const endTime = btn.dataset.end;
+                    openFacilityReservationModal({
+                        date: selectedDate,
+                        startTime: startTime,
+                        endTime: endTime
+                    }, displayTitle, slug, facilityKey, true);
+                }
+            });
+        });
+
+        // Preview Button
+        const btnPreview = document.getElementById("btn-preview-res");
+        if(btnPreview) {
+            btnPreview.addEventListener("click", () => {
+                // Use extensionless URL to avoid redirect stripping params
+                // Also add hash params as backup in case redirect strips query params
+                const params = `c=${slug}&cn=${encodeURIComponent(displayTitle)}`;
+                const url = `${window.location.origin}/preview-facility?${params}#${params}`;
+                
+                let modal = document.getElementById("sys-modal");
+                if (!modal) {
+                    modal = document.createElement("div");
+                    modal.id = "sys-modal";
+                    modal.className = "modal hidden";
+                    document.body.appendChild(modal);
+                }
+                if (modal.parentNode !== document.body) {
+                    document.body.appendChild(modal);
+                }
+                
+                modal.innerHTML = `
+                  <div class="modal-box" style="width:400px; max-width:90%; background:white; padding:20px; border-radius:8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); position:relative; z-index:10;">
+                    <h3 style="margin-top:0; margin-bottom:16px; font-size:18px; font-weight:600;">設施預覽</h3>
+                    <div style="margin-bottom:20px;">
+                        <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">預覽網址</label>
+                        <input type="text" value="${url}" readonly style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px; background:#f9fafb; font-size:14px;">
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; gap:12px;">
+                      <button id="preview-cancel" style="padding:8px 16px; background:#f3f4f6; border:none; border-radius:6px; cursor:pointer; font-weight:500;">取消</button>
+                      <button id="preview-go" style="padding:8px 16px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:500;">前往</button>
+                    </div>
+                  </div>
+                `;
+                
+                modal.style.zIndex = "999999";
+                modal.classList.remove("hidden");
+                
+                const close = () => {
+                     modal.classList.add("hidden");
+                     modal.innerHTML = "";
+                };
+
+                modal.querySelector("#preview-cancel").onclick = close;
+                modal.querySelector("#preview-go").onclick = () => {
+                    window.open(url, '_blank');
+                    close();
+                };
+                
+                modal.onclick = (e) => {
+                     if(e.target === modal) close();
+                };
+            });
+        }
+
         // Create Button
         const btnCreate = document.getElementById("btn-create-res");
         if(btnCreate) {
@@ -5977,19 +6071,61 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
     const generateScheduleHTML = () => {
         const dayItems = items.filter(i => i.date === selectedDate);
-        // Sort by start time asc
-        dayItems.sort((a,b) => (a.startTime || "").localeCompare(b.startTime || ""));
         
-        if(dayItems.length === 0) return `<div style="text-align:center; color:#999; padding:20px;">無預約</div>`;
+        const openTime = config.openTime || "06:00";
+        const closeTime = config.closeTime || "22:00";
+        const unit = parseInt(config.timeUnit || "1");
+
+        const slots = [];
+        let [startH, startM] = openTime.split(':').map(Number);
+        const [endH, endM] = closeTime.split(':').map(Number);
         
-        return dayItems.map(item => `
-            <div class="schedule-item">
-               <span class="schedule-status">${item.status || "已預約"}</span>
-               <span class="schedule-time">${item.startTime} - ${item.endTime}</span>
-               <div class="schedule-info">${item.bookerName || ""}</div>
-               ${item.note ? `<div style="color:#666; font-size:12px; margin-top:4px;">${item.note}</div>` : ""}
-            </div>
-        `).join("");
+        let currentH = startH;
+        let currentM = startM;
+
+        while (true) {
+            let nextH = currentH + unit;
+            let nextM = currentM;
+            
+            // Check if exceeds closeTime
+            if (nextH > endH || (nextH === endH && nextM > endM)) break;
+
+            const formatTime = (h, m) => `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+            const sTime = formatTime(currentH, currentM);
+            const eTime = formatTime(nextH, nextM);
+            
+            // Find reservation
+            const res = dayItems.find(i => i.startTime === sTime);
+            
+            slots.push({
+                sTime,
+                eTime,
+                res
+            });
+
+            currentH = nextH;
+            currentM = nextM;
+        }
+
+        if (slots.length === 0) return `<div style="text-align:center; color:#999; padding:20px;">無時段設定</div>`;
+
+        return slots.map(slot => {
+            const label = `${slot.sTime}~${slot.eTime}`;
+            const isReserved = !!slot.res;
+            
+            let style = "width:100%; margin-bottom:8px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:center;";
+            if (isReserved) {
+                style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb;";
+            } else {
+                style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd;";
+            }
+            
+            const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">(${slot.res.bookerName})</span>` : "";
+
+            return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? slot.res.id : ''}">
+                ${label}${info}
+            </button>`;
+        }).join("");
     };
 
     const generateTableHTML = () => {
@@ -8301,6 +8437,10 @@ function renderAdminSubNav(key) {
               if(activeBtn) {
                    const titleEl = document.querySelector(".row.B3 .card-title");
                    if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
+              } else if (currentList.length > 0) {
+                   // If active was deleted or invalid, switch to first
+                   const firstBtn = adminNav.subContainer.querySelector(".sub-nav-item");
+                   if(firstBtn) firstBtn.click();
               }
           }, (e) => {
               console.error(e);
@@ -8347,6 +8487,10 @@ function renderAdminSubNav(key) {
               if(activeBtn) {
                    const titleEl = document.querySelector(".row.B3 .card-title");
                    if(titleEl) titleEl.textContent = activeBtn.getAttribute("data-label");
+              } else if (currentList.length > 0) {
+                   // If active was deleted or invalid, switch to first
+                   const firstBtn = adminNav.subContainer.querySelector(".sub-nav-item");
+                   if(firstBtn) firstBtn.click();
               }
           }, (e) => {
               console.error(e);
