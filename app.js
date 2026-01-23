@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { initializeFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 function initGlobalLayout() {
   // Only apply to Community Admin (body has class "admin")
@@ -5493,6 +5493,260 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
 }
 
 
+function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
+  // Use global openModal for consistency
+  // Initial loading state
+  const loadingHtml = `
+    <div class="modal-dialog">
+       <div class="modal-body" style="min-height:200px; display:flex; align-items:center; justify-content:center;">
+          <div class="loader"></div>
+       </div>
+    </div>
+  `;
+  openModal(loadingHtml);
+
+  // Defaults
+  let config = {
+      openTime: "06:00",
+      closeTime: "22:00",
+      timeUnit: 1,
+      holidayOpen: true,
+      status: "open"
+  };
+  
+  let navItem = { label: currentTitle, buttonColor: "#ef4444" };
+
+  (async () => {
+      try {
+          // Fetch Nav Settings
+          const navSnap = await getDoc(doc(db, "communities", slug, "settings", "nav"));
+          if(navSnap.exists()) {
+              const data = navSnap.data();
+              if(data.facility_tabs) {
+                  const found = data.facility_tabs.find(t => (typeof t === 'string' ? t === facilityKey : t.key === facilityKey));
+                  if(found) {
+                      if(typeof found === 'object') {
+                          navItem.label = found.label;
+                          if(found.buttonColor) navItem.buttonColor = found.buttonColor;
+                      } else {
+                          navItem.label = found;
+                      }
+                  }
+              }
+          }
+
+          // Fetch Facility Config
+          const configSnap = await getDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
+          if(configSnap.exists()) {
+              config = { ...config, ...configSnap.data() };
+          }
+
+          // Render Form
+          const formHtml = `
+            <div class="modal-dialog">
+              <div class="modal-head">
+                 <div class="modal-title">預約設定 - ${navItem.label}</div>
+              </div>
+              <div class="modal-body">
+                <div class="field">
+                    <div class="field-head">預約名稱</div>
+                    <div class="input-wrap"><input type="text" id="set-name" value="${navItem.label}"></div>
+                </div>
+
+                <div class="field">
+                    <div class="field-head">按鈕顏色</div>
+                    <div class="input-wrap" style="display:flex; gap:10px;">
+                        <input type="color" id="set-color-picker" value="${navItem.buttonColor}" style="height:44px; width:60px; padding:0; border:none; cursor:pointer;">
+                        <input type="text" id="set-color-text" value="${navItem.buttonColor}" style="flex:1;">
+                    </div>
+                </div>
+
+                <div class="field">
+                    <div class="field-head">預約時段 (00:00 ~ 24:00)</div>
+                    <div class="input-wrap" style="display:flex; gap:10px; align-items:center;">
+                        <input type="time" id="set-open-time" value="${config.openTime}" style="flex:1;">
+                        <span>至</span>
+                        <input type="time" id="set-close-time" value="${config.closeTime}" style="flex:1;">
+                    </div>
+                </div>
+
+                <div class="field">
+                    <div class="field-head">時段單位 (小時)</div>
+                    <div class="input-wrap">
+                        <input type="number" id="set-time-unit" value="${config.timeUnit}" min="1" max="24">
+                        <div style="font-size:12px; color:#666; margin-top:4px;">最少 1 小時，最多 24 小時</div>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <div class="input-wrap" style="display:flex; align-items:center; gap:10px;">
+                       <input type="checkbox" id="set-holiday" ${config.holidayOpen ? 'checked' : ''} style="width:20px; height:20px;">
+                       <label for="set-holiday" style="font-weight:500;">假日開放</label>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <div class="field-head">狀態</div>
+                    <div class="input-wrap">
+                        <select id="set-status">
+                            <option value="open" ${config.status === 'open' ? 'selected' : ''}>開啟</option>
+                            <option value="closed" ${config.status === 'closed' ? 'selected' : ''}>關閉</option>
+                        </select>
+                    </div>
+                </div>
+              </div>
+              <div class="modal-foot" style="justify-content:space-between;">
+                <button id="set-delete" class="btn action-btn" style="background-color:#fee2e2; color:#b91c1c; border-color:#fee2e2;">刪除此設施</button>
+                <div style="display:flex; gap:10px;">
+                    <button id="set-cancel" class="btn action-btn">取消</button>
+                    <button id="set-save" class="btn action-btn primary">儲存設定</button>
+                </div>
+              </div>
+            </div>
+          `;
+          
+          // Update modal content
+          const modalRoot = document.getElementById("sys-modal");
+          if(modalRoot) {
+              modalRoot.innerHTML = formHtml;
+              
+              // Bind Events
+              const colorPicker = document.getElementById("set-color-picker");
+              const colorText = document.getElementById("set-color-text");
+              
+              if(colorPicker && colorText) {
+                  colorPicker.addEventListener("input", () => colorText.value = colorPicker.value);
+                  colorText.addEventListener("input", () => colorPicker.value = colorText.value);
+              }
+
+              const btnDelete = document.getElementById("set-delete");
+              if(btnDelete) {
+                  btnDelete.onclick = async () => {
+                      // Use openConfirmModal for custom UI confirmation
+                      openConfirmModal(`確定要刪除 "${navItem.label}" 嗎？此操作無法復原。`, async () => {
+                          // The modal has been closed/replaced by confirm modal.
+                          // We can proceed with deletion.
+                          // Note: btnDelete is no longer in DOM or valid if we needed to update it, 
+                          // but we are just running async logic here.
+                          
+                          try {
+                              // 1. Remove from Nav
+                              const navRef = doc(db, "communities", slug, "settings", "nav");
+                              const navSnap = await getDoc(navRef);
+                              if(navSnap.exists()) {
+                                  let tabs = navSnap.data().facility_tabs || [];
+                                  const newTabs = tabs.filter(t => {
+                                      const tKey = (typeof t === 'object') ? t.key : t;
+                                      return tKey !== facilityKey;
+                                  });
+                                  await updateDoc(navRef, { facility_tabs: newTabs });
+                              }
+
+                              // 2. Remove Config (Optional, but good for cleanup)
+                              await deleteDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
+
+                              showHint("已刪除", "success");
+                              // No need to close modal as openConfirmModal closes itself.
+                              
+                              // Reload Page
+                              renderAdminContent('facility'); 
+
+                          } catch(e) {
+                              console.error("Delete facility error", e);
+                              showHint("刪除失敗", "error");
+                              // Since the original modal is gone, we can't easily reset the button state.
+                              // But showing an error hint is enough.
+                          }
+                      });
+                  };
+              }
+
+              const btnCancel = document.getElementById("set-cancel");
+              if(btnCancel) btnCancel.onclick = closeModal;
+
+              const btnSave = document.getElementById("set-save");
+              if(btnSave) {
+                  btnSave.onclick = async () => {
+                      const newName = document.getElementById("set-name").value.trim();
+                      const newColor = document.getElementById("set-color-text").value.trim();
+                      const newOpen = document.getElementById("set-open-time").value;
+                      const newClose = document.getElementById("set-close-time").value;
+                      const newUnit = parseInt(document.getElementById("set-time-unit").value);
+                      const newHoliday = document.getElementById("set-holiday").checked;
+                      const newStatus = document.getElementById("set-status").value;
+
+                      if(!newName) { alert("請輸入預約名稱"); return; }
+                      if(newUnit < 1 || newUnit > 24) { alert("時段單位需介於 1 至 24 小時"); return; }
+                      
+                      btnSave.textContent = "儲存中...";
+                      btnSave.disabled = true;
+
+                      try {
+                          // 1. Update Nav (Name & Color)
+                          const navRef = doc(db, "communities", slug, "settings", "nav");
+                          const navSnap = await getDoc(navRef);
+                          if(navSnap.exists()) {
+                              let tabs = navSnap.data().facility_tabs || [];
+                              
+                              // Check for duplicates
+                              const isDuplicate = tabs.some(t => {
+                                  const tName = typeof t === 'string' ? t : t.label;
+                                  const tKey = typeof t === 'string' ? t : t.key;
+                                  return tKey !== facilityKey && tName === newName;
+                              });
+
+                              if(isDuplicate) {
+                                  alert("預約名稱已存在，請使用其他名稱");
+                                  btnSave.textContent = "儲存設定";
+                                  btnSave.disabled = false;
+                                  return;
+                              }
+
+                              const newTabs = tabs.map(t => {
+                                  const k = (typeof t === 'object') ? t.key : t;
+                                  if(k === facilityKey) {
+                                      return { key: facilityKey, label: newName, buttonColor: newColor };
+                                  }
+                                  return (typeof t === 'string') ? { key: t, label: t } : t;
+                              });
+                              await updateDoc(navRef, { facility_tabs: newTabs });
+                          }
+
+                          // 2. Update Config
+                          const configRef = doc(db, "communities", slug, "facility_configs", facilityKey);
+                          await setDoc(configRef, {
+                              openTime: newOpen,
+                              closeTime: newClose,
+                              timeUnit: newUnit,
+                              holidayOpen: newHoliday,
+                              status: newStatus
+                          }, { merge: true });
+
+                          showHint("設定已儲存", "success");
+                          closeModal();
+                          
+                          // Update UI
+                          const titleEl = document.querySelector(".card-title");
+                          if(titleEl) titleEl.innerHTML = `${newName} - 預約管理`;
+                          
+                      } catch(e) {
+                          console.error("Save settings error", e);
+                          showHint("儲存失敗", "error");
+                          btnSave.textContent = "儲存設定";
+                          btnSave.disabled = false;
+                      }
+                  };
+              }
+          }
+
+      } catch(e) {
+          console.error(e);
+          const modalRoot = document.getElementById("sys-modal");
+          if(modalRoot) modalRoot.innerHTML = `<div class="modal-dialog"><div class="modal-body">載入失敗: ${e.message}</div><div class="modal-foot"><button class="btn action-btn" onclick="closeModal()">關閉</button></div></div>`;
+      }
+  })();
+}
+
 async function renderAdminFacilityList(displayTitle, facilityKey) {
   if (!adminNav.content) return;
   
@@ -5554,7 +5808,12 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         adminNav.content.innerHTML = `
           <div class="card data-card" style="height: calc(70vh - 24px); margin: 12px auto; display: flex; flex-direction: column; padding: 20px; overflow: hidden;">
             <div class="card-head">
-              <h1 class="card-title">${displayTitle} - 預約管理</h1>
+              <div style="display:flex; align-items:center; gap:8px;">
+                 <h1 class="card-title" style="margin:0;">${displayTitle} - 預約管理</h1>
+                 <button id="btn-fac-settings" class="btn small icon-btn" title="設定" style="padding:4px; height:auto; background:transparent; border:none; color:#666; cursor:pointer;">
+                    <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                 </button>
+              </div>
               <div style="display:flex; gap:8px;">
                  <button id="btn-create-res" class="btn small action-btn">新增預約</button>
               </div>
@@ -5615,8 +5874,16 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         `;
 
         // Attach Event Listeners
-        
-        // Calendar Nav
+                
+                // Settings
+                const btnSettings = document.getElementById("btn-fac-settings");
+                if(btnSettings) {
+                    btnSettings.addEventListener("click", () => {
+                        openFacilitySettingsModal(facilityKey, displayTitle, slug);
+                    });
+                }
+
+                // Calendar Nav
         document.getElementById("cal-prev").addEventListener("click", () => {
             currentMonth--;
             if(currentMonth < 0) { currentMonth = 11; currentYear--; }
@@ -7958,10 +8225,17 @@ function renderAdminSubNav(key) {
         const isObj = typeof item === 'object';
         const label = isObj ? item.label : item;
         const itemKey = isObj ? item.key : item;
+        const buttonColor = (isObj && item.buttonColor) ? item.buttonColor : "";
         const titleAttr = ' title="雙擊可編輯名稱"';
         // Check if this tab is active
         const isActive = (localStorage.getItem("adminActiveSub") === itemKey) || (index === 0 && !localStorage.getItem("adminActiveSub"));
-        return `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}"${titleAttr}>${label}</button>`;
+        
+        let style = "";
+        if (buttonColor && isActive) {
+            style = `style="background-color: ${buttonColor} !important; color: #fff !important; border-color: ${buttonColor} !important;"`;
+        }
+
+        return `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}" ${style} ${titleAttr}>${label}</button>`;
       }).join("");
 
       if (key === 'announce' || key === 'facility') {
@@ -8091,10 +8365,30 @@ function renderAdminSubNav(key) {
         // Click to switch
         btn.addEventListener("click", () => {
           buttons.forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
+          // Remove inline styles from others if they were active-colored
+          // Re-rendering is safer but for now let's just update classes and styles manually or re-render?
+          // Re-rendering happens on click inside renderAdminSubNav? No, only on snapshot.
+          // To properly update colors, we might need to re-apply logic. 
+          // But wait, the click just changes 'active' class. The color logic is inside renderButtons.
+          // So if we just toggle class, the inline style for active color won't apply automatically if it was conditional.
+          // Actually, in renderButtons, we baked the style into the HTML string based on 'isActive'.
+          // So if we click, we need to re-render the buttons to update the styles correctly.
+          // But here we are just toggling classes.
+          
+          // Fix: Update localStorage and trigger re-render of subnav via state or just reload content?
+          // The onSnapshot listener will re-render if data changes, but click doesn't change data.
+          // We should just update localStorage and call renderAdminSubNav again? 
+          // Or just update the clicked button's style if it has a color.
+          
           const k = btn.getAttribute("data-key");
           const l = btn.getAttribute("data-label");
           localStorage.setItem("adminActiveSub", k); 
+          
+          // Re-render subnav to apply correct active styles
+          // We can call renderButtons again but we don't have the list here easily unless we scope it.
+          // Better: just reload the whole subnav for this key.
+          renderAdminSubNav(key);
+          
           renderAdminContent(key, k, l); 
         });
 
@@ -8157,6 +8451,18 @@ function renderAdminSubNav(key) {
                 if(!newLabel || newLabel.trim() === "") return;
                 const finalLabel = newLabel.trim();
                 
+                // Check for duplicates
+                const isDuplicate = currentList.some(item => {
+                    const iName = typeof item === 'object' ? item.label : item;
+                    const iKey = typeof item === 'object' ? item.key : item;
+                    if (iKey === k) return false;
+                    return iName === finalLabel;
+                });
+                if (isDuplicate) {
+                    alert("預約名稱已存在，請使用其他名稱");
+                    return;
+                }
+
                 // Update local list
                 const newList = currentList.map(item => {
                     if (typeof item === 'object' && item.key === k) {
@@ -8217,8 +8523,20 @@ function renderAdminSubNav(key) {
           addBtn.addEventListener("click", async () => {
               openRenameModal("", async (name) => {
                   if (name && name.trim()) {
+                      const finalName = name.trim();
+
+                      // Check for duplicates
+                      const isDuplicate = currentList.some(item => {
+                          const iName = typeof item === 'object' ? item.label : item;
+                          return iName === finalName;
+                      });
+                      if (isDuplicate) {
+                          alert("預約名稱已存在，請使用其他名稱");
+                          return;
+                      }
+
                       const newKey = (key === 'facility' ? "fac_" : "ann_") + Date.now();
-                      const newItem = { key: newKey, label: name.trim() };
+                      const newItem = { key: newKey, label: finalName };
                       const newList = [...currentList, newItem];
                       
                       // Save
