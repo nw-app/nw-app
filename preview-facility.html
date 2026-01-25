@@ -92,52 +92,52 @@
 
       // Handle Auth State
       onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            // Already logged in (or just signed in anonymously)
-            loadData();
-        } else {
-            // Not logged in, try anonymous auth
-            // This will trigger onAuthStateChanged again on success
+        if (!user) {
             try {
                 await signInAnonymously(auth);
             } catch (e) {
-                console.warn("Anonymous auth failed, trying to continue anyway...", e);
-                // If auth fails, try loading anyway (maybe public read)
-                loadData();
+                console.warn("Anonymous auth failed", e);
             }
         }
+        
+        loadData();
       });
     }
 
     async function loadData() {
       try {
-        // Parallel fetch: Community Info & Settings
-        const commRef = doc(db, "communities", slug);
-        const navRef = doc(db, "communities", slug, "settings", "nav");
+        let commName = cnParam || "";
         
-        const [commSnap, navSnap] = await Promise.all([
-            getDoc(commRef),
-            getDoc(navRef)
-        ]);
-
-        // 1. Set Title (if not set by cn param or to confirm)
-        let commName = cnParam || ""; 
-        if (commSnap.exists()) {
-            const data = commSnap.data();
-            if (data.name) commName = data.name;
+        // 1. Fetch Community Name (Only if not provided in URL)
+        if (!commName) {
+            try {
+                const commSnap = await getDoc(doc(db, "communities", slug));
+                if (commSnap.exists()) {
+                    commName = commSnap.data().name || "";
+                }
+            } catch (e) {
+                console.warn("Fetch community name failed", e);
+            }
         }
         
         updateHeader(commName);
-        
-        // 2. Render Facilities
-        if (navSnap.exists()) {
-          const data = navSnap.data();
-          const facilities = data.facility_tabs || [{ key: 'gym', label: '健身房' }];
-          
-          renderFacilities(facilities);
-        } else {
-           // Default fallback
-           renderFacilities([{ key: 'gym', label: '健身房' }]);
+
+        // 2. Fetch Facility Settings
+        // Use try-catch for the main data to handle permissions gracefully
+        try {
+            const navRef = doc(db, "communities", slug, "settings", "nav");
+            const navSnap = await getDoc(navRef);
+            
+            if (navSnap.exists()) {
+              const data = navSnap.data();
+              const facilities = data.facility_tabs || [{ key: 'gym', label: '健身房' }];
+              renderFacilities(facilities);
+            } else {
+               // Default fallback if settings doc doesn't exist
+               renderFacilities([{ key: 'gym', label: '健身房' }]);
+            }
+        } catch (e) {
+            throw e; // Re-throw to be caught by outer catch
         }
 
       } catch (e) {
