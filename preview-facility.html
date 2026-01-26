@@ -92,15 +92,21 @@
 
       // Handle Auth State
       onAuthStateChanged(auth, async (user) => {
-        if (!user) {
+        if (user) {
+            // User is signed in, load data
+            loadData();
+        } else {
+            // User is not signed in, try to sign in
             try {
                 await signInAnonymously(auth);
+                // If successful, onAuthStateChanged will fire again with the user.
+                // We don't call loadData() here to avoid duplicate calls or race conditions.
             } catch (e) {
                 console.warn("Anonymous auth failed", e);
+                // If auth fails, we try to load data anyway (it will likely fail, but we show the error)
+                loadData();
             }
         }
-        
-        loadData();
       });
     }
 

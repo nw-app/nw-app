@@ -5970,6 +5970,9 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                         <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">預覽網址</label>
                         <input type="text" value="${url}" readonly style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px; background:#f9fafb; font-size:14px;">
                     </div>
+                    <div style="margin-bottom:20px; border:1px solid #ddd; border-radius:4px; height:300px; overflow:hidden;">
+                        <iframe src="${url}" style="width:100%; height:100%; border:none;"></iframe>
+                    </div>
                     <div style="display:flex; justify-content:flex-end; gap:12px;">
                       <button id="preview-cancel" style="padding:8px 16px; background:#f3f4f6; border:none; border-radius:6px; cursor:pointer; font-weight:500;">取消</button>
                       <button id="preview-go" style="padding:8px 16px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:500;">前往</button>
