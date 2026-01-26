@@ -4347,16 +4347,48 @@ if (sysNav.subContainer) {
       `;
     }
     else if (sub === '按鈕') {
-      let data = { a6: [], a8: [] };
+      let defaultData = { a6: [], a8: [] };
+      let specificData = null;
+
       try {
-        const targetSlug = current === 'all' ? 'default' : current;
-        const snap = await getDoc(doc(db, `communities/${targetSlug}/app_modules/buttons`));
-        if (snap.exists()) {
-          const d = snap.data();
-          data.a6 = Array.isArray(d.a6) ? d.a6 : [];
-          data.a8 = Array.isArray(d.a8) ? d.a8 : [];
+        // Always fetch default (all) data
+        const defaultSnap = await getDoc(doc(db, "communities/default/app_modules/buttons"));
+        if (defaultSnap.exists()) {
+          const d = defaultSnap.data();
+          defaultData.a6 = Array.isArray(d.a6) ? d.a6 : [];
+          defaultData.a8 = Array.isArray(d.a8) ? d.a8 : [];
         }
-      } catch {}
+        
+        // If specific community, fetch its data
+        if (current !== 'all') {
+             const specificSnap = await getDoc(doc(db, `communities/${current}/app_modules/buttons`));
+             if (specificSnap.exists()) {
+                 const d = specificSnap.data();
+                 specificData = {
+                     a6: Array.isArray(d.a6) ? d.a6 : [],
+                     a8: Array.isArray(d.a8) ? d.a8 : []
+                 };
+             }
+        }
+      } catch (e) { console.error("Fetch buttons failed", e); }
+
+      const getMergedItems = (defItems, specItems) => {
+          const merged = [];
+          for (let i = 1; i <= 8; i++) {
+              const def = defItems.find(x => x.idx === i);
+              const spec = specItems ? specItems.find(x => x.idx === i) : null;
+              if (spec) {
+                  merged.push(spec);
+              } else if (def) {
+                  merged.push(def);
+              }
+          }
+          return merged;
+      };
+
+      const finalA6 = current === 'all' ? defaultData.a6 : getMergedItems(defaultData.a6, specificData ? specificData.a6 : null);
+      const finalA8 = current === 'all' ? defaultData.a8 : getMergedItems(defaultData.a8, specificData ? specificData.a8 : null);
+
       const buildRows = (items, section) => {
         const rows = [];
         for (let i = 1; i <= 8; i++) {
@@ -4383,8 +4415,8 @@ if (sysNav.subContainer) {
         }
         return rows.join("");
       };
-      const a6Rows = buildRows(data.a6, "a6");
-      const a8Rows = buildRows(data.a8, "a8");
+      const a6Rows = buildRows(finalA6, "a6");
+      const a8Rows = buildRows(finalA8, "a8");
       contentHtml = `
         <div class="card data-card">
           <div class="card-head">
