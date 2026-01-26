@@ -7,7 +7,7 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 0; color: #1f2937; height: 100vh; display: flex; flex-direction: column; }
     .container { max-width: 600px; margin: 0 auto; background: #fff; height: 100%; width: 100%; display: flex; flex-direction: column; }
-    .header { background: #fff; padding: 16px; flex-shrink: 0; z-index: 10; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .header { background: #e5e7eb; padding: 16px; flex-shrink: 0; z-index: 10; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
     .header-title { font-size: 18px; font-weight: 600; color: #111; text-align: center; }
     .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 20px; }
     
@@ -85,8 +85,8 @@
         return;
       }
       
-      // Early render if cn param exists
-      if (cnParam) {
+      // Early render if cn param exists and is not "健身房" (legacy/bug fix)
+      if (cnParam && cnParam !== "健身房") {
           updateHeader(cnParam);
       }
 
@@ -113,6 +113,8 @@
     async function loadData() {
       try {
         let commName = cnParam || "";
+        // If passed name is "健身房", ignore it and force fetch
+        if (commName === "健身房") commName = "";
         
         // 1. Fetch Community Name (Only if not provided in URL)
         if (!commName) {

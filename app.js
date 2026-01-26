@@ -159,14 +159,33 @@ function getSlugFromPath() {
 
 async function ensureQrLib() {
   if (window.QRCode && window.QRCode.toDataURL) return;
-  if (window._qrLibLoading) return window._qrLibLoading;
+  if (window._qrLibLoading) {
+    await window._qrLibLoading;
+    if (window.QRCode && window.QRCode.toDataURL) return;
+    window._qrLibLoading = null; // Retry if failed
+  }
+  
+  const sources = [
+    'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js',
+    'https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.3/qrcode.min.js'
+  ];
+
   window._qrLibLoading = new Promise((resolve) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
-    s.onload = () => resolve();
-    s.onerror = () => resolve();
-    document.head.appendChild(s);
+    let idx = 0;
+    const tryLoad = () => {
+      if (window.QRCode && window.QRCode.toDataURL) return resolve();
+      if (idx >= sources.length) return resolve(); // All failed
+      
+      const s = document.createElement('script');
+      s.src = sources[idx++];
+      s.onload = () => resolve();
+      s.onerror = () => tryLoad(); // Try next source
+      document.head.appendChild(s);
+    };
+    tryLoad();
   });
+  
   await window._qrLibLoading;
 }
 
@@ -203,10 +222,12 @@ async function getQrDataUrl(text, size) {
     if (window.QRCode && window.QRCode.toDataURL) {
       return await window.QRCode.toDataURL(text, { width: size || 64, margin: 0 });
     }
-  } catch {}
-  const safe = (text || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]));
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size||64}' height='${size||64}'><rect width='100%' height='100%' fill='#ffffff'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='#111'>${safe}</text></svg>`;
-  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    console.warn("QR Lib not loaded, using fallback API.");
+  } catch (e) {
+    console.error("QR Gen Error:", e);
+  }
+  // Fallback to online API
+  return `https://api.qrserver.com/v1/create-qr-code/?size=${size||150}x${size||150}&data=${encodeURIComponent(text)}`;
 }
 function checkPagePermission(role, path) {
   const p = path || window.location.pathname;
@@ -338,13 +359,15 @@ function closeModal() {
 window.closeModal = closeModal;
 async function openUserProfileModal() {
   const u = auth.currentUser;
-  const title = "個人資訊";
   const email = (u && u.email) || "";
   let name = (u && u.displayName) || "";
   let photo = (u && u.photoURL) || "";
   let phone = "";
   let status = "啟用";
   let role = "住戶";
+  let qrCodeText = "";
+  let houseNo = "";
+  let subNo = "";
   if (u) {
     try {
       const snap = await getDoc(doc(db, "users", u.uid));
@@ -355,37 +378,33 @@ async function openUserProfileModal() {
         phone = d.phone || "";
         status = d.status || status;
         role = d.role || role;
+        qrCodeText = d.qrCodeText || "";
+        houseNo = d.houseNo || "";
+        subNo = d.subNo !== undefined ? d.subNo : "";
       }
     } catch {}
   }
+  
+  let qrCodeUrl = "";
+  if (qrCodeText) {
+    qrCodeUrl = await getQrDataUrl(qrCodeText, 150);
+  }
+
+  const title = `個人資訊-${role} ${name}`;
+  const houseInfo = (houseNo || subNo) ? `<div style="font-size: 18px; font-weight: 600; color: #333; margin-bottom: 8px;">${houseNo} - ${subNo}</div>` : '';
+
   const body = `
     <div class="modal-dialog">
       <div class="modal-head"><div class="modal-title">${title}</div></div>
-      <div class="modal-body">
-        <div class="modal-row">
-          <label>大頭照</label>
-          <img class="avatar-preview" src="${photo || ""}">
-        </div>
-        <div class="modal-row">
-          <label>姓名</label>
-          <input type="text" value="${name || ""}" disabled>
-        </div>
-        <div class="modal-row">
-          <label>電子郵件</label>
-          <input type="text" value="${email}" disabled>
-        </div>
-        <div class="modal-row">
-          <label>手機號碼</label>
-          <input type="text" value="${phone}" disabled>
-        </div>
-        <div class="modal-row">
-          <label>角色</label>
-          <input type="text" value="${role}" disabled>
-        </div>
-        <div class="modal-row">
-          <label>狀態</label>
-          <input type="text" value="${status}" disabled>
-        </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; gap: 20px;">
+        ${houseInfo}
+        <img class="avatar-preview" src="${photo || ""}" style="width: 120px; height: 120px;">
+        ${qrCodeUrl ? `
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                <img src="${qrCodeUrl}" style="width: 150px; height: 150px;">
+                <div style="font-size: 16px; color: #333; font-weight: 500;">${qrCodeText}</div>
+            </div>
+        ` : ''}
       </div>
       <div class="modal-foot">
         <button id="profile-close" class="btn action-btn danger">關閉</button>
@@ -5242,6 +5261,16 @@ async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) 
         } catch {}
     }
 
+    let communityName = "";
+    try {
+        const commDoc = await getDoc(doc(db, "communities", slug));
+        if (commDoc.exists()) {
+            communityName = commDoc.data().name;
+        }
+    } catch (e) {
+        console.error("Failed to fetch community name", e);
+    }
+
     let items = [];
     try {
         const ref = collection(db, "communities", slug, "announcements");
@@ -5994,6 +6023,16 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         } catch {}
     }
 
+    let communityName = "";
+    try {
+        const commDoc = await getDoc(doc(db, "communities", slug));
+        if (commDoc.exists()) {
+            communityName = commDoc.data().name;
+        }
+    } catch (e) {
+        console.error("Failed to fetch community name", e);
+    }
+
     let config = {};
     try {
         const configSnap = await getDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
@@ -6143,15 +6182,145 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 const resId = btn.dataset.resId;
                 if (resId) {
                     const item = items.find(i => i.id === resId);
-                    openFacilityReservationModal(item, displayTitle, slug, facilityKey);
+                    
+                    // Show Action Modal for Existing Reservation
+                    const modalId = "res-action-modal";
+                    let modal = document.getElementById(modalId);
+                    if (!modal) {
+                        modal = document.createElement("div");
+                        modal.id = modalId;
+                        modal.className = "modal hidden";
+                        document.body.appendChild(modal);
+                    }
+                    if (modal.parentNode !== document.body) document.body.appendChild(modal);
+
+                    const isPaused = item.bookerName === "暫停";
+                    
+                    // Button logic:
+                    // If Paused: Only show "Cancel Suspension" (btn-res-cancel)
+                    // If Booked: Only show "Cancel Reservation" (btn-res-cancel)
+                    // No "Suspend" button in either case as per latest request.
+
+                    const cancelBtnText = isPaused ? "取消暫停" : "取消預約";
+                    
+                    modal.innerHTML = `
+                      <div class="modal-box" style="width:300px; padding:24px; text-align:center; background:white; border-radius:12px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.1); position:relative; z-index:10;">
+                        <h3 style="margin-top:0; margin-bottom:20px; font-size:18px; color:#111;">${isPaused ? '暫停詳情' : '預約詳情'}</h3>
+                        <div style="margin-bottom:24px; text-align:left; font-size:15px; line-height:1.6; color:#374151; background:#f9fafb; padding:12px; border-radius:8px;">
+                            <div><strong>日期：</strong>${item.date}</div>
+                            <div><strong>時段：</strong>${item.startTime} ~ ${item.endTime}</div>
+                            ${ !isPaused ? `<div><strong>預約人：</strong>${item.bookerName}</div>` : '' }
+                            ${ isPaused ? `<div><strong>狀態：</strong>暫停開放</div>` : '' }
+                        </div>
+                        <div style="display:flex; gap:12px; justify-content:center;">
+                           <button id="btn-res-cancel" style="flex:1; padding:12px; background:#ef4444; border:none; border-radius:8px; cursor:pointer; font-weight:600; color:white; transition:all 0.2s;">${cancelBtnText}</button>
+                        </div>
+                        <div style="margin-top:16px;">
+                            <button id="btn-res-close" style="background:none; border:none; color:#999; cursor:pointer; font-size:14px;">關閉</button>
+                        </div>
+                      </div>
+                    `;
+                    
+                    modal.style.zIndex = "999999";
+                    modal.classList.remove("hidden");
+                    
+                    const close = () => {
+                        modal.classList.add("hidden");
+                        modal.innerHTML = "";
+                    };
+                    
+                    modal.querySelector("#btn-res-close").onclick = close;
+                    modal.onclick = (e) => { if(e.target === modal) close(); };
+                    
+                    // Cancel Action (Handles both "Cancel Reservation" and "Cancel Suspension")
+                    modal.querySelector("#btn-res-cancel").onclick = async () => {
+                        close();
+                        // If not paused (regular reservation), ask for confirmation.
+                        // If paused (canceling suspension), do it directly without confirmation.
+                        if (!isPaused) {
+                            if(!confirm("確定要取消此預約嗎？")) return;
+                        }
+                        
+                        try {
+                            await deleteDoc(doc(db, "communities", slug, "reservations", resId));
+                            renderAdminFacilityList(displayTitle, facilityKey);
+                        } catch(e) {
+                            console.error(e);
+                            alert("操作失敗: " + e.message);
+                        }
+                    };
                 } else {
                     const startTime = btn.dataset.start;
                     const endTime = btn.dataset.end;
-                    openFacilityReservationModal({
-                        date: selectedDate,
-                        startTime: startTime,
-                        endTime: endTime
-                    }, displayTitle, slug, facilityKey, true);
+                    
+                    // Show Choice Modal (Suspend vs Reserve)
+                    const modalId = "slot-action-modal";
+                    let modal = document.getElementById(modalId);
+                    if (!modal) {
+                        modal = document.createElement("div");
+                        modal.id = modalId;
+                        modal.className = "modal hidden";
+                        document.body.appendChild(modal);
+                    }
+                    if (modal.parentNode !== document.body) document.body.appendChild(modal);
+                    
+                    modal.innerHTML = `
+                      <div class="modal-box" style="width:300px; padding:24px; text-align:center; background:white; border-radius:12px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.1); position:relative; z-index:10;">
+                        <h3 style="margin-top:0; margin-bottom:24px; font-size:18px; color:#111;">請選擇操作</h3>
+                        <div style="display:flex; gap:12px; justify-content:center;">
+                           <button id="btn-slot-suspend" style="flex:1; padding:12px; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:8px; cursor:pointer; font-weight:600; color:#4b5563; transition:all 0.2s;">暫停</button>
+                           <button id="btn-slot-reserve" style="flex:1; padding:12px; background:#3b82f6; border:none; border-radius:8px; cursor:pointer; font-weight:600; color:white; transition:all 0.2s;">預約</button>
+                        </div>
+                        <div style="margin-top:16px;">
+                            <button id="btn-slot-cancel" style="background:none; border:none; color:#999; cursor:pointer; font-size:14px;">取消</button>
+                        </div>
+                      </div>
+                    `;
+                    
+                    modal.style.zIndex = "999999";
+                    modal.classList.remove("hidden");
+                    
+                    const close = () => {
+                        modal.classList.add("hidden");
+                        modal.innerHTML = "";
+                    };
+                    
+                    modal.querySelector("#btn-slot-cancel").onclick = close;
+                    modal.onclick = (e) => { if(e.target === modal) close(); };
+                    
+                    // Reserve Action
+                    modal.querySelector("#btn-slot-reserve").onclick = () => {
+                        close();
+                        openFacilityReservationModal({
+                            date: selectedDate,
+                            startTime: startTime,
+                            endTime: endTime
+                        }, displayTitle, slug, facilityKey, true, config);
+                    };
+                    
+                    // Suspend Action
+                    modal.querySelector("#btn-slot-suspend").onclick = async () => {
+                        close();
+                        // if(!confirm("確定要暫停此時段嗎？")) return; // User flow suggests direct action or minimal friction
+                        try {
+                             const data = {
+                                facility: facilityKey,
+                                date: selectedDate,
+                                startTime: startTime,
+                                endTime: endTime,
+                                bookerName: "暫停",
+                                status: "已預約",
+                                note: "管理員暫停開放",
+                                createdAt: Date.now(),
+                                updatedAt: Date.now()
+                            };
+                            await addDoc(collection(db, "communities", slug, "reservations"), data);
+                            renderAdminFacilityList(displayTitle, facilityKey);
+                        } catch(e) {
+                            console.error(e);
+                            alert("操作失敗: " + e.message);
+                        }
+                    };
                 }
             });
         });
@@ -6162,7 +6331,9 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             btnPreview.addEventListener("click", () => {
                 // Use extensionless URL to avoid redirect stripping params
                 // Also add hash params as backup in case redirect strips query params
-                const params = `c=${slug}&cn=${encodeURIComponent(displayTitle)}`;
+                // Only pass communityName if it exists, otherwise let preview page fetch it. Avoid passing "健身房".
+                const nameToPass = (communityName === "健身房") ? "" : communityName;
+                const params = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
                 const url = `${window.location.origin}/preview-facility?${params}#${params}`;
                 
                 let modal = document.getElementById("sys-modal");
@@ -6218,7 +6389,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         if(btnCreate) {
             btnCreate.addEventListener("click", () => {
                 // Pass selectedDate as default
-                openFacilityReservationModal({date: selectedDate}, displayTitle, slug, facilityKey, true);
+                openFacilityReservationModal({date: selectedDate}, displayTitle, slug, facilityKey, true, config);
             });
         }
 
@@ -6227,7 +6398,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             btn.addEventListener("click", () => {
                 const id = btn.closest("tr").getAttribute("data-id");
                 const item = items.find(i => i.id === id);
-                openFacilityReservationModal(item, displayTitle, slug, facilityKey);
+                openFacilityReservationModal(item, displayTitle, slug, facilityKey, false, config);
             });
         });
 
@@ -6329,9 +6500,13 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const label = `${slot.sTime}~${slot.eTime}`;
             const isReserved = !!slot.res;
             
-            let style = "width:100%; margin-bottom:8px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:center;";
+            let style = "width:100%; margin-bottom:8px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:left;";
             if (isReserved) {
-                style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb;";
+                if (slot.res.bookerName === "暫停") {
+                    style += "background-color: #4b5563; color: white; border: 1px solid #374151;";
+                } else {
+                    style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb;";
+                }
             } else {
                 style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd;";
             }
@@ -6345,28 +6520,30 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
     };
 
     const generateTableHTML = () => {
-        // Show all items
-        return items.map(item => {
-            return `
-                <tr data-id="${item.id}" style="${item.date === selectedDate ? 'background:#f0f9ff;' : ''}">
-                    <td>${item.date}</td>
-                    <td>${item.startTime} - ${item.endTime}</td>
-                    <td>${item.bookerName || ""}</td>
-                    <td>${item.status || "已預約"}</td>
-                    <td class="actions">
-                        <button class="btn small action-btn btn-edit-res">編輯</button>
-                        <button class="btn small action-btn danger btn-delete-res">刪除</button>
-                    </td>
-                </tr>
-            `;
-        }).join("");
+        // Show all items, but exclude "paused" items (bookerName === "暫停")
+        return items
+            .filter(item => item.bookerName !== "暫停")
+            .map(item => {
+                return `
+                    <tr data-id="${item.id}" style="${item.date === selectedDate ? 'background:#f0f9ff;' : ''}">
+                        <td>${item.date}</td>
+                        <td>${item.startTime} - ${item.endTime}</td>
+                        <td>${item.bookerName || ""}</td>
+                        <td>${item.status || "已預約"}</td>
+                        <td class="actions">
+                            <button class="btn small action-btn btn-edit-res">編輯</button>
+                            <button class="btn small action-btn danger btn-delete-res">刪除</button>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
     };
 
     renderUI();
   });
 }
 
-function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isNewWithDate = false) {
+function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isNewWithDate = false, config = {}) {
     // isNewWithDate: item contains {date: "YYYY-MM-DD"} but is not a DB item
     const isEdit = !!(item && item.id);
     const title = isEdit ? `編輯預約` : `新增預約`;
@@ -6379,6 +6556,8 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
         const d = new Date();
         defaultDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
+
+    const cost = config.pointCost || 0;
 
     const body = `
       <div class="modal-dialog">
@@ -6400,8 +6579,28 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
            </div>
            <label class="field">
              <div class="field-head">預約人</div>
-             <div class="input-wrap"><input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入住戶姓名或房號"></div>
+             <div class="input-wrap" style="display: flex; gap: 8px;">
+               <input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入住戶姓名或房號" style="flex: 1;">
+               <button type="button" class="btn small action-btn" id="btn-scan-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center;" title="掃碼輸入">
+                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                   <rect x="3" y="3" width="7" height="7"></rect>
+                   <rect x="14" y="3" width="7" height="7"></rect>
+                   <rect x="14" y="14" width="7" height="7"></rect>
+                   <rect x="3" y="14" width="7" height="7"></rect>
+                 </svg>
+               </button>
+             </div>
            </label>
+           <div style="display:flex; gap:10px;">
+               <label class="field" style="flex:1;">
+                 <div class="field-head">該住戶點數</div>
+                 <div class="input-wrap"><input type="number" id="res-points" value="" readonly style="background:#f5f5f5; color:#666;"></div>
+               </label>
+               <label class="field" style="flex:1;">
+                 <div class="field-head">此設備須扣點數</div>
+                 <div class="input-wrap"><input type="number" id="res-cost" value="${cost}" readonly style="background:#f5f5f5; color:#666;"></div>
+               </label>
+           </div>
            <label class="field">
              <div class="field-head">狀態</div>
              <div class="input-wrap">
@@ -6425,8 +6624,82 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
     `;
     openModal(body);
 
+    // Fetch points logic
+    const fetchPoints = async (queryStr) => {
+        if(!queryStr) return;
+        const ptsInput = document.getElementById("res-points");
+        ptsInput.placeholder = "查詢中...";
+        try {
+            // Try to find user by exact match on name, or partial?
+            // Or houseNo?
+            // For now, let's query 'users' where 'displayName' == queryStr
+            // or 'qrCodeText' == queryStr
+            // or 'houseNo' == queryStr
+            
+            // Note: Firestore doesn't support OR across different fields easily without multiple queries.
+            // We'll try QR first, then Name.
+            
+            let userDoc = null;
+            
+            // 1. Try QR Code
+            const qQr = query(collection(db, "users"), where("qrCodeText", "==", queryStr), limit(1));
+            const snapQr = await getDocs(qQr);
+            if (!snapQr.empty) {
+                userDoc = snapQr.docs[0];
+            } else {
+                // 2. Try Display Name
+                const qName = query(collection(db, "users"), where("displayName", "==", queryStr), where("community", "==", slug), limit(1));
+                const snapName = await getDocs(qName);
+                if (!snapName.empty) {
+                    userDoc = snapName.docs[0];
+                } else {
+                     // 3. Try Real Name? (If field exists)
+                     // 4. Try HouseNo?
+                     // Let's stick to Name/QR for now as per prompt "輸入住戶姓名"
+                }
+            }
+            
+            if (userDoc) {
+                const uData = userDoc.data();
+                ptsInput.value = uData.points || 0;
+                // Also auto-correct the name if it was a QR scan
+                document.getElementById("res-booker").value = uData.displayName || uData.realName || queryStr;
+            } else {
+                ptsInput.value = "";
+                ptsInput.placeholder = "查無此人";
+            }
+        } catch(e) {
+            console.error("Fetch points failed", e);
+            ptsInput.placeholder = "查詢失敗";
+        }
+    };
+
     setTimeout(() => {
         const btnSave = document.getElementById("btn-save-res");
+        const inpBooker = document.getElementById("res-booker");
+        const btnScan = document.getElementById("btn-scan-qr");
+        
+        if (inpBooker) {
+            inpBooker.addEventListener("blur", () => {
+                fetchPoints(inpBooker.value.trim());
+            });
+            // Also fetch immediately if editing and value exists
+            if (inpBooker.value) {
+                fetchPoints(inpBooker.value.trim());
+            }
+        }
+        
+        if (btnScan) {
+            btnScan.addEventListener("click", () => {
+                // Simulate Scan
+                const code = prompt("請掃描 QR Code (或手動輸入代碼):");
+                if (code) {
+                    inpBooker.value = code;
+                    fetchPoints(code);
+                }
+            });
+        }
+        
         if(btnSave) {
             btnSave.addEventListener("click", async () => {
                 const dateVal = document.getElementById("res-date").value;
@@ -6442,6 +6715,43 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                 }
 
                 btnSave.disabled = true;
+                btnSave.textContent = "檢查中...";
+
+                // Check for overlaps
+                try {
+                    const q = query(
+                        collection(db, "communities", slug, "reservations"),
+                        where("facility", "==", facilityKey),
+                        where("date", "==", dateVal),
+                        where("status", "!=", "已取消")
+                    );
+                    const querySnapshot = await getDocs(q);
+                    let hasOverlap = false;
+                    let overlapBooker = "";
+                    querySnapshot.forEach((doc) => {
+                         if (isEdit && doc.id === item.id) return; // Skip self
+                         const d = doc.data();
+                         // Overlap if (NewStart < ExistingEnd) and (NewEnd > ExistingStart)
+                         if (startVal < d.endTime && endVal > d.startTime) {
+                             hasOverlap = true;
+                             overlapBooker = d.bookerName;
+                         }
+                    });
+
+                    if (hasOverlap) {
+                        alert(`此時段已被 "${overlapBooker}" 預約，不可重複預約！`);
+                        btnSave.disabled = false;
+                        btnSave.textContent = "儲存";
+                        return;
+                    }
+                } catch (e) {
+                    console.error("Check overlap failed", e);
+                    alert("檢查預約衝突失敗: " + e.message);
+                    btnSave.disabled = false;
+                    btnSave.textContent = "儲存";
+                    return;
+                }
+
                 btnSave.textContent = "儲存中...";
 
                 try {
@@ -8728,9 +9038,115 @@ function renderAdminSubNav(key) {
       const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item:not(.add-btn)");
       const addBtn = adminNav.subContainer.querySelector(".add-btn");
 
+      // Helper: Reorder Logic
+      const handleReorder = async (index, direction) => {
+          if (index + direction < 0 || index + direction >= currentList.length) return;
+          
+          // Swap
+          const newList = [...currentList];
+          const temp = newList[index];
+          newList[index] = newList[index + direction];
+          newList[index + direction] = temp;
+          
+          try {
+              const slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+              const updateData = {};
+              
+              // Normalize
+              const normalizedList = newList.map(i => {
+                   if (typeof i === 'string') return { key: i, label: i }; 
+                   return i;
+              });
+
+              if (key === 'announce') updateData.announce_tabs = normalizedList;
+              if (key === 'facility') updateData.facility_tabs = normalizedList;
+
+              await setDoc(doc(db, "communities", slug, "settings", "nav"), updateData, { merge: true });
+          } catch(e) {
+              console.error("Reorder failed", e);
+              alert("排序失敗: " + e.message);
+          }
+      };
+
+      // Helper: Show Reorder Modal
+      const openReorderModal = (index) => {
+          const item = currentList[index];
+          const label = typeof item === 'object' ? item.label : item;
+          
+          const modalHtml = `
+            <div class="modal-dialog">
+              <div class="modal-head">
+                <div class="modal-title">調整順序 - ${label}</div>
+              </div>
+              <div class="modal-body" style="text-align: center; padding: 20px;">
+                <p style="margin-bottom: 20px; color: #666;">請選擇移動方向</p>
+                <div style="display: flex; gap: 16px; justify-content: center;">
+                    <button id="btn-move-left" class="btn" style="min-width: 100px; ${index === 0 ? 'opacity:0.5; cursor:not-allowed;' : ''}" ${index === 0 ? 'disabled' : ''}>
+                       &larr; 向左移
+                    </button>
+                    <button id="btn-move-right" class="btn" style="min-width: 100px; ${index === currentList.length - 1 ? 'opacity:0.5; cursor:not-allowed;' : ''}" ${index === currentList.length - 1 ? 'disabled' : ''}>
+                       向右移 &rarr;
+                    </button>
+                </div>
+              </div>
+              <div class="modal-foot">
+                <button class="btn action-btn" onclick="closeModal()">關閉</button>
+              </div>
+            </div>
+          `;
+          
+          openModal(modalHtml);
+          
+          setTimeout(() => {
+              const btnLeft = document.getElementById("btn-move-left");
+              const btnRight = document.getElementById("btn-move-right");
+              
+              if(btnLeft && !btnLeft.disabled) {
+                  btnLeft.onclick = () => { handleReorder(index, -1); closeModal(); };
+              }
+              if(btnRight && !btnRight.disabled) {
+                  btnRight.onclick = () => { handleReorder(index, 1); closeModal(); };
+              }
+          }, 50);
+      };
+
       buttons.forEach((btn, index) => {
+        // Long Press Detection
+        let pressTimer;
+        let isLongPress = false;
+
+        const startPress = (e) => {
+            if (key !== 'announce' && key !== 'facility') return;
+            // Only primary button
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            
+            isLongPress = false;
+            pressTimer = setTimeout(() => {
+                isLongPress = true;
+                if (navigator.vibrate) navigator.vibrate(50);
+                openReorderModal(index);
+            }, 600);
+        };
+
+        const cancelPress = () => {
+            clearTimeout(pressTimer);
+        };
+
+        btn.addEventListener("mousedown", startPress);
+        btn.addEventListener("touchstart", startPress, {passive: true});
+        btn.addEventListener("mouseup", cancelPress);
+        btn.addEventListener("touchend", cancelPress);
+        btn.addEventListener("mouseleave", cancelPress);
+
         // Click to switch
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", (e) => {
+          if (isLongPress) {
+              e.preventDefault();
+              e.stopPropagation();
+              isLongPress = false;
+              return;
+          }
+
           buttons.forEach(b => b.classList.remove("active"));
           // Remove inline styles from others if they were active-colored
           // Re-rendering is safer but for now let's just update classes and styles manually or re-render?
@@ -8962,7 +9378,7 @@ function renderAdminSubNav(key) {
 }
 
 async function setActiveAdminNav(activeKey) {
-  ["shortcuts", "mail", "facility", "announce", "residents", "communities", "others"].forEach(key => {
+  ["shortcuts", "mail", "facility", "announce", "residents", "others"].forEach(key => {
     const el = adminNav[key];
     if (el) {
       if (key === activeKey) {
@@ -9008,7 +9424,6 @@ if (adminNav.subContainer) {
   if (adminNav.facility) adminNav.facility.addEventListener("click", () => setActiveAdminNav("facility"));
   if (adminNav.announce) adminNav.announce.addEventListener("click", () => setActiveAdminNav("announce"));
   if (adminNav.residents) adminNav.residents.addEventListener("click", () => setActiveAdminNav("residents"));
-  if (adminNav.communities) adminNav.communities.addEventListener("click", () => setActiveAdminNav("communities"));
   if (adminNav.others) adminNav.others.addEventListener("click", () => setActiveAdminNav("others"));
   const savedMain = localStorage.getItem("adminActiveMain");
   const initialMain = savedMain && adminSubMenus[savedMain] ? savedMain : "shortcuts";
@@ -9389,3 +9804,104 @@ async function handleCreateResidentTrigger(e) {
 }
 document.addEventListener("click", handleCreateResidentTrigger, true);
 document.addEventListener("touchend", handleCreateResidentTrigger, { passive: true, capture: true });
+
+// ==========================================
+// QR Code Scanner Implementation
+// ==========================================
+window.openQRScanner = function() {
+  const modalId = 'qr-scanner-modal';
+  let modal = document.getElementById(modalId);
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = modalId;
+    // Use fixed positioning and high z-index to overlay everything
+    modal.style.cssText = 'display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:99999; align-items:center; justify-content:center;';
+    modal.innerHTML = `
+      <div class="modal-dialog" style="background:#fff; width:90%; max-width:400px; border-radius:12px; overflow:hidden; display:flex; flex-direction:column; max-height:90vh; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+        <div class="modal-head" style="padding:16px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
+          <div class="modal-title" style="font-size:18px; font-weight:600; color:#333;">掃描 QR Code</div>
+          <button type="button" onclick="closeQRScanner()" style="background:none; border:none; cursor:pointer; padding:4px; display:flex; align-items:center;">
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="#666" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding:0; background:#000; flex:1; display:flex; align-items:center; justify-content:center; position:relative; min-height: 300px;">
+          <div id="qr-reader" style="width:100%;"></div>
+        </div>
+        <div class="modal-foot" style="padding:16px; border-top:1px solid #eee; text-align:right;">
+          <button class="btn action-btn" onclick="closeQRScanner()" style="padding: 8px 16px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer;">關閉</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+  
+  modal.style.display = 'flex';
+  
+  // Delay to allow DOM render
+  setTimeout(() => {
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      if (window.currentQrScanner) {
+          window.currentQrScanner.stop().then(() => {
+             window.currentQrScanner.clear();
+             startScannerInstance(config);
+          }).catch(err => {
+             console.error("Failed to stop previous scanner", err);
+             window.currentQrScanner = null;
+             startScannerInstance(config); 
+          });
+      } else {
+          startScannerInstance(config);
+      }
+  }, 100);
+};
+
+function startScannerInstance(config) {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert("掃描模組尚未載入，請稍後再試或重新整理頁面。");
+        closeQRScanner();
+        return;
+    }
+
+    const html5QrCode = new Html5Qrcode("qr-reader");
+    window.currentQrScanner = html5QrCode;
+    
+    html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
+    .catch(err => {
+        console.error("Error starting scanner", err);
+        const reader = document.getElementById("qr-reader");
+        if (reader) {
+            reader.innerHTML = `<div style="color:white; padding:20px; text-align:center;">無法啟動相機<br><br>${err}</div>`;
+        }
+    });
+}
+
+window.closeQRScanner = function() {
+  const modal = document.getElementById('qr-scanner-modal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+  
+  if (window.currentQrScanner) {
+    window.currentQrScanner.stop().then(() => {
+      window.currentQrScanner.clear();
+      window.currentQrScanner = null;
+    }).catch(err => {
+      console.error("Failed to stop scanner", err);
+    });
+  }
+};
+
+function onScanSuccess(decodedText, decodedResult) {
+  const bookerInput = document.getElementById('res-booker');
+  if (bookerInput) {
+    bookerInput.value = decodedText;
+  }
+  
+  if (navigator.vibrate) navigator.vibrate(200);
+  
+  closeQRScanner();
+}
+
+function onScanFailure(error) {
+  // console.warn(`Code scan error = ${error}`);
+}
