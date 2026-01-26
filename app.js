@@ -4988,6 +4988,7 @@ const adminNav = {
   facility: document.getElementById("admin-tab-facility"),
   announce: document.getElementById("admin-tab-announce"),
   residents: document.getElementById("admin-tab-residents"),
+  communities: document.getElementById("admin-tab-communities"),
   others: document.getElementById("admin-tab-others"),
   subContainer: document.getElementById("admin-sub-nav"),
   content: adminStack ? adminStack.querySelector(".row.B3") : null
@@ -4999,8 +5000,188 @@ const adminSubMenus = {
   facility: ["設定"],
   announce: [{ key: "announce_list", label: "社區園地" }],
   residents: ["住戶", "點數", "通知", "警報", "設定"],
+  communities: ["列表"],
   others: ["日誌", "班表", "通訊", "巡邏", "設定"]
 };
+
+async function renderAdminCommunities() {
+  if (!adminNav.content) return;
+  adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">社區列表</h1></div><div class="empty-hint">載入中...</div></div>`;
+
+  try {
+      const snap = await getDocs(collection(db, "communities"));
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const tbody = items.map(item => `
+        <tr>
+            <td>${item.name || ""}</td>
+            <td>${item.id}</td>
+            <td>${item.manager || ""}</td>
+            <td>${item.phone || ""}</td>
+            <td>${item.active !== false ? "啟用" : "停用"}</td>
+            <td class="actions">
+                <button class="btn small action-btn btn-edit-community" data-id="${item.id}">編輯</button>
+                <button class="btn small action-btn danger btn-delete-community" data-id="${item.id}">刪除</button>
+            </td>
+        </tr>
+      `).join("");
+
+      adminNav.content.innerHTML = `
+        <div class="card data-card">
+          <div class="card-head">
+            <h1 class="card-title">社區列表</h1>
+            <button id="btn-create-community" class="btn small action-btn">新增社區</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+               <thead>
+                 <tr>
+                   <th>社區名稱</th>
+                   <th>代碼 (Slug)</th>
+                   <th>管理者</th>
+                   <th>電話</th>
+                   <th>狀態</th>
+                   <th>操作</th>
+                 </tr>
+               </thead>
+               <tbody>${tbody}</tbody>
+            </table>
+            ${items.length === 0 ? '<div class="empty-hint">尚未建立內容</div>' : ''}
+          </div>
+        </div>
+      `;
+
+      // Event Listeners
+      const btnCreate = document.getElementById("btn-create-community");
+      if(btnCreate) btnCreate.addEventListener("click", () => openCommunityModal());
+      
+      document.querySelectorAll(".btn-edit-community").forEach(btn => {
+          btn.addEventListener("click", () => {
+              const id = btn.getAttribute("data-id");
+              const item = items.find(i => i.id === id);
+              openCommunityModal(item);
+          });
+      });
+
+      document.querySelectorAll(".btn-delete-community").forEach(btn => {
+          btn.addEventListener("click", async () => {
+             if(!confirm("確定要刪除嗎？")) return;
+             const id = btn.getAttribute("data-id");
+             try {
+                 await deleteDoc(doc(db, "communities", id));
+                 renderAdminCommunities();
+             } catch(e) {
+                 alert("刪除失敗: " + e.message);
+             }
+          });
+      });
+
+  } catch (e) {
+      console.error(e);
+      adminNav.content.innerHTML = `<div class="error">載入失敗: ${e.message}</div>`;
+  }
+}
+
+function openCommunityModal(community = null) {
+  const isEdit = !!community;
+  const modalId = "community-modal";
+  let modal = document.getElementById(modalId);
+  if (modal) modal.remove();
+
+  const html = `
+    <div id="${modalId}" class="modal active">
+      <div class="modal-dialog">
+        <div class="modal-head">
+          <div class="modal-title">${isEdit ? "編輯社區" : "新增社區"}</div>
+          <button class="close-btn" onclick="document.getElementById('${modalId}').remove()">×</button>
+        </div>
+        <div class="modal-body">
+           <div class="form-group">
+              <label>社區名稱</label>
+              <input type="text" id="comm-name" class="form-control" value="${community?.name || ""}" required>
+           </div>
+           <div class="form-group">
+              <label>社區代碼 (Slug/ID)</label>
+              <input type="text" id="comm-slug" class="form-control" value="${community?.id || ""}" ${isEdit ? "disabled" : "required placeholder='例如: happy-community'"} >
+              ${isEdit ? "" : "<small style='color:var(--muted);display:block;margin-top:4px;'>設定後不可修改，將作為網址與資料庫路徑</small>"}
+           </div>
+           <div class="form-group">
+              <label>地址</label>
+              <input type="text" id="comm-address" class="form-control" value="${community?.address || ""}">
+           </div>
+           <div class="form-group">
+              <label>管理者</label>
+              <input type="text" id="comm-manager" class="form-control" value="${community?.manager || ""}">
+           </div>
+           <div class="form-group">
+              <label>聯絡電話</label>
+              <input type="text" id="comm-phone" class="form-control" value="${community?.phone || ""}">
+           </div>
+           <div class="form-group">
+              <label>聯絡 Email</label>
+              <input type="email" id="comm-email" class="form-control" value="${community?.email || ""}">
+           </div>
+           <div class="form-group checkbox-group" style="margin-top:16px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="comm-active" ${community?.active !== false ? "checked" : ""}> 
+                啟用狀態
+              </label>
+           </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" onclick="document.getElementById('${modalId}').remove()">取消</button>
+          <button id="btn-save-community" class="btn primary">儲存</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML("beforeend", html);
+
+  document.getElementById("btn-save-community").addEventListener("click", async () => {
+      const name = document.getElementById("comm-name").value.trim();
+      const slug = document.getElementById("comm-slug").value.trim();
+      const address = document.getElementById("comm-address").value.trim();
+      const manager = document.getElementById("comm-manager").value.trim();
+      const phone = document.getElementById("comm-phone").value.trim();
+      const email = document.getElementById("comm-email").value.trim();
+      const active = document.getElementById("comm-active").checked;
+
+      if (!name || !slug) {
+          alert("名稱與代碼為必填");
+          return;
+      }
+
+      const btn = document.getElementById("btn-save-community");
+      btn.disabled = true;
+      btn.textContent = "儲存中...";
+
+      try {
+          const data = {
+              name,
+              address,
+              manager,
+              phone,
+              email,
+              active,
+              updatedAt: Date.now()
+          };
+          
+          if (!isEdit) {
+             data.createdAt = Date.now();
+          }
+
+          await setDoc(doc(db, "communities", slug), data, { merge: true });
+          
+          document.getElementById(modalId).remove();
+          renderAdminCommunities();
+      } catch (e) {
+          console.error(e);
+          alert("儲存失敗: " + e.message);
+          btn.disabled = false;
+          btn.textContent = "儲存";
+      }
+  });
+}
 
 async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) {
   const category = dbCategoryOverride || displayTitle;
@@ -6333,6 +6514,13 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
     renderAdminAnnounceList(displayLabel, sub);
     return;
   }
+  if (mainKey === "communities") {
+      if (sub === "列表") {
+          renderAdminCommunities();
+          return;
+      }
+  }
+
   if (mainKey === "residents") {
     if (sub === "住戶") {
       (async () => {
@@ -8742,7 +8930,7 @@ function renderAdminSubNav(key) {
 }
 
 async function setActiveAdminNav(activeKey) {
-  ["shortcuts", "mail", "facility", "announce", "residents", "others"].forEach(key => {
+  ["shortcuts", "mail", "facility", "announce", "residents", "communities", "others"].forEach(key => {
     const el = adminNav[key];
     if (el) {
       if (key === activeKey) {
@@ -8788,6 +8976,7 @@ if (adminNav.subContainer) {
   if (adminNav.facility) adminNav.facility.addEventListener("click", () => setActiveAdminNav("facility"));
   if (adminNav.announce) adminNav.announce.addEventListener("click", () => setActiveAdminNav("announce"));
   if (adminNav.residents) adminNav.residents.addEventListener("click", () => setActiveAdminNav("residents"));
+  if (adminNav.communities) adminNav.communities.addEventListener("click", () => setActiveAdminNav("communities"));
   if (adminNav.others) adminNav.others.addEventListener("click", () => setActiveAdminNav("others"));
   const savedMain = localStorage.getItem("adminActiveMain");
   const initialMain = savedMain && adminSubMenus[savedMain] ? savedMain : "shortcuts";
@@ -9035,6 +9224,11 @@ async function loadFrontButtons(slug) {
 }
 
 function openLinkView(title, url) {
+  // Fix mixed content issue: upgrade http to https for github.io
+  if (url && typeof url === 'string' && url.startsWith('http://') && url.includes('github.io')) {
+    url = url.replace('http://', 'https://');
+  }
+
   let root = document.getElementById("sys-modal");
   if (!root) {
     root = document.createElement("div");
