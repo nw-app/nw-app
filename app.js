@@ -382,7 +382,33 @@ async function openUserProfileModal() {
         qrCodeText = d.qrCodeText || "";
         houseNo = d.houseNo || "";
         subNo = d.subNo !== undefined ? d.subNo : "";
-        points = d.points || 0;
+        
+        const community = d.community || "default";
+        if (houseNo) {
+          let found = false;
+          try {
+            const bdoc = await getDoc(doc(db, `communities/${community}/app_modules/points_balances/${houseNo}`));
+            if (bdoc.exists()) {
+              points = bdoc.data().balance || 0;
+              found = true;
+            }
+          } catch (e) {
+            console.log("Points fetch error (primary):", e);
+          }
+          
+          if (!found) {
+            try {
+              const pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
+              if (pdoc.exists()) {
+                const data = pdoc.data();
+                const bmap = data.balances || {};
+                points = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+              }
+            } catch (e) {
+              console.log("Points fetch error (fallback):", e);
+            }
+          }
+        }
       }
     } catch {}
   }
@@ -5824,6 +5850,14 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                 </div>
 
                 <div class="field">
+                    <div class="field-head">每時段扣除點數</div>
+                    <div class="input-wrap">
+                        <input type="number" id="set-cost" value="${config.cost || 0}" min="0">
+                        <div style="font-size:12px; color:#666; margin-top:4px;">預約每個時段單位將扣除的點數</div>
+                    </div>
+                </div>
+
+                <div class="field">
                     <div class="input-wrap" style="display:flex; align-items:center; gap:10px;">
                        <input type="checkbox" id="set-holiday" ${config.holidayOpen ? 'checked' : ''} style="width:20px; height:20px;">
                        <label for="set-holiday" style="font-weight:500;">假日開放</label>
@@ -5918,12 +5952,14 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                       const newOpen = document.getElementById("set-open-time").value;
                       const newClose = document.getElementById("set-close-time").value;
                       const newUnit = parseInt(document.getElementById("set-time-unit").value);
+                      const newCost = parseInt(document.getElementById("set-cost").value) || 0;
                       const newHoliday = document.getElementById("set-holiday").checked;
                       const newStatus = document.getElementById("set-status").value;
 
                       if(!newName) { alert("請輸入預約名稱"); return; }
                       if(newName.length > 10) { alert("設施預約名稱不能超過 10 個字"); return; }
                       if(newUnit < 1 || newUnit > 24) { alert("時段單位需介於 1 至 24 小時"); return; }
+                      if(newCost < 0) { alert("扣除點數不能為負數"); return; }
                       
                       btnSave.textContent = "儲存中...";
                       btnSave.disabled = true;
@@ -5965,6 +6001,7 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                               openTime: newOpen,
                               closeTime: newClose,
                               timeUnit: newUnit,
+                              cost: newCost,
                               holidayOpen: newHoliday,
                               status: newStatus
                           }, { merge: true });
@@ -6560,7 +6597,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
         defaultDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }
 
-    const cost = config.pointCost || 0;
+    const cost = config.cost || 0;
 
     const body = `
       <div class="modal-dialog">
@@ -6604,16 +6641,27 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                  <div class="input-wrap"><input type="number" id="res-cost" value="${cost}" readonly style="background:#f5f5f5; color:#666;"></div>
                </label>
            </div>
-           <label class="field">
-             <div class="field-head">狀態</div>
-             <div class="input-wrap">
-                <select id="res-status">
-                  <option value="已預約" ${item && item.status === "已預約" ? "selected" : ""}>已預約</option>
-                  <option value="已取消" ${item && item.status === "已取消" ? "selected" : ""}>已取消</option>
-                  <option value="已完成" ${item && item.status === "已完成" ? "selected" : ""}>已完成</option>
-                </select>
-             </div>
-           </label>
+           <div style="display:flex; gap:10px;">
+               <label class="field" style="flex:1;">
+                 <div class="field-head">預約狀態</div>
+                 <div class="input-wrap">
+                    <select id="res-status">
+                      <option value="已預約" ${item && item.status === "已預約" ? "selected" : ""}>已預約</option>
+                      <option value="已取消" ${item && item.status === "已取消" ? "selected" : ""}>已取消</option>
+                      <option value="已完成" ${item && item.status === "已完成" ? "selected" : ""}>已完成</option>
+                    </select>
+                 </div>
+               </label>
+               <label class="field" style="flex:1;">
+                 <div class="field-head">扣款狀態</div>
+                 <div class="input-wrap">
+                    <select id="res-payment">
+                      <option value="未扣點" ${item && item.paymentStatus === "未扣點" ? "selected" : ""}>未扣點</option>
+                      <option value="已扣點" ${item && item.paymentStatus === "已扣點" ? "selected" : ""}>已扣點</option>
+                    </select>
+                 </div>
+               </label>
+           </div>
            <label class="field">
              <div class="field-head">備註</div>
              <div class="input-wrap"><textarea id="res-note" rows="3" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item && item.note ? item.note : ""}</textarea></div>
@@ -6710,6 +6758,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                 const endVal = document.getElementById("res-end").value;
                 const bookerVal = document.getElementById("res-booker").value;
                 const statusVal = document.getElementById("res-status").value;
+                const paymentVal = document.getElementById("res-payment").value;
                 const noteVal = document.getElementById("res-note").value;
 
                 if (!dateVal || !startVal || !endVal || !bookerVal) {
@@ -6765,6 +6814,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                         endTime: endVal,
                         bookerName: bookerVal,
                         status: statusVal,
+                        paymentStatus: paymentVal,
                         note: noteVal,
                         updatedAt: Date.now()
                     };
