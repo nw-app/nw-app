@@ -368,6 +368,7 @@ async function openUserProfileModal() {
   let qrCodeText = "";
   let houseNo = "";
   let subNo = "";
+  let points = 0;
   if (u) {
     try {
       const snap = await getDoc(doc(db, "users", u.uid));
@@ -381,6 +382,7 @@ async function openUserProfileModal() {
         qrCodeText = d.qrCodeText || "";
         houseNo = d.houseNo || "";
         subNo = d.subNo !== undefined ? d.subNo : "";
+        points = d.points || 0;
       }
     } catch {}
   }
@@ -405,6 +407,7 @@ async function openUserProfileModal() {
                 <div style="font-size: 16px; color: #333; font-weight: 500;">${qrCodeText}</div>
             </div>
         ` : ''}
+        <div style="font-size: 16px; color: #555; margin-top: -10px;">目前點數: <span style="font-weight: 600; color: #d32f2f;">${points}</span></div>
       </div>
       <div class="modal-foot">
         <button id="profile-close" class="btn action-btn danger">關閉</button>
