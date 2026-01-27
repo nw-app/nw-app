@@ -6098,7 +6098,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         items.sort((a,b) => {
             const dateA = a.date + (a.startTime || "");
             const dateB = b.date + (b.startTime || "");
-            return dateB.localeCompare(dateA);
+            return dateA.localeCompare(dateB);
         });
     } catch (e) {
         console.error("Failed to load reservations", e);
@@ -6434,6 +6434,438 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         }
 
         // Table Actions
+        document.querySelectorAll(".btn-checkin-res").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                const id = btn.closest("tr").getAttribute("data-id");
+                
+                try {
+                    // 1. Get item and config
+                    const item = items.find(i => i.id === id);
+                    if (!item) throw new Error("找不到預約資料");
+                    
+                    const cost = parseInt(config.cost || 0);
+                    let houseNo = "";
+                    let subNo = "無";
+                    let currentPoints = 0;
+                    let balanceRef = null;
+                    let pointsRef = null;
+                    let isPointsFound = false;
+
+                    // 2. Prepare user and points data
+                    const booker = item.bookerName || "";
+                    // Extract HouseNo: matches (A001) or just A001
+                    houseNo = booker;
+                    const m = booker.match(/^\(([^)]+)\)/); 
+                    if (m) houseNo = m[1];
+                    houseNo = houseNo.trim();
+
+                    // Resolve canonical HouseNo and SubNo from DB if possible
+                    try {
+                        // Try finding user by HouseNo first
+                        let qUser = query(collection(db, "users"), where("houseNo", "==", houseNo));
+                        let snapUser = await getDocs(qUser);
+                        let targetUser = null;
+                        
+                        // If not found by HouseNo, try DisplayName
+                        if (snapUser.empty) {
+                            qUser = query(collection(db, "users"), where("displayName", "==", houseNo));
+                            snapUser = await getDocs(qUser);
+                        }
+                        
+                        if (!snapUser.empty) {
+                            // Filter by community if possible
+                            if (slug && slug !== "default") {
+                                targetUser = snapUser.docs.find(d => d.data().community === slug);
+                            }
+                            if (!targetUser) targetUser = snapUser.docs[0];
+                            
+                            if (targetUser) {
+                                const d = targetUser.data();
+                                if (d.houseNo) {
+                                    console.log(`[CheckIn] Resolved '${houseNo}' to canonical HouseNo '${d.houseNo}'`);
+                                    houseNo = d.houseNo;
+                                }
+                                if (d.subNo !== undefined && d.subNo !== null && d.subNo !== "") {
+                                    subNo = d.subNo;
+                                }
+                            }
+                        }
+                    } catch(e) {
+                        console.warn("[CheckIn] User resolution failed", e);
+                    }
+
+                    if (houseNo) {
+                         // Try path 1: communities/{slug}/points_balances/{houseNo} (Individual Doc)
+                         try {
+                             const ref = doc(db, "communities", slug, "points_balances", houseNo);
+                             const bDoc = await getDoc(ref);
+                             if (bDoc.exists()) {
+                                 currentPoints = bDoc.data().balance || 0;
+                                 balanceRef = ref;
+                                 isPointsFound = true;
+                             }
+                         } catch(e) { console.warn("Check-in: Path 1 failed", e); }
+
+                         if (!isPointsFound) {
+                             // Try path 2: communities/{slug}/app_modules/points (Aggregated Doc)
+                             try {
+                                 const ref = doc(db, "communities", slug, "app_modules", "points");
+                                 const pDoc = await getDoc(ref);
+                                 if (pDoc.exists()) {
+                                     const data = pDoc.data();
+                                     const balances = data.balances || {};
+                                     if (typeof balances[houseNo] !== 'undefined') {
+                                         currentPoints = balances[houseNo];
+                                         isPointsFound = true;
+                                     }
+                                     pointsRef = ref;
+                                 }
+                             } catch(e) { console.warn("Check-in: Path 2 failed", e); }
+                         }
+                    }
+
+                    // 2.5 Handle Cancel Check-in
+                    if (item.status === "已報到") {
+                         const modal = document.getElementById("sys-modal");
+                         if (!modal) return;
+
+                         modal.innerHTML = `
+                           <div class="modal-card" style="position: relative; z-index: 10; background: #fff; width: 90%; max-width: 360px; border-radius: 16px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                             <h3 class="modal-title" style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: #111;">取消報到驗證</h3>
+                             <div style="margin-bottom: 20px; font-size: 15px; color: #374151;">
+                                <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                  <span style="color:#6b7280;">戶號</span>
+                                  <span style="font-weight:600;">${houseNo || item.bookerName}</span>
+                                </div>
+                                <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                                  <span style="color:#6b7280;">將退還點數</span>
+                                  <span style="font-weight:600; color:#10b981;">+${cost}</span>
+                                </div>
+                                
+                                <label style="display:block; margin-bottom:8px; font-weight:500;">請輸入取消密碼</label>
+                                <input type="password" id="cancel-password" placeholder="預設為今日日期YYYYMMDD" style="width:100%; padding:10px; border:1px solid #d1d5db; border-radius:6px; font-size:16px;">
+                                <div id="cancel-error" style="color:#ef4444; font-size:13px; margin-top:4px; display:none;">密碼錯誤</div>
+                             </div>
+                             <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                                <button class="btn" id="btn-cancel-close" style="padding: 8px 16px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer;">取消</button>
+                                <button class="btn primary" id="btn-cancel-confirm" style="padding: 8px 16px; background: #ef4444; color: #fff; border: none; border-radius: 6px; cursor: pointer;">確定取消</button>
+                             </div>
+                           </div>
+                         `;
+                         
+                         modal.style.zIndex = "999999";
+                         modal.classList.remove("hidden");
+                         
+                         // Focus input
+                         setTimeout(() => {
+                             const input = modal.querySelector("#cancel-password");
+                             if(input) input.focus();
+                         }, 100);
+
+                         const closeCancelModal = () => {
+                             modal.classList.add("hidden");
+                             modal.style.zIndex = "";
+                             modal.innerHTML = "";
+                         };
+
+                         modal.querySelector("#btn-cancel-close").onclick = closeCancelModal;
+
+                         modal.querySelector("#btn-cancel-confirm").onclick = async () => {
+                             const passwordInput = modal.querySelector("#cancel-password");
+                             const errorMsg = modal.querySelector("#cancel-error");
+                             const password = passwordInput.value;
+                             
+                             const today = new Date();
+                             const yyyy = today.getFullYear();
+                             const mm = String(today.getMonth() + 1).padStart(2, '0');
+                             const dd = String(today.getDate()).padStart(2, '0');
+                             const defaultPwd = `${yyyy}${mm}${dd}`;
+
+                             if (password !== defaultPwd) {
+                                 errorMsg.style.display = "block";
+                                 passwordInput.style.borderColor = "#ef4444";
+                                 return;
+                             }
+
+                             const btnConfirm = modal.querySelector("#btn-cancel-confirm");
+                             btnConfirm.disabled = true;
+                             btnConfirm.textContent = "處理中...";
+
+                             try {
+                                 // 1. Refund points
+                                 if (cost > 0 && isPointsFound) {
+                                     if (balanceRef && !pointsRef) {
+                                         await updateDoc(balanceRef, { balance: currentPoints + cost });
+                                     } else if (pointsRef) {
+                                         const pDoc = await getDoc(pointsRef);
+                                         if (pDoc.exists()) {
+                                             const data = pDoc.data();
+                                             const balances = data.balances || {};
+                                             balances[houseNo] = currentPoints + cost;
+                                             await updateDoc(pointsRef, { balances: balances });
+                                         }
+                                     }
+                                     
+                                     // Add Log
+                                     try {
+                                         const auth = getAuth();
+                                         const user = auth.currentUser;
+                                         const operatorName = user ? (user.displayName || user.email || "管理員") : "管理員";
+                                         const operator = user ? (user.email || user.uid) : "未知";
+
+                                         // Log to collection
+                                         try {
+                                             await addDoc(collection(db, "communities", slug, "points_logs"), {
+                                                 createdAt: Date.now(),
+                                                 delta: cost,
+                                                 reason: `取消報到退款: ${displayTitle}`,
+                                                 houseNo: houseNo,
+                                                 operator: operator,
+                                                 operatorName: operatorName
+                                             });
+                                         } catch(e) { console.warn("Log collection add failed", e); }
+
+                                         // Log to document
+                                         const pointsDocRef = doc(db, "communities", slug, "app_modules", "points");
+                                         let prev = {};
+                                         try {
+                                             const psnap = await getDoc(pointsDocRef);
+                                             if (psnap.exists()) prev = psnap.data() || {};
+                                         } catch {}
+                                         
+                                         const logs = Array.isArray(prev.logs) ? prev.logs.slice() : [];
+                                         logs.push({
+                                             houseNo,
+                                             reason: `取消報到退款: ${displayTitle}`,
+                                             delta: cost,
+                                             operator,
+                                             operatorName,
+                                             createdAt: Date.now()
+                                         });
+                                         await setDoc(pointsDocRef, { logs: logs }, { merge: true });
+                                     } catch(e) { console.warn("Failed to add log", e); }
+                                 }
+
+                                 // 2. Update Status
+                                 await updateDoc(doc(db, "communities", slug, "reservations", id), {
+                                     status: "已預約",
+                                     updatedAt: Date.now()
+                                 });
+
+                                 // 3. Reload
+                                 const ref = collection(db, "communities", slug, "reservations");
+                                 const q = query(ref, where("facility", "==", facilityKey));
+                                 const snap = await getDocs(q);
+                                 items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                                 items.sort((a,b) => {
+                                     const dateA = a.date + (a.startTime || "");
+                                     const dateB = b.date + (b.startTime || "");
+                                     return dateA.localeCompare(dateB);
+                                 });
+                                 renderUI();
+                                 
+                                 showHint(`已取消報到${cost > 0 ? `並退還 ${cost} 點` : ""}`, "success");
+                                 closeCancelModal();
+
+                             } catch(e) {
+                                 console.error(e);
+                                 alert("取消報到失敗: " + e.message);
+                                 btnConfirm.disabled = false;
+                                 btnConfirm.textContent = "確定取消";
+                             }
+                         };
+                         return;
+                    }
+
+                    // 3. Show detailed confirmation modal
+                    const modal = document.getElementById("sys-modal");
+                    if (!modal) {
+                         if(!confirm(`確認報到？\n戶號: ${houseNo}\n扣點: ${cost}`)) return;
+                         // Fallback if modal missing (should not happen)
+                         executeCheckIn();
+                         return;
+                    }
+
+                    const newBalance = isPointsFound ? (currentPoints - cost) : null;
+                    const isInsufficient = (cost > 0 && isPointsFound && currentPoints < cost);
+
+                    modal.innerHTML = `
+                      <div class="modal-card" style="position: relative; z-index: 10; background: #fff; width: 90%; max-width: 360px; border-radius: 16px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+                        <h3 class="modal-title" style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: #111;">設施預約報到確認</h3>
+                        <div style="margin-bottom: 20px; font-size: 15px; color: #374151;">
+                           <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                             <span style="color:#6b7280;">戶號</span>
+                             <span style="font-weight:600;">${houseNo || item.bookerName}</span>
+                           </div>
+                           <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                             <span style="color:#6b7280;">子戶號</span>
+                             <span style="font-weight:600;">${subNo}</span>
+                           </div>
+                           <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                             <span style="color:#6b7280;">該戶點數</span>
+                             <span style="font-weight:600; color:${isPointsFound ? '#2563eb' : '#9ca3af'}">${isPointsFound ? currentPoints : (houseNo ? "未找到 (0)" : "未知")}</span>
+                           </div>
+                           
+                           <div style="border-top: 1px dashed #e5e7eb; margin: 8px 0;"></div>
+                           
+                           <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                             <span style="color:#6b7280;">預約設施</span>
+                             <span>${displayTitle}</span>
+                           </div>
+                           <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                             <span style="color:#6b7280;">日期時段</span>
+                             <span style="font-size:13px; text-align:right;">${item.date}<br>${item.startTime}~${item.endTime}</span>
+                           </div>
+                           
+                           <div style="background:#f9fafb; padding:12px; border-radius:8px;">
+                             <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                                <span>本次扣點</span>
+                                <span style="font-weight:700; color:#ef4444;">-${cost}</span>
+                             </div>
+                             ${cost > 0 ? `
+                             <div style="display:flex; justify-content:space-between; border-top:1px solid #e5e7eb; padding-top:4px; margin-top:4px;">
+                                <span>扣除後點數</span>
+                                <span style="font-weight:700; color:${isPointsFound && (currentPoints-cost)>=0 ? '#10b981' : '#ef4444'}">
+                                  ${isPointsFound ? (currentPoints - cost) : "無法計算"}
+                                </span>
+                             </div>
+                             ` : '<div style="text-align:right; font-size:12px; color:#10b981;">(本次免費)</div>'}
+                           </div>
+                           
+                           ${isInsufficient ? `<div style="margin-top:8px; color:#ef4444; font-size:13px; font-weight:600;">⚠️ 點數不足，無法扣點 (仍可強制報到)</div>` : ''}
+                           ${(cost > 0 && !isPointsFound) ? `<div style="margin-top:8px; color:#f59e0b; font-size:13px;">⚠️ 找不到點數資料，將不執行扣點</div>` : ''}
+                        </div>
+                        <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                           <button class="btn" id="btn-modal-cancel" style="padding: 8px 16px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer;">取消</button>
+                           <button class="btn primary" id="btn-modal-confirm" style="padding: 8px 16px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer;">確定報到</button>
+                        </div>
+                      </div>
+                    `;
+                    
+                    modal.style.zIndex = "999999";
+                    modal.classList.remove("hidden");
+                    
+                    const close = () => {
+                        modal.classList.add("hidden");
+                        modal.style.zIndex = "";
+                        modal.innerHTML = "";
+                    };
+                    
+                    modal.querySelector("#btn-modal-cancel").onclick = close;
+                    
+                    modal.querySelector("#btn-modal-confirm").onclick = async () => {
+                        const btnConfirm = modal.querySelector("#btn-modal-confirm");
+                        btnConfirm.disabled = true;
+                        btnConfirm.textContent = "處理中...";
+                        
+                        try {
+                            await executeCheckIn();
+                            close();
+                        } catch(e) {
+                            console.error(e);
+                            alert("報到失敗: " + e.message);
+                            btnConfirm.disabled = false;
+                            btnConfirm.textContent = "確定報到";
+                        }
+                    };
+
+                    async function executeCheckIn() {
+                        // 4. Deduct points if cost > 0 and points found
+                        if (cost > 0 && isPointsFound) {
+                            // Note: We allow negative balance or check-in without deduction if decided, 
+                            // but currently we just deduct. 
+                            // If insufficient, it goes negative? Or we block?
+                            // User didn't specify blocking, but usually we allow with warning.
+                            // The modal shows warning. We proceed.
+
+                            if (balanceRef && !pointsRef) {
+                                await updateDoc(balanceRef, { balance: currentPoints - cost });
+                            } else if (pointsRef) {
+                                 // Re-fetch to ensure data consistency
+                                 const pDoc = await getDoc(pointsRef);
+                                 if (pDoc.exists()) {
+                                     const data = pDoc.data();
+                                     const balances = data.balances || {};
+                                     balances[houseNo] = currentPoints - cost;
+                                     await updateDoc(pointsRef, { balances: balances });
+                                 }
+                            }
+
+                            // Add Log
+                            try {
+                                const auth = getAuth();
+                                const user = auth.currentUser;
+                                const operatorName = user ? (user.displayName || user.email || "管理員") : "管理員";
+                                const operator = user ? (user.email || user.uid) : "未知";
+                                
+                                // 1. Try adding to collection
+                                try {
+                                    await addDoc(collection(db, "communities", slug, "points_logs"), {
+                                        createdAt: Date.now(),
+                                        delta: -cost,
+                                        reason: `設施預約: ${displayTitle}`,
+                                        houseNo: houseNo,
+                                        operator: operator,
+                                        operatorName: operatorName
+                                    });
+                                } catch(e) { console.warn("Log collection add failed", e); }
+                                
+                                // 2. Write to 'points' document logs array
+                                const pointsDocRef = doc(db, "communities", slug, "app_modules", "points");
+                                let prev = {};
+                                try {
+                                    const psnap = await getDoc(pointsDocRef);
+                                    if (psnap.exists()) prev = psnap.data() || {};
+                                } catch {}
+                                
+                                const logs = Array.isArray(prev.logs) ? prev.logs.slice() : [];
+                                logs.push({
+                                    houseNo,
+                                    reason: `設施預約: ${displayTitle}`,
+                                    delta: -cost,
+                                    operator,
+                                    operatorName,
+                                    createdAt: Date.now()
+                                });
+                                
+                                await setDoc(pointsDocRef, { logs: logs }, { merge: true });
+                                
+                            } catch(e) {
+                                console.error("Failed to add points log", e);
+                            }
+                        }
+
+                        // 5. Update status
+                        await updateDoc(doc(db, "communities", slug, "reservations", id), {
+                            status: "已報到",
+                            updatedAt: Date.now()
+                        });
+                        
+                        // Reload data
+                        const ref = collection(db, "communities", slug, "reservations");
+                        const q = query(ref, where("facility", "==", facilityKey));
+                        const snap = await getDocs(q);
+                        items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                        items.sort((a,b) => {
+                            const dateA = a.date + (a.startTime || "");
+                            const dateB = b.date + (b.startTime || "");
+                            return dateA.localeCompare(dateB);
+                        });
+                        renderUI();
+                        
+                        if (cost > 0 && isPointsFound) showHint(`報到成功，已扣除 ${cost} 點`, "success");
+                        else if (cost > 0 && !isPointsFound) showHint("報到成功 (未扣點：無點數資料)", "warning");
+                        else showHint("報到成功", "success");
+                    }
+
+                    
+                } catch(err) {
+                    console.error(err);
+                    alert("報到失敗: " + err.message);
+                }
+            });
+        });
+
         document.querySelectorAll(".btn-edit-res").forEach(btn => {
             btn.addEventListener("click", () => {
                 const id = btn.closest("tr").getAttribute("data-id");
@@ -6456,7 +6888,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                     items.sort((a,b) => {
                         const dateA = a.date + (a.startTime || "");
                         const dateB = b.date + (b.startTime || "");
-                        return dateB.localeCompare(dateA);
+                        return dateA.localeCompare(dateB);
                     });
                     renderUI();
                 } catch(err) {
@@ -6551,7 +6983,11 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd;";
             }
             
-            const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">(${slot.res.bookerName})</span>` : "";
+            const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">(${(() => {
+                const nm = slot.res.bookerName || "";
+                const m = nm.match(/^\(([^)]+)\)\s/);
+                return m ? m[1] : nm;
+            })()})</span>` : "";
 
             return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? slot.res.id : ''}">
                 ${label}${info}
@@ -6564,13 +7000,24 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         return items
             .filter(item => item.bookerName !== "暫停")
             .map(item => {
+                const isCheckedIn = item.status === "已報到";
+                const rowStyle = isCheckedIn ? "background:#dcfce7;" : (item.date === selectedDate ? "background:#f0f9ff;" : "");
+                
                 return `
-                    <tr data-id="${item.id}" style="${item.date === selectedDate ? 'background:#f0f9ff;' : ''}">
+                    <tr data-id="${item.id}" style="${rowStyle}">
                         <td>${item.date}</td>
                         <td>${item.startTime} - ${item.endTime}</td>
-                        <td>${item.bookerName || ""}</td>
+                        <td>${(() => {
+                            const nm = item.bookerName || "";
+                            const m = nm.match(/^\(([^)]+)\)\s/);
+                            return m ? m[1] : nm;
+                        })()}</td>
                         <td>${item.status || "已預約"}</td>
                         <td class="actions">
+                            ${(() => {
+                                const isCheckedIn = item.status === "已報到";
+                                return `<button class="btn small action-btn btn-checkin-res" ${isCheckedIn ? 'style="background:#6b7280;color:white;"' : 'style="background:#10b981;color:white;"'}>${isCheckedIn ? '取消報到' : '報到'}</button>`;
+                            })()}
                             <button class="btn small action-btn btn-edit-res">編輯</button>
                             <button class="btn small action-btn danger btn-delete-res">刪除</button>
                         </td>
@@ -6584,6 +7031,12 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 }
 
 function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isNewWithDate = false, config = {}) {
+    // Ensure slug is valid
+    if (!slug) {
+        slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+        console.warn("Slug missing in openFacilityReservationModal, using fallback:", slug);
+    }
+
     // isNewWithDate: item contains {date: "YYYY-MM-DD"} but is not a DB item
     const isEdit = !!(item && item.id);
     const title = isEdit ? `編輯預約` : `新增預約`;
@@ -6620,7 +7073,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
            <label class="field">
              <div class="field-head">預約人</div>
              <div class="input-wrap" style="display: flex; gap: 8px;">
-               <input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入住戶姓名或房號" style="flex: 1;">
+               <input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入 QR Code 代碼" style="flex: 1;">
                <button type="button" class="btn small action-btn" id="btn-scan-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center;" title="掃碼輸入">
                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                    <rect x="3" y="3" width="7" height="7"></rect>
@@ -6641,27 +7094,6 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                  <div class="input-wrap"><input type="number" id="res-cost" value="${cost}" readonly style="background:#f5f5f5; color:#666;"></div>
                </label>
            </div>
-           <div style="display:flex; gap:10px;">
-               <label class="field" style="flex:1;">
-                 <div class="field-head">預約狀態</div>
-                 <div class="input-wrap">
-                    <select id="res-status">
-                      <option value="已預約" ${item && item.status === "已預約" ? "selected" : ""}>已預約</option>
-                      <option value="已取消" ${item && item.status === "已取消" ? "selected" : ""}>已取消</option>
-                      <option value="已完成" ${item && item.status === "已完成" ? "selected" : ""}>已完成</option>
-                    </select>
-                 </div>
-               </label>
-               <label class="field" style="flex:1;">
-                 <div class="field-head">扣款狀態</div>
-                 <div class="input-wrap">
-                    <select id="res-payment">
-                      <option value="未扣點" ${item && item.paymentStatus === "未扣點" ? "selected" : ""}>未扣點</option>
-                      <option value="已扣點" ${item && item.paymentStatus === "已扣點" ? "selected" : ""}>已扣點</option>
-                    </select>
-                 </div>
-               </label>
-           </div>
            <label class="field">
              <div class="field-head">備註</div>
              <div class="input-wrap"><textarea id="res-note" rows="3" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item && item.note ? item.note : ""}</textarea></div>
@@ -6679,49 +7111,170 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
     const fetchPoints = async (queryStr) => {
         if(!queryStr) return;
         const ptsInput = document.getElementById("res-points");
+        const statusDiv = document.getElementById("res-search-status") || (() => {
+            const d = document.createElement("div");
+            d.id = "res-search-status";
+            d.style.fontSize = "12px";
+            d.style.marginTop = "4px";
+            ptsInput.parentNode.appendChild(d);
+            return d;
+        })();
+        
         ptsInput.placeholder = "查詢中...";
+        ptsInput.value = ""; // Clear previous value
+        statusDiv.textContent = "正在搜尋...";
+        statusDiv.style.color = "#666";
+        
+        console.log(`[FetchPoints] Searching for: "${queryStr}" (slug: "${slug}")`);
+
         try {
-            // Try to find user by exact match on name, or partial?
-            // Or houseNo?
-            // For now, let's query 'users' where 'displayName' == queryStr
-            // or 'qrCodeText' == queryStr
-            // or 'houseNo' == queryStr
-            
-            // Note: Firestore doesn't support OR across different fields easily without multiple queries.
-            // We'll try QR first, then Name.
-            
             let userDoc = null;
+            let errorMsg = "";
             
-            // 1. Try QR Code
-            const qQr = query(collection(db, "users"), where("qrCodeText", "==", queryStr), limit(1));
-            const snapQr = await getDocs(qQr);
-            if (!snapQr.empty) {
-                userDoc = snapQr.docs[0];
-            } else {
-                // 2. Try Display Name
-                const qName = query(collection(db, "users"), where("displayName", "==", queryStr), where("community", "==", slug), limit(1));
-                const snapName = await getDocs(qName);
-                if (!snapName.empty) {
-                    userDoc = snapName.docs[0];
-                } else {
-                     // 3. Try Real Name? (If field exists)
-                     // 4. Try HouseNo?
-                     // Let's stick to Name/QR for now as per prompt "輸入住戶姓名"
-                }
+            // Strategy: Search Global -> Prioritize Current Community -> Fallback to any match
+            // Sequence: QR Code (Text) -> QR Code (Legacy) -> HouseNo -> DisplayName
+
+            // 1. Try QR Code (qrCodeText)
+            if (!userDoc) {
+                try {
+                    let q = query(collection(db, "users"), where("qrCodeText", "==", queryStr));
+                    let snap = await getDocs(q);
+                    if (!snap.empty) {
+                        userDoc = snap.docs[0];
+                        console.log("[FetchPoints] Found by qrCodeText");
+                    }
+                } catch (e) { console.warn("qrCodeText query error", e); }
+            }
+
+            // 2. Try QR Code (qrCode - Legacy/Alt)
+            if (!userDoc) {
+                try {
+                    let q = query(collection(db, "users"), where("qrCode", "==", queryStr));
+                    let snap = await getDocs(q);
+                    if (!snap.empty) {
+                        userDoc = snap.docs[0];
+                        console.log("[FetchPoints] Found by qrCode");
+                    }
+                } catch (e) { console.warn("qrCode query error", e); }
+            }
+
+            // 3. Try HouseNo
+            if (!userDoc) {
+                try {
+                    const q = query(collection(db, "users"), where("houseNo", "==", queryStr));
+                    const snap = await getDocs(q);
+                    if (!snap.empty) {
+                        const targetSlug = (slug && slug !== "default") ? slug : "";
+                        let match = null;
+                        if (targetSlug) match = snap.docs.find(d => d.data().community === targetSlug);
+                        if (!match) match = snap.docs[0];
+                        userDoc = match;
+                        if (userDoc) console.log("[FetchPoints] Found by HouseNo");
+                    }
+                } catch (e) { console.warn("HouseNo query error", e); }
+            }
+
+            // 4. Try Display Name
+            if (!userDoc) {
+                try {
+                    const q = query(collection(db, "users"), where("displayName", "==", queryStr));
+                    const snap = await getDocs(q);
+                    if (!snap.empty) {
+                        const targetSlug = (slug && slug !== "default") ? slug : "";
+                        let match = null;
+                        if (targetSlug) match = snap.docs.find(d => d.data().community === targetSlug);
+                        if (!match) match = snap.docs[0];
+                        userDoc = match;
+                        if (userDoc) console.log("[FetchPoints] Found by DisplayName");
+                    }
+                } catch (e) { console.warn("DisplayName query error", e); }
             }
             
             if (userDoc) {
                 const uData = userDoc.data();
-                ptsInput.value = uData.points || 0;
-                // Also auto-correct the name if it was a QR scan
-                document.getElementById("res-booker").value = uData.displayName || uData.realName || queryStr;
+                let points = 0;
+                const houseNo = uData.houseNo;
+                let community = uData.community; 
+
+                // If community is missing, try to infer or default to current admin slug
+                if (!community || community === "default") {
+                    if (uData.address && uData.address.includes("上碧潭")) {
+                         // Try to find community ID for "上碧潭"
+                         try {
+                             const commQ = query(collection(db, "communities"), where("name", "==", "上碧潭"), limit(1));
+                             const commSnap = await getDocs(commQ);
+                             if (!commSnap.empty) community = commSnap.docs[0].id;
+                         } catch(e) {}
+                    }
+                }
+                
+                // Final Fallback: Use current admin slug if user has no community
+                // This assumes if admin scans a user, that user belongs to admin's community
+                if ((!community || community === "default") && slug && slug !== "default") {
+                    console.log("[FetchPoints] User has no community, defaulting to current admin slug:", slug);
+                    community = slug;
+                }
+                
+                if (!community || community === "default") {
+                     statusDiv.textContent = "錯誤：該用戶無社區資料";
+                     statusDiv.style.color = "red";
+                     ptsInput.placeholder = "資料異常(無社區)";
+                     return;
+                }
+
+                // Fetch Points
+                if (houseNo) {
+                    let found = false;
+                    try {
+                        // Correct path: communities/{community}/points_balances/{houseNo}
+                        const bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
+                        if (bdoc.exists()) {
+                            points = bdoc.data().balance || 0;
+                            found = true;
+                        }
+                    } catch(e) { console.warn("FetchPoints: Path 1 failed", e); }
+                    
+                    if (!found) {
+                        try {
+                            const pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
+                            if (pdoc.exists()) {
+                                const data = pdoc.data();
+                                const bmap = data.balances || {};
+                                points = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+                            }
+                        } catch(e) {}
+                    }
+                }
+
+                ptsInput.value = points;
+                
+                // Update Booker Name
+                // Always prefer HouseNo (Standard)
+                const finalName = houseNo || uData.displayName || uData.realName || queryStr;
+                document.getElementById("res-booker").value = finalName;
+                
+                ptsInput.placeholder = "";
+                statusDiv.textContent = `已找到：${uData.displayName || finalName} (點數: ${points})`;
+                statusDiv.style.color = "green";
+                
+                console.log("Found user:", uData, "Points:", points);
             } else {
                 ptsInput.value = "";
-                ptsInput.placeholder = "查無此人";
+                ptsInput.placeholder = `查無此人: ${queryStr}`;
+                statusDiv.textContent = "查無此人";
+                statusDiv.style.color = "red";
+                console.warn("[FetchPoints] No matching user found for:", queryStr);
+                
+                // Debug suggestion
+                if (queryStr && queryStr.length > 10) {
+                     console.log("Tip: Check if QR Code contains hidden characters or is a URL.");
+                }
             }
         } catch(e) {
-            console.error("Fetch points failed", e);
+            console.error("Fetch points fatal error", e);
+            ptsInput.value = "";
             ptsInput.placeholder = "查詢失敗";
+            if(statusDiv) statusDiv.textContent = "系統錯誤";
         }
     };
 
@@ -6731,9 +7284,20 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
         const btnScan = document.getElementById("btn-scan-qr");
         
         if (inpBooker) {
+            // Trigger fetch on Blur
             inpBooker.addEventListener("blur", () => {
-                fetchPoints(inpBooker.value.trim());
+                const val = inpBooker.value.trim();
+                if(val) fetchPoints(val);
             });
+            // Trigger fetch on Enter key
+            inpBooker.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = inpBooker.value.trim();
+                    if(val) fetchPoints(val);
+                }
+            });
+            
             // Also fetch immediately if editing and value exists
             if (inpBooker.value) {
                 fetchPoints(inpBooker.value.trim());
@@ -6757,8 +7321,10 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                 const startVal = document.getElementById("res-start").value;
                 const endVal = document.getElementById("res-end").value;
                 const bookerVal = document.getElementById("res-booker").value;
-                const statusVal = document.getElementById("res-status").value;
-                const paymentVal = document.getElementById("res-payment").value;
+                const statusEl = document.getElementById("res-status");
+                const statusVal = statusEl ? statusEl.value : (item && item.status ? item.status : "已預約");
+                const paymentEl = document.getElementById("res-payment");
+                const paymentVal = paymentEl ? paymentEl.value : (item && item.paymentStatus ? item.paymentStatus : "未扣點");
                 const noteVal = document.getElementById("res-note").value;
 
                 if (!dateVal || !startVal || !endVal || !bookerVal) {
@@ -6771,11 +7337,12 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
 
                 // Check for overlaps
                 try {
+                    // Optimized query to avoid composite index requirement
+                    // We fetch all reservations for this facility/date and filter status client-side
                     const q = query(
                         collection(db, "communities", slug, "reservations"),
                         where("facility", "==", facilityKey),
-                        where("date", "==", dateVal),
-                        where("status", "!=", "已取消")
+                        where("date", "==", dateVal)
                     );
                     const querySnapshot = await getDocs(q);
                     let hasOverlap = false;
@@ -6783,6 +7350,10 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                     querySnapshot.forEach((doc) => {
                          if (isEdit && doc.id === item.id) return; // Skip self
                          const d = doc.data();
+                         
+                         // Filter cancelled reservations client-side
+                         if (d.status === "已取消") return;
+
                          // Overlap if (NewStart < ExistingEnd) and (NewEnd > ExistingStart)
                          if (startVal < d.endTime && endVal > d.startTime) {
                              hasOverlap = true;
@@ -7214,7 +7785,8 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                             const seq = (row["序號"] || "").toString().trim();
                             const houseNo = (row["戶號"] || "").toString().trim();
                             const subNoRaw = row["子戶號"];
-                            const qrCodeText = (row["QR code"] || "").trim();
+                            // Support multiple column names for QR Code
+                            const qrCodeText = (row["QR code"] || row["QR code碼"] || row["QRcode"] || "").trim();
                             const address = (row["地址"] || "").trim();
                             const area = (row["坪數"] || "").toString().trim();
                             const ownershipRatio = (row["區分權比"] || "").toString().trim();
@@ -7532,6 +8104,11 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                 const names = members.map(m => m.displayName || (m.email || "").split("@")[0]).filter(Boolean);
                 const subCount = members.filter(m => typeof m.subNo === "number").length || members.length;
                 const address = (members[0] && members[0].address) || "";
+                const mainMember = members.find(m => !m.subNo || m.subNo === 0) || members[0];
+                const qrText = (mainMember && mainMember.qrCodeText) || "";
+                let qrImg = "";
+                if (qrText) qrImg = await getQrDataUrl(qrText, 120);
+
                 let balance = 0;
                 try {
                   const bdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`));
@@ -7548,12 +8125,24 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                 }
                 if (summary) {
                   summary.innerHTML = `
-                    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-items:center;">
-                      <div><strong>戶號</strong>：${houseNo}</div>
-                      <div><strong>子戶號數量</strong>：${subCount}</div>
-                      <div><strong>子戶號姓名</strong>：${names.join("、") || "—"}</div>
-                      <div><strong>地址</strong>：${address || "—"}</div>
-                      <div style="grid-column:1 / -1;"><strong>點數</strong>：<span style="color:#f59e0b;font-weight:800;font-size:20px;">${balance}</span></div>
+                    <div style="display:flex;align-items:center;gap:16px;">
+                      ${qrImg ? `
+                        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                           <img src="${qrImg}" style="width:120px;height:120px;border:1px solid #eee;border-radius:8px;">
+                           <div style="font-size:14px;font-weight:500;color:#333;">${qrText}</div>
+                        </div>
+                      ` : `
+                        <div style="width:120px;height:120px;background:#f3f4f6;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:12px;">
+                           無QR Code
+                        </div>
+                      `}
+                      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-items:center;flex:1;">
+                        <div><strong>戶號</strong>：${houseNo}</div>
+                        <div><strong>子戶號數量</strong>：${subCount}</div>
+                        <div><strong>子戶號姓名</strong>：${names.join("、") || "—"}</div>
+                        <div><strong>地址</strong>：${address || "—"}</div>
+                        <div style="grid-column:1 / -1;"><strong>點數</strong>：<span style="color:#f59e0b;font-weight:800;font-size:20px;">${balance}</span></div>
+                      </div>
                     </div>
                   `;
                 }
@@ -7562,7 +8151,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                   try {
                     let logs = [];
                     try {
-                      const qLogs = query(collection(db, `communities/${slug}/app_modules/points_logs`), where("houseNo", "==", houseNo));
+                      const qLogs = query(collection(db, "communities", slug, "points_logs"), where("houseNo", "==", houseNo));
                       const snapLogs = await getDocs(qLogs);
                       logs = snapLogs.docs.map(d => ({ id: d.id, ...d.data() }));
                     } catch (permErr) {
