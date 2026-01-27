@@ -452,6 +452,23 @@
       const container = document.getElementById("slots-container");
       container.innerHTML = '';
       
+      // Get selected date and current time
+      const datePicker = document.getElementById("date-picker");
+      const selectedDateVal = datePicker ? datePicker.value : "";
+      
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth()+1).padStart(2,'0');
+      const d = String(now.getDate()).padStart(2,'0');
+      const todayStr = `${y}-${m}-${d}`;
+      
+      const nowH = now.getHours();
+      const nowM = now.getMinutes();
+      const nowTimeStr = `${String(nowH).padStart(2,'0')}:${String(nowM).padStart(2,'0')}`;
+      
+      const isToday = (selectedDateVal === todayStr);
+      const isPastDate = (selectedDateVal < todayStr);
+      
       // Default operating hours: 08:00 - 22:00
       const startHour = 8;
       const endHour = 22;
@@ -463,21 +480,59 @@
         const endStr = `${String(h+1).padStart(2, '0')}:00`;
         
         // Check if booked
-        // Simple check: overlap with any reservation
-        // Reservation has startTime and endTime (e.g. "09:00", "10:00")
         const isBooked = reservations.some(res => {
            return (res.startTime < endStr && res.endTime > startStr);
         });
         
-        const bookedClass = isBooked ? 'booked' : '';
-        // If booked, show info (or just 'Booked' for privacy? Admin usually sees name, public usually sees 'Booked')
-        // This is a resident preview, so maybe show HouseNo if available, or just '已預約'
-        // Let's show "已預約" for now.
         const label = isBooked ? `${startStr}~${endStr} (已預約)` : `${startStr}~${endStr}`;
-        const clickAction = isBooked ? '' : `onclick="openResidentReserve('${startStr}', '${endStr}')"`; 
+        let bookedClass = isBooked ? 'booked' : '';
+        let style = "";
+        let clickAction = "";
+        
+        // Logic for time/status
+        if (isPastDate) {
+            // Entire day is past
+            style = "background-color: #555; color: #ccc; cursor: not-allowed; border-color: #444;";
+            clickAction = ""; // No action
+            bookedClass = ""; // Override booked style to show gray
+        } else if (isToday) {
+            if (endStr <= nowTimeStr) {
+                // Slot passed
+                style = "background-color: #555; color: #ccc; cursor: not-allowed; border-color: #444;";
+                clickAction = "";
+                bookedClass = ""; // Override booked style
+            } else if (startStr <= nowTimeStr && nowTimeStr < endStr) {
+                // Current slot (Just within time)
+                if (isBooked) {
+                    // Booked takes precedence for action (cannot reserve), but maybe show as booked
+                    // But if booked, it's not "can be reserved". 
+                    // Let's keep booked class but maybe adjust style? 
+                    // Standard: Booked is Red.
+                    clickAction = "";
+                } else {
+                    // Available and Current -> Yellow
+                    style = "background-color: #fef08a; color: #854d0e; border: 1px solid #eab308;";
+                    clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
+                }
+            } else {
+                // Future slot
+                if (isBooked) {
+                    clickAction = "";
+                } else {
+                    clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
+                }
+            }
+        } else {
+            // Future date
+            if (isBooked) {
+                clickAction = "";
+            } else {
+                clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
+            }
+        }
         
         html += `
-          <button class="slot-btn ${bookedClass}" ${clickAction}>
+          <button class="slot-btn ${bookedClass}" style="${style}" ${clickAction}>
             ${label}
           </button>
         `;

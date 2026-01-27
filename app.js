@@ -6220,6 +6220,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         document.querySelectorAll(".slot-btn").forEach(btn => {
             btn.addEventListener("click", () => {
                 const resId = btn.dataset.resId;
+                const clickable = btn.getAttribute("data-clickable") !== "false";
                 if (resId) {
                     const item = items.find(i => i.id === resId);
                     
@@ -6290,6 +6291,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                         }
                     };
                 } else {
+                    if (!clickable) return;
                     const startTime = btn.dataset.start;
                     const endTime = btn.dataset.end;
                     
@@ -6374,7 +6376,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 // Only pass communityName if it exists, otherwise let preview page fetch it. Avoid passing "健身房".
                 const nameToPass = (communityName === "健身房") ? "" : communityName;
                 const baseParams = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
-                const params = `${baseParams}&v=20260127-4`;
+                const params = `${baseParams}&v=20260127-5`;
                 const url = `${window.location.origin}/preview-facility?${params}#${baseParams}`;
                 
                 let modal = document.getElementById("sys-modal");
@@ -6917,6 +6919,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const dateStr = formatDate(currentYear, currentMonth, d);
             const isSelected = dateStr === selectedDate;
             const isToday = dateStr === todayStr;
+            const isPast = dateStr < todayStr;
             const hasRes = items.some(i => i.date === dateStr);
             
             let classes = "cal-day";
@@ -6924,7 +6927,21 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             if(isToday) classes += " today";
             if(hasRes) classes += " has-res";
             
-            html += `<div class="${classes}" data-date="${dateStr}">${d}</div>`;
+            let style = "";
+            if(isPast) {
+                style = 'style="background-color: #f3f4f6; color: #9ca3af;"'; 
+                // Using a lighter gray for background (#f3f4f6) and gray text (#9ca3af) to indicate past but not too dark
+                // User said "dark gray background" (深灰色底). 
+                // Let's use a darker gray if they asked for it. 
+                // Previous slot was #555 (dark). 
+                // Calendar background is usually white. 
+                // If I make it #555 it might look like the slot button.
+                // Let's try #e5e7eb (gray-200) or #d1d5db (gray-300).
+                // Or #555 as requested? "身灰色" usually means deep gray.
+                style = 'style="background-color: #555; color: #ccc; border-color: #444;"';
+            }
+
+            html += `<div class="${classes}" data-date="${dateStr}" ${style}>${d}</div>`;
         }
         return html;
     };
@@ -6969,19 +6986,45 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
         if (slots.length === 0) return `<div style="text-align:center; color:#999; padding:20px;">無時段設定</div>`;
 
+        // Current date/time for past/current slot computation
+        const now = new Date();
+        const ty = now.getFullYear();
+        const tm = String(now.getMonth() + 1).padStart(2, '0');
+        const td = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${ty}-${tm}-${td}`;
+        const nowTimeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        const isPastDate = selectedDate < todayStr;
+        const isToday = selectedDate === todayStr;
+
         return slots.map(slot => {
             const label = `${slot.sTime}~${slot.eTime}`;
             const isReserved = !!slot.res;
             
-            let style = "width:100%; margin-bottom:0px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:left;";
+            let style = "width:100%; margin-bottom:0px; display:block; padding:5px; border-radius:4px; transition:all 0.2s; font-size:14px; text-align:left;";
+            let clickable = true;
             if (isReserved) {
                 if (slot.res.bookerName === "暫停") {
-                    style += "background-color: #4b5563; color: white; border: 1px solid #374151;";
+                    style += "background-color: #4b5563; color: white; border: 1px solid #374151; cursor:not-allowed;";
+                    clickable = false;
                 } else {
-                    style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb;";
+                    style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; cursor:pointer;";
+                    // Reserved slots open details; keep clickable for admin actions
+                    clickable = true;
                 }
             } else {
-                style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd;";
+                if (isPastDate || (isToday && (slot.eTime <= nowTimeStr))) {
+                    // Past slot (date past) or time already passed today -> deep gray, not clickable
+                    style += "background-color: #555; color: #ccc; border: 1px solid #444; cursor:not-allowed;";
+                    clickable = false;
+                } else if (isToday && (slot.sTime <= nowTimeStr) && (nowTimeStr < slot.eTime)) {
+                    // Current ongoing slot -> yellow and clickable
+                    style += "background-color: #fef08a; color: #854d0e; border: 1px solid #eab308; cursor:pointer;";
+                    clickable = true;
+                } else {
+                    // Future slot -> default styling
+                    style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd; cursor:pointer;";
+                    clickable = true;
+                }
             }
             
             const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">(${(() => {
@@ -6990,7 +7033,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 return m ? m[1] : nm;
             })()})</span>` : "";
 
-            return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? slot.res.id : ''}">
+            return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? slot.res.id : ''}" data-clickable="${clickable ? 'true' : 'false'}">
                 ${label}${info}
             </button>`;
         }).join("");
