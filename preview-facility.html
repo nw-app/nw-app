@@ -514,7 +514,7 @@
 
     window.openResidentReserve = async function(startStr, endStr) {
       const u = auth.currentUser;
-      let booker = "";
+      let bookerName = "";
       let points = "";
       let cost = 0;
 
@@ -525,7 +525,7 @@
             const d = snap.data();
             const houseNo = d.houseNo || "";
             const community = d.community || slug;
-            booker = d.qrCodeText || "";
+            bookerName = d.displayName || d.realName || houseNo;
 
             if (houseNo) {
               try {
@@ -581,9 +581,9 @@
                  </label>
              </div>
              <label class="field">
-               <div class="field-head">預約人</div>
+               <div class="field-head">預約人姓名</div>
                <div class="input-wrap" style="display: flex; gap: 8px; align-items: stretch;">
-                 <input type="text" id="res-booker" value="${booker}" placeholder="請輸入 QR Code 代碼" style="flex: 1;">
+                 <input type="text" id="res-booker" value="${bookerName}" readonly style="flex: 1; background:#f5f5f5; color:#666;">
                </div>
              </label>
              <div style="display:flex; gap:10px;">
@@ -609,109 +609,6 @@
       `;
 
       openModal(body);
-
-      // Define fetchPoints logic
-      const fetchPoints = async (queryStr) => {
-        if(!queryStr) return;
-        const ptsInput = document.getElementById("res-points");
-        const bookerInput = document.getElementById("res-booker");
-        
-        ptsInput.placeholder = "查詢中...";
-        ptsInput.value = ""; 
-        
-        try {
-          let userDoc = null;
-          
-          // 1. Try QR Code (Text)
-          if (!userDoc) {
-             try {
-                const q = query(collection(db, "users"), where("qrCodeText", "==", queryStr), limit(1));
-                const snap = await getDocs(q);
-                if (!snap.empty) userDoc = snap.docs[0];
-             } catch(e) {}
-          }
-          
-          // 2. Try QR Code (Legacy)
-          if (!userDoc) {
-             try {
-                const q = query(collection(db, "users"), where("qrCode", "==", queryStr), limit(1));
-                const snap = await getDocs(q);
-                if (!snap.empty) userDoc = snap.docs[0];
-             } catch(e) {}
-          }
-          
-          // 3. Try HouseNo
-          if (!userDoc) {
-             try {
-                const q = query(collection(db, "users"), where("houseNo", "==", queryStr));
-                const snap = await getDocs(q);
-                if (!snap.empty) {
-                   let match = null;
-                   if (slug) match = snap.docs.find(d => d.data().community === slug);
-                   if (!match) match = snap.docs[0];
-                   userDoc = match;
-                }
-             } catch(e) {}
-          }
-
-          if (userDoc) {
-             const uData = userDoc.data();
-             let points = 0;
-             const houseNo = uData.houseNo;
-             const community = uData.community || slug; 
-             
-             if (houseNo) {
-                try {
-                   // 1. Try 'points_balances'
-                   let bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
-                   if (bdoc.exists()) {
-                      points = bdoc.data().balance || 0;
-                   } else {
-                      // 2. Try 'app_modules/points'
-                      let pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
-                      if (pdoc.exists()) {
-                         const pdata = pdoc.data();
-                         const bmap = pdata.balances || {};
-                         if (typeof bmap[houseNo] === 'number') points = bmap[houseNo];
-                      }
-                   }
-                } catch(e) {}
-             }
-             
-             ptsInput.value = points;
-             // Update booker name to display name or houseNo
-             const finalName = houseNo || uData.displayName || queryStr;
-             if (bookerInput) bookerInput.value = finalName;
-             
-          } else {
-             ptsInput.placeholder = "查無此人";
-          }
-        } catch(e) {
-           console.warn("Fetch points error", e);
-           ptsInput.placeholder = "查詢失敗";
-        }
-      };
-
-      // Attach Listeners
-      const inpBooker = document.getElementById("res-booker");
-      if (inpBooker) {
-          inpBooker.addEventListener("blur", () => {
-              const val = inpBooker.value.trim();
-              if(val) fetchPoints(val);
-          });
-          inpBooker.addEventListener("keydown", (e) => {
-              if(e.key === "Enter") {
-                  e.preventDefault();
-                  const val = inpBooker.value.trim();
-                  if(val) fetchPoints(val);
-              }
-          });
-          
-          // Initial fetch if value exists
-          if(inpBooker.value) {
-              fetchPoints(inpBooker.value.trim());
-          }
-      }
     };
 
     init();
