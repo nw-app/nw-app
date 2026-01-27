@@ -6374,7 +6374,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 // Only pass communityName if it exists, otherwise let preview page fetch it. Avoid passing "健身房".
                 const nameToPass = (communityName === "健身房") ? "" : communityName;
                 const baseParams = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
-                const params = `${baseParams}&v=20260127-2`;
+                const params = `${baseParams}&v=20260127-4`;
                 const url = `${window.location.origin}/preview-facility?${params}#${baseParams}`;
                 
                 let modal = document.getElementById("sys-modal");

@@ -523,11 +523,21 @@
           const snap = await getDoc(doc(db, "users", u.uid));
           if (snap.exists()) {
             const d = snap.data();
-            const houseNo = d.houseNo || "";
+            const houseNo = (d.houseNo || "").trim();
             const community = d.community || slug;
-            bookerName = d.displayName || d.realName || houseNo;
+            const qrCodeText = d.qrCodeText || "";
+            const displayName = d.displayName || d.realName || "";
+            
+            // Format: <QR code碼>-<戶號>-<姓名>
+            const parts = [];
+            if(qrCodeText) parts.push(qrCodeText);
+            if(houseNo) parts.push(houseNo);
+            if(displayName) parts.push(displayName);
+            
+            bookerName = parts.length > 0 ? parts.join("-") : (houseNo || "未知");
 
             if (houseNo) {
+              points = 0; // Default to 0 if user has houseNo
               try {
                 // 1. Try 'points_balances' collection
                 let bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
@@ -539,8 +549,9 @@
                   if (pdoc.exists()) {
                      const pdata = pdoc.data();
                      const bmap = pdata.balances || {};
-                     if (typeof bmap[houseNo] === 'number') {
-                         points = bmap[houseNo];
+                     const val = bmap[houseNo];
+                     if (val !== undefined && val !== null) {
+                         points = val;
                      }
                   }
                 }
