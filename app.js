@@ -6373,8 +6373,9 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 // Also add hash params as backup in case redirect strips query params
                 // Only pass communityName if it exists, otherwise let preview page fetch it. Avoid passing "健身房".
                 const nameToPass = (communityName === "健身房") ? "" : communityName;
-                const params = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
-                const url = `${window.location.origin}/preview-facility?${params}#${params}`;
+                const baseParams = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
+                const params = `${baseParams}&v=20260127`;
+                const url = `${window.location.origin}/preview-facility?${params}#${baseParams}`;
                 
                 let modal = document.getElementById("sys-modal");
                 if (!modal) {
@@ -6972,7 +6973,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const label = `${slot.sTime}~${slot.eTime}`;
             const isReserved = !!slot.res;
             
-            let style = "width:100%; margin-bottom:8px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:left;";
+            let style = "width:100%; margin-bottom:0px; display:block; padding:5px; border-radius:4px; cursor:pointer; transition:all 0.2s; font-size:14px; text-align:left;";
             if (isReserved) {
                 if (slot.res.bookerName === "暫停") {
                     style += "background-color: #4b5563; color: white; border: 1px solid #374151;";
@@ -7072,14 +7073,22 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
            </div>
            <label class="field">
              <div class="field-head">預約人</div>
-             <div class="input-wrap" style="display: flex; gap: 8px;">
+             <div class="input-wrap" style="display: flex; gap: 8px; align-items: stretch;">
                <input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入 QR Code 代碼" style="flex: 1;">
-               <button type="button" class="btn small action-btn" id="btn-scan-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center;" title="掃碼輸入">
-                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                   <rect x="3" y="3" width="7" height="7"></rect>
-                   <rect x="14" y="3" width="7" height="7"></rect>
-                   <rect x="14" y="14" width="7" height="7"></rect>
-                   <rect x="3" y="14" width="7" height="7"></rect>
+               <button type="button" class="btn small action-btn" id="btn-scan-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center; height: auto;" title="掃碼輸入">
+                 <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                   <rect width="5" height="5" x="3" y="3" rx="1" />
+                   <rect width="5" height="5" x="16" y="3" rx="1" />
+                   <rect width="5" height="5" x="3" y="16" rx="1" />
+                   <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+                   <path d="M21 21v.01" />
+                   <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+                   <path d="M3 12h.01" />
+                   <path d="M12 3h.01" />
+                   <path d="M12 16v.01" />
+                   <path d="M16 12h1" />
+                   <path d="M21 12v.01" />
+                   <path d="M12 21v-1" />
                  </svg>
                </button>
              </div>
@@ -7306,12 +7315,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
         
         if (btnScan) {
             btnScan.addEventListener("click", () => {
-                // Simulate Scan
-                const code = prompt("請掃描 QR Code (或手動輸入代碼):");
-                if (code) {
-                    inpBooker.value = code;
-                    fetchPoints(code);
-                }
+                openQRScanner();
             });
         }
         
@@ -10497,6 +10501,33 @@ window.openQRScanner = function() {
   }, 100);
 };
 
+window.openQRScanner = function() {
+    // Check/Create Modal
+    let modal = document.getElementById('qr-scanner-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'qr-scanner-modal';
+        modal.className = 'modal'; 
+        modal.style.cssText = "display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99999; align-items:center; justify-content:center;";
+        
+        modal.innerHTML = `
+            <div style="background:#fff; padding:20px; border-radius:12px; width:90%; max-width:400px; position:relative; display:flex; flex-direction:column; align-items:center;">
+                <h3 style="margin:0 0 15px 0; color:#333;">掃描 QR Code</h3>
+                <div id="qr-reader" style="width:100%;"></div>
+                <button onclick="closeQRScanner()" style="margin-top:15px; padding:8px 20px; border:none; background:#eee; border-radius:6px; cursor:pointer; color:#333;">關閉</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    modal.style.display = 'flex';
+    
+    // Start Scanner
+    setTimeout(() => {
+        startScannerInstance({ fps: 10, qrbox: 250 });
+    }, 100);
+};
+
 function startScannerInstance(config) {
     if (typeof Html5Qrcode === 'undefined') {
         alert("掃描模組尚未載入，請稍後再試或重新整理頁面。");
@@ -10537,6 +10568,8 @@ function onScanSuccess(decodedText, decodedResult) {
   const bookerInput = document.getElementById('res-booker');
   if (bookerInput) {
     bookerInput.value = decodedText;
+    // Trigger blur to fetch points
+    bookerInput.dispatchEvent(new Event('blur'));
   }
   
   if (navigator.vibrate) navigator.vibrate(200);
