@@ -579,17 +579,21 @@
           if (snap.exists()) {
             const d = snap.data();
             const houseNo = (d.houseNo || "").trim();
+            const subNo = (d.subNo !== undefined && d.subNo !== null) ? d.subNo : "0";
             const community = d.community || slug;
             const qrCodeText = d.qrCodeText || "";
             const displayName = d.displayName || d.realName || "";
             
-            // Format: <QR code碼>-<戶號>-<姓名>
-            const parts = [];
-            if(qrCodeText) parts.push(qrCodeText);
-            if(houseNo) parts.push(houseNo);
-            if(displayName) parts.push(displayName);
-            
-            bookerName = parts.length > 0 ? parts.join("-") : (houseNo || "未知");
+            // Format: 本人(戶號-子戶號)
+            if (houseNo) {
+                bookerName = `本人(${houseNo}-${subNo})`;
+            } else {
+                // Fallback to legacy format if no houseNo
+                const parts = [];
+                if(qrCodeText) parts.push(qrCodeText);
+                if(displayName) parts.push(displayName);
+                bookerName = parts.length > 0 ? parts.join("-") : "未知";
+            }
 
             if (houseNo) {
               points = 0; // Default to 0 if user has houseNo
@@ -718,46 +722,32 @@
             const user = auth.currentUser;
             if (!user) throw new Error("請先登入");
 
-            await runTransaction(db, async (t) => {
-                // 1. Check User Points
-                const userRef = doc(db, "users", user.uid);
-                const userSnap = await t.get(userRef);
-                if (!userSnap.exists()) throw new Error("找不到用戶資料");
+            // 1. Check User Points (Validation Only)
+            const userRef = doc(db, "users", user.uid);
+            const userSnap = await getDoc(userRef);
+            if (!userSnap.exists()) throw new Error("找不到用戶資料");
 
-                const userData = userSnap.data();
-                const currentPoints = userData.points || 0;
+            const userData = userSnap.data();
+            const currentPoints = userData.points || 0;
 
-                if (cost > 0 && currentPoints < cost) {
-                    throw new Error(`點數不足 (現有: ${currentPoints}, 需要: ${cost})`);
-                }
+            if (cost > 0 && currentPoints < cost) {
+                throw new Error(`點數不足 (現有: ${currentPoints}, 需要: ${cost})`);
+            }
 
-                // 2. Create Reservation
-                const resRef = doc(collection(db, "communities", slug, "reservations"));
-                t.set(resRef, {
-                    facility: currentFacilityKey,
-                    date: date,
-                    startTime: start,
-                    endTime: end,
-                    bookerName: booker,
-                    note: note,
-                    status: "valid",
-                    createdAt: serverTimestamp(),
-                    createdBy: user.uid
-                });
-
-                // 3. Deduct Points & Log
-                if (cost > 0) {
-                    t.update(userRef, { points: currentPoints - cost });
-
-                    const logRef = doc(collection(db, "communities", slug, "points_logs"));
-                    t.set(logRef, {
-                        houseNo: userData.houseNo || booker,
-                        reason: `設施預約: ${currentFacilityName || currentFacilityKey}`,
-                        delta: -cost,
-                        operator: "resident",
-                        createdAt: serverTimestamp()
-                    });
-                }
+            // 2. Create Reservation (No deduction here)
+            // Use Date.now() for compatibility with Admin Panel which expects timestamps it can parse easily
+            // Note: Admin Panel might expect 'createdAt' to be a number.
+            
+            await addDoc(collection(db, "communities", slug, "reservations"), {
+                facility: currentFacilityKey,
+                date: date,
+                startTime: start,
+                endTime: end,
+                bookerName: booker,
+                note: note,
+                status: "valid", // Initial status
+                createdAt: Date.now(), // Use client timestamp for consistency
+                createdBy: user.uid
             });
 
             alert("預約成功！");
