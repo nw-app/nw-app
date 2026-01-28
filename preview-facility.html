@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>設施預約</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="suppress-errors.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 0; color: #1f2937; height: 100vh; display: flex; flex-direction: column; }
     .container { max-width: 600px; margin: 0 auto; background: #fff; height: 100%; width: 100%; display: flex; flex-direction: column; }
@@ -184,6 +186,7 @@
       color: #fff;
     }
   </style>
+
 </head>
 <body>
   <div class="container">
@@ -216,6 +219,7 @@
       <!-- Slots rendered here -->
     </div>
   </div>
+
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
@@ -584,9 +588,10 @@
             const qrCodeText = d.qrCodeText || "";
             const displayName = d.displayName || d.realName || "";
             
-            // Format: 本人(戶號-子戶號)
+            // Format: 戶號-子戶號-Name or 戶號-子戶號
             if (houseNo) {
-                bookerName = `本人(${houseNo}-${subNo})`;
+                const nameToUse = displayName || "";
+                bookerName = nameToUse ? `${houseNo}-${subNo}-${nameToUse}` : `${houseNo}-${subNo}`;
             } else {
                 // Fallback to legacy format if no houseNo
                 const parts = [];
@@ -689,7 +694,7 @@
           </div>
           <div class="modal-foot">
             <button class="btn action-btn" onclick="closeModal()">取消</button>
-            <button class="btn action-btn" style="background-color: #ef4444; color: white;" onclick="confirmReservation()">確定</button>
+            <button class="btn action-btn primary" id="btn-confirm" onclick="confirmReservation()" style="background-color: #ef4444; color: white;">確定</button>
           </div>
         </div>
       `;

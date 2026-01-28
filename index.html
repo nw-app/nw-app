@@ -9,6 +9,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.json">
+  <script src="suppress-errors.js"></script>
+
 </head>
 <body>
   <div id="orientation-tip">
@@ -71,6 +74,68 @@
     </section>
   </main>
 
+
   <script type="module" src="app.js"></script>
+
+  <!-- PWA Install Modal -->
+  <div id="pwa-install-modal" class="pwa-modal-overlay">
+    <div class="pwa-modal">
+      <h3>安裝應用程式</h3>
+      <p>將「西北e生活」安裝到您的裝置，享受更流暢的原生體驗！</p>
+      <div class="pwa-btns">
+        <button id="btn-pwa-cancel" class="btn">稍後再說</button>
+        <button id="btn-pwa-install" class="btn primary">立即安裝</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').then(registration => {
+          console.log('SW registered: ', registration);
+        }).catch(registrationError => {
+          console.log('SW registration failed: ', registrationError);
+        });
+      });
+    }
+
+    // PWA Install Prompt
+    let deferredPrompt;
+    const pwaModal = document.getElementById('pwa-install-modal');
+    const btnInstall = document.getElementById('btn-pwa-install');
+    const btnCancel = document.getElementById('btn-pwa-cancel');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      deferredPrompt = e;
+      // Show the install prompt automatically
+      console.log('beforeinstallprompt fired, showing modal');
+      pwaModal.classList.add('show');
+    });
+
+    btnInstall.addEventListener('click', async () => {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`User response to the install prompt: ${outcome}`);
+        deferredPrompt = null;
+      }
+      pwaModal.classList.remove('show');
+    });
+
+    btnCancel.addEventListener('click', () => {
+      pwaModal.classList.remove('show');
+    });
+
+    // Optional: Detect if app is launched in standalone mode
+    window.addEventListener('appinstalled', () => {
+      console.log('App installed successfully');
+      pwaModal.classList.remove('show');
+    });
+  </script>
 </body>
 </html>

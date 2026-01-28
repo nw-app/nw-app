@@ -3,6 +3,10 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWith
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
 import { initializeFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
+// === Error Suppression Logic ===
+// Note: Global error suppression is now handled in the <head> of each HTML file.
+
+
 function initGlobalLayout() {
   // Only apply to Community Admin (body has class "admin")
   if (!document.body.classList.contains('admin')) return;
@@ -75,44 +79,7 @@ const db = initializeFirestore(app, {
 });
 const storage = getStorage(app);
 setLogLevel("silent");
-try {
-  const _origError = console.error.bind(console);
-  console.error = (...args) => {
-    const s = args.map(a => {
-      if (typeof a === "string") return a;
-      if (a && typeof a === "object" && a.message) return String(a.message);
-      return "";
-    }).join(" ");
-    if (
-      s.includes("google.firestore.v1.Firestore/Listen/channel") ||
-      s.includes("net::ERR_ABORTED")
-    ) {
-      return;
-    }
-    _origError(...args);
-  };
-} catch {}
-try {
-  const suppress = (msg) => {
-    const s = String(msg || "");
-    return s.includes("google.firestore.v1.Firestore/Listen/channel") || s.includes("net::ERR_ABORTED");
-  };
-  window.addEventListener("error", (e) => {
-    const m = e && (e.message || (e.error && e.error.message));
-    if (suppress(m)) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    }
-  }, true);
-  window.addEventListener("unhandledrejection", (e) => {
-    const r = e && e.reason;
-    const m = (r && r.message) ? r.message : String(r || "");
-    if (suppress(m)) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    }
-  }, true);
-} catch {}
+
 // Secondary app for admin account creation to avoid switching current session
 const createApp = initializeApp(firebaseConfig, "create-admin");
 const createAuth = getAuth(createApp);
@@ -6116,6 +6083,50 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const dateB = b.date + (b.startTime || "");
             return dateA.localeCompare(dateB);
         });
+
+        // Pre-fetch user names
+        const houseNos = new Set();
+        items.forEach(item => {
+             if (!item.bookerName || item.bookerName === "暫停") return;
+             const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
+             if (m) houseNos.add(m[1]);
+        });
+        
+        const userMap = {};
+        const hList = Array.from(houseNos);
+        if (hList.length > 0) {
+            const chunks = [];
+            for (let i=0; i<hList.length; i+=10) chunks.push(hList.slice(i, i+10));
+            for (const chunk of chunks) {
+                try {
+                    const q = query(collection(db, "users"), where("community", "==", slug), where("houseNo", "in", chunk));
+                    const usnap = await getDocs(q);
+                    usnap.forEach(d => {
+                        const u = d.data();
+                        userMap[`${u.houseNo}-${u.subNo}`] = u.name || u.realName || u.displayName || "住戶";
+                    });
+                } catch(e) { console.error("Error fetching users", e); }
+            }
+        }
+
+        items.forEach(item => {
+            if (!item.bookerName) { item.formattedBooker = ""; return; }
+            if (item.bookerName === "暫停") { item.formattedBooker = "暫停"; return; }
+            
+            const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
+            if (m) {
+                const h = m[1];
+                const s = m[2];
+                const name = userMap[`${h}-${s}`];
+                if (name) {
+                    item.formattedBooker = `${h}-${s}-${name}`;
+                } else {
+                    item.formattedBooker = `${h}-${s}`; 
+                }
+            } else {
+                item.formattedBooker = item.bookerName;
+            }
+        });
     } catch (e) {
         console.error("Failed to load reservations", e);
     }
@@ -6266,7 +6277,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                         <div style="margin-bottom:24px; text-align:left; font-size:15px; line-height:1.6; color:#374151; background:#f9fafb; padding:12px; border-radius:8px;">
                             <div><strong>日期：</strong>${item.date}</div>
                             <div><strong>時段：</strong>${item.startTime} ~ ${item.endTime}</div>
-                            ${ !isPaused ? `<div><strong>預約人：</strong>${item.bookerName}</div>` : '' }
+                            ${ !isPaused ? `<div><strong>預約人：</strong>${item.formattedBooker || item.bookerName}</div>` : '' }
                             ${ isPaused ? `<div><strong>狀態：</strong>暫停開放</div>` : '' }
                         </div>
                         <div style="display:flex; gap:12px; justify-content:center;">
@@ -6473,10 +6484,33 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
                     // 2. Prepare user and points data
                     const booker = item.bookerName || "";
-                    // Extract HouseNo: matches (A001) or just A001
+                    let userName = "未知";
+                    
+                    // Robust extraction logic
                     houseNo = booker;
-                    const m = booker.match(/^\(([^)]+)\)/); 
-                    if (m) houseNo = m[1];
+                    let extractedSubNo = null;
+
+                    // 1. Try A001-1 or A001-1-Name pattern (Case Insensitive)
+                    let m = booker.match(/([A-Za-z0-9]+)-(\d+)/);
+                    if (m) {
+                        houseNo = m[1];
+                        extractedSubNo = m[2];
+                        subNo = extractedSubNo;
+                    } else {
+                        // 2. Try parens extraction: (A001-1) or (A001)
+                        m = booker.match(/\(([^)]+)\)/);
+                        if (m) {
+                            const content = m[1];
+                            const mInner = content.match(/([A-Z0-9]+)-(\d+)/);
+                            if (mInner) {
+                                houseNo = mInner[1];
+                                extractedSubNo = mInner[2];
+                                subNo = extractedSubNo;
+                            } else {
+                                houseNo = content;
+                            }
+                        }
+                    }
                     houseNo = houseNo.trim();
 
                     // Resolve canonical HouseNo and SubNo from DB if possible
@@ -6493,11 +6527,22 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                         }
                         
                         if (!snapUser.empty) {
+                            let candidates = snapUser.docs.map(d => d.data());
+                            
                             // Filter by community if possible
                             if (slug && slug !== "default") {
-                                targetUser = snapUser.docs.find(d => d.data().community === slug);
+                                candidates = candidates.filter(d => d.community === slug);
                             }
-                            if (!targetUser) targetUser = snapUser.docs[0];
+                            
+                            // Filter by extracted subNo if available
+                            if (extractedSubNo) {
+                                const match = candidates.find(d => String(d.subNo) === String(extractedSubNo));
+                                if (match) targetUser = { data: () => match };
+                            }
+                            
+                            if (!targetUser && candidates.length > 0) {
+                                targetUser = { data: () => candidates[0] };
+                            }
                             
                             if (targetUser) {
                                 const d = targetUser.data();
@@ -6508,6 +6553,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                                 if (d.subNo !== undefined && d.subNo !== null && d.subNo !== "") {
                                     subNo = d.subNo;
                                 }
+                                userName = d.name || d.realName || d.displayName || "住戶";
                             }
                         }
                     } catch(e) {
@@ -6722,6 +6768,10 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                            <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
                              <span style="color:#6b7280;">子戶號</span>
                              <span style="font-weight:600;">${subNo}</span>
+                           </div>
+                           <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                             <span style="color:#6b7280;">姓名</span>
+                             <span style="font-weight:600;">${userName}</span>
                            </div>
                            <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
                              <span style="color:#6b7280;">該戶點數</span>
@@ -6992,13 +7042,13 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const sTime = formatTime(currentH, currentM);
             const eTime = formatTime(nextH, nextM);
             
-            // Find reservation
-            const res = dayItems.find(i => i.startTime === sTime);
+            // Find reservation - CHANGED to filter to support multiple reservations per slot
+            const resList = dayItems.filter(i => i.startTime === sTime);
             
             slots.push({
                 sTime,
                 eTime,
-                res
+                resList
             });
 
             currentH = nextH;
@@ -7019,45 +7069,75 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
         return slots.map(slot => {
             const label = `${slot.sTime}~${slot.eTime}`;
-            const isReserved = !!slot.res;
             
-            let style = "width:100%; margin-bottom:0px; display:block; padding:5px; border-radius:4px; transition:all 0.2s; font-size:14px; text-align:left;";
-            let clickable = true;
-            if (isReserved) {
-                if (slot.res.bookerName === "暫停") {
-                    style += "background-color: #4b5563; color: white; border: 1px solid #374151; cursor:not-allowed;";
-                    clickable = false;
+            const renderButton = (res) => {
+                const isReserved = !!res;
+                
+                let style = "width:100%; margin-bottom:2px; display:block; padding:5px; border-radius:4px; transition:all 0.2s; font-size:14px; text-align:left;";
+                let clickable = true;
+                if (isReserved) {
+                    if (res.bookerName === "暫停") {
+                        style += "background-color: #4b5563; color: white; border: 1px solid #374151; cursor:not-allowed;";
+                        clickable = false;
+                    } else {
+                        style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; cursor:pointer;";
+                        // Reserved slots open details; keep clickable for admin actions
+                        clickable = true;
+                    }
                 } else {
-                    style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; cursor:pointer;";
-                    // Reserved slots open details; keep clickable for admin actions
-                    clickable = true;
+                    if (isPastDate || (isToday && (slot.eTime <= nowTimeStr))) {
+                        // Past slot (date past) or time already passed today -> deep gray, not clickable
+                        style += "background-color: #555; color: #ccc; border: 1px solid #444; cursor:not-allowed;";
+                        clickable = false;
+                    } else if (isToday && (slot.sTime <= nowTimeStr) && (nowTimeStr < slot.eTime)) {
+                        // Current ongoing slot -> yellow and clickable
+                        style += "background-color: #fef08a; color: #854d0e; border: 1px solid #eab308; cursor:pointer;";
+                        clickable = true;
+                    } else {
+                        // Future slot -> default styling
+                        style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd; cursor:pointer;";
+                        clickable = true;
+                    }
                 }
-            } else {
-                if (isPastDate || (isToday && (slot.eTime <= nowTimeStr))) {
-                    // Past slot (date past) or time already passed today -> deep gray, not clickable
-                    style += "background-color: #555; color: #ccc; border: 1px solid #444; cursor:not-allowed;";
-                    clickable = false;
-                } else if (isToday && (slot.sTime <= nowTimeStr) && (nowTimeStr < slot.eTime)) {
-                    // Current ongoing slot -> yellow and clickable
-                    style += "background-color: #fef08a; color: #854d0e; border: 1px solid #eab308; cursor:pointer;";
-                    clickable = true;
-                } else {
-                    // Future slot -> default styling
-                    style += "background-color: #f5f5f5; color: #333; border: 1px solid #ddd; cursor:pointer;";
-                    clickable = true;
-                }
-            }
-            
-            const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">(${(() => {
-                const nm = slot.res.bookerName || "";
-                const m = nm.match(/^\(([^)]+)\)\s/);
-                return m ? m[1] : nm;
-            })()})</span>` : "";
+                
+                const info = isReserved ? ` <span style="font-size:12px; opacity:0.8;">${res.formattedBooker || formatBookerName(res.bookerName)}</span>` : "";
 
-            return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? slot.res.id : ''}" data-clickable="${clickable ? 'true' : 'false'}">
-                ${label}${info}
-            </button>`;
+                return `<button class="slot-btn" style="${style}" data-start="${slot.sTime}" data-end="${slot.eTime}" data-res-id="${isReserved ? res.id : ''}" data-clickable="${clickable ? 'true' : 'false'}">
+                    ${label}${info}
+                </button>`;
+            };
+
+            if (slot.resList && slot.resList.length > 0) {
+                return slot.resList.map(res => renderButton(res)).join("");
+            } else {
+                return renderButton(null);
+            }
         }).join("");
+    };
+
+    const formatBookerName = (name) => {
+        if (!name) return "";
+        // Handle "本人(A001-1)" -> "A001-1" (Strip "本人")
+        const m = name.match(/^本人\(([^)]+)\)$/);
+        if (m) {
+            return `${m[1]}`;
+        }
+        // Handle "(A001-1) Name" -> "A001-1-Name"
+        const m2 = name.match(/^\(([^)]+)\)\s*(.+)$/);
+        if (m2) {
+            return `${m2[1]}-${m2[2]}`;
+        }
+        // Handle "Name(A001-1)" -> "A001-1-Name"
+        const m3 = name.match(/^(.+)\(([^)]+)\)$/);
+        if (m3) {
+            return `${m3[2]}-${m3[1]}`;
+        }
+        // Handle "(A001-1)" -> "A001-1" (No Name)
+        const m4 = name.match(/^\(([^)]+)\)$/);
+        if (m4) {
+            return m4[1];
+        }
+        return name;
     };
 
     const generateTableHTML = () => {
@@ -7072,12 +7152,8 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                     <tr data-id="${item.id}" style="${rowStyle}">
                         <td>${item.date}</td>
                         <td>${item.startTime} - ${item.endTime}</td>
-                        <td>${(() => {
-                            const nm = item.bookerName || "";
-                            const m = nm.match(/^\(([^)]+)\)\s/);
-                            return m ? m[1] : nm;
-                        })()}</td>
-                        <td>${item.status || "已預約"}</td>
+                        <td>${item.formattedBooker || formatBookerName(item.bookerName)}</td>
+                        <td>${item.status === 'valid' ? '已預約' : (item.status || '已預約')}</td>
                         <td class="actions">
                             ${(() => {
                                 const isCheckedIn = item.status === "已報到";
@@ -7154,7 +7230,7 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
            <label class="field">
              <div class="field-head">預約人</div>
              <div class="input-wrap" style="display: flex; gap: 8px; align-items: stretch;">
-               <input type="text" id="res-booker" value="${item && item.bookerName ? item.bookerName : ""}" placeholder="請輸入 QR Code 代碼" style="flex: 1;">
+               <input type="text" id="res-booker" value="${item && (item.formattedBooker || (item.bookerName ? formatBookerName(item.bookerName) : ""))}" placeholder="請輸入 QR Code 代碼" style="flex: 1;">
                <button type="button" class="btn small action-btn" id="btn-scan-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center; height: auto;" title="掃碼輸入">
                  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                    <rect width="5" height="5" x="3" y="3" rx="1" />
@@ -7349,7 +7425,11 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                 
                 // Update Booker Name
                 // Always prefer HouseNo (Standard)
-                const finalName = houseNo || uData.displayName || uData.realName || queryStr;
+                // Format: HouseNo-SubNo-Name
+                const name = uData.displayName || uData.realName || "住戶";
+                const sub = (uData.subNo !== undefined && uData.subNo !== null) ? uData.subNo : "0";
+                const finalName = houseNo ? `${houseNo}-${sub}-${name}` : (houseNo || name || queryStr);
+                
                 document.getElementById("res-booker").value = finalName;
                 
                 ptsInput.placeholder = "";
