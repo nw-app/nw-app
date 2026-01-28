@@ -519,7 +519,9 @@
                         style = "cursor: pointer;";
                         clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                     } else {
-                        clickAction = "";
+                        // Allow clicking to show "Not yours" message
+                        style = "cursor: pointer;"; 
+                        clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
                     }
                 } else {
                     // Available and Current -> Yellow
@@ -533,7 +535,9 @@
                         style = "cursor: pointer;";
                         clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                     } else {
-                        clickAction = "";
+                        // Allow clicking to show "Not yours" message
+                        style = "cursor: pointer;"; 
+                        clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
                     }
                 } else {
                     clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
@@ -546,7 +550,9 @@
                     style = "cursor: pointer;";
                     clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                 } else {
-                    clickAction = "";
+                    // Allow clicking to show "Not yours" message
+                    style = "cursor: pointer;"; 
+                    clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
                 }
             } else {
                 clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
