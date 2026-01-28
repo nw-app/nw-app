@@ -5961,6 +5961,7 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                       if(typeof found === 'object') {
                           navItem.label = found.label;
                           if(found.buttonColor) navItem.buttonColor = found.buttonColor;
+                          if(found.imageUrl) navItem.imageUrl = found.imageUrl;
                       } else {
                           navItem.label = found;
                       }
@@ -5981,6 +5982,18 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                  <div class="modal-title">設施預約設定 - ${navItem.label}</div>
               </div>
               <div class="modal-body">
+                <div class="field">
+                    <div class="field-head">設施圖片 (預覽用)</div>
+                    <div class="input-wrap">
+                         <input type="file" id="set-image-file" accept="image/*" style="display:none">
+                         <div id="set-image-preview" style="width:100%; aspect-ratio:3/1; background:#f3f4f6; border-radius:8px; display:flex; align-items:center; justify-content:center; cursor:pointer; overflow:hidden; border:1px dashed #d1d5db; position:relative;">
+                             ${navItem.imageUrl 
+                               ? `<img src="${navItem.imageUrl}" style="width:100%; height:100%; object-fit:cover;">` 
+                               : `<div style="color:#9ca3af; display:flex; flex-direction:column; align-items:center;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg><span style="margin-top:4px; font-size:12px;">點擊上傳圖片 (3:1)</span></div>`
+                             }
+                         </div>
+                    </div>
+                </div>
                 <div class="field">
                     <div class="field-head">設施預約名稱</div>
                     <div class="input-wrap"><input type="text" id="set-name" value="${navItem.label}"></div>
@@ -6052,6 +6065,22 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
               modalRoot.innerHTML = formHtml;
               
               // Bind Events
+              const fileInput = document.getElementById("set-image-file");
+              const previewDiv = document.getElementById("set-image-preview");
+              
+              if(fileInput && previewDiv) {
+                  previewDiv.onclick = () => fileInput.click();
+                  fileInput.onchange = (e) => {
+                      const file = e.target.files[0];
+                      if(!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (evt) => {
+                          previewDiv.innerHTML = `<img src="${evt.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+                      };
+                      reader.readAsDataURL(file);
+                  };
+              }
+
               const colorPicker = document.getElementById("set-color-picker");
               const colorText = document.getElementById("set-color-text");
               
@@ -6127,7 +6156,18 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                       btnSave.disabled = true;
 
                       try {
-                          // 1. Update Nav (Name & Color)
+                          // 0. Upload Image (if any)
+                          let finalImageUrl = navItem.imageUrl || "";
+                          const fileInput = document.getElementById("set-image-file");
+                          if (fileInput && fileInput.files[0]) {
+                              const file = fileInput.files[0];
+                              // Use 'announcements' folder to reuse existing storage rules
+                              const fileRef = storageRef(getStorage(), `communities/${slug}/announcements/fac_${facilityKey}_${Date.now()}`);
+                              await uploadBytes(fileRef, file);
+                              finalImageUrl = await getDownloadURL(fileRef);
+                          }
+
+                          // 1. Update Nav (Name & Color & Image)
                           const navRef = doc(db, "communities", slug, "settings", "nav");
                           const navSnap = await getDoc(navRef);
                           if(navSnap.exists()) {
@@ -6150,7 +6190,12 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
                               const newTabs = tabs.map(t => {
                                   const k = (typeof t === 'object') ? t.key : t;
                                   if(k === facilityKey) {
-                                      return { key: facilityKey, label: newName, buttonColor: newColor };
+                                      return { 
+                                          key: facilityKey, 
+                                          label: newName, 
+                                          buttonColor: newColor,
+                                          imageUrl: finalImageUrl
+                                      };
                                   }
                                   return (typeof t === 'string') ? { key: t, label: t } : t;
                               });

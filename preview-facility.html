@@ -30,6 +30,7 @@
     }
     .facility-card:active { transform: scale(0.98); background: #f9fafb; }
     .facility-info { display: flex; align-items: center; gap: 12px; }
+    .list-thumb { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: #f3f4f6; }
     /* Removed .facility-icon styles as we are simplifying to text buttons */
     .facility-name { font-size: 16px; font-weight: 600; color: #1f2937; }
     .facility-arrow { color: #9ca3af; }
@@ -209,6 +210,9 @@
       </button>
       <div class="modal-title" id="modal-title">設施名稱</div>
     </div>
+    <div id="modal-facility-image-container" style="display:none; width:100%; aspect-ratio:3/1; overflow:hidden; background:#f3f4f6;">
+        <img id="modal-facility-image" style="width:100%; height:100%; object-fit:cover;" src="">
+    </div>
     <div class="date-selector">
       <button class="date-btn" onclick="changeDate(-1)"><</button>
       <div class="current-date" id="current-date" onclick="document.getElementById('date-picker').showPicker()">2023-01-01</div>
@@ -349,14 +353,17 @@
       list.forEach(item => {
         const key = (typeof item === 'object') ? item.key : item;
         const label = (typeof item === 'object') ? item.label : item;
+        const imageUrl = (typeof item === 'object') ? (item.imageUrl || "") : "";
         
         // Escape quotes for onclick
         const safeKey = key.replace(/'/g, "\\'");
         const safeLabel = label.replace(/'/g, "\\'");
+        const safeUrl = imageUrl.replace(/'/g, "\\'");
         
         html += `
-          <div class="facility-card" onclick="openSchedule('${safeKey}', '${safeLabel}')">
+          <div class="facility-card" onclick="openSchedule('${safeKey}', '${safeLabel}', '${safeUrl}')">
             <div class="facility-info">
+              ${imageUrl ? `<img src="${imageUrl}" class="list-thumb">` : ''}
               <span class="facility-name">${label}</span>
             </div>
             <div class="facility-arrow">
@@ -377,13 +384,26 @@
     let currentFacilityName = "";
     let currentViewDate = new Date();
 
-    window.openSchedule = function(key, name) {
+    window.openSchedule = function(key, name, imgUrl) {
       console.log("Opening schedule modal:", key, name);
       currentFacilityKey = key;
       currentFacilityName = name;
       currentViewDate = new Date(); // Reset to today
       
       document.getElementById("modal-title").textContent = name;
+      
+      // Handle Image Display
+      const imgContainer = document.getElementById("modal-facility-image-container");
+      const imgEl = document.getElementById("modal-facility-image");
+      
+      if (imgUrl) {
+          imgEl.src = imgUrl;
+          imgContainer.style.display = "block";
+      } else {
+          imgContainer.style.display = "none";
+          imgEl.src = "";
+      }
+
       const modal = document.getElementById("schedule-modal");
       modal.classList.add("active");
       console.log("Modal classes:", modal.className);
