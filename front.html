@@ -124,20 +124,36 @@
     <!-- Personal View Sections -->
     <section class="row personal-tabs hidden">
       <button class="sub-tab-item active" data-tab="account">帳號</button>
+      <button class="sub-tab-item" data-tab="points">點數</button>
       <button class="sub-tab-item" data-tab="booking">預約</button>
       <button class="sub-tab-item" data-tab="notification">通知</button>
     </section>
-    <section class="row personal-content hidden">
+    <section class="row personal-content hidden" style="overflow-y: auto; align-items: flex-start; height: 76vh;">
       <div id="pane-account" class="personal-pane active">
         <h2 style="font-size:18px; margin-bottom:16px;">帳號資訊</h2>
-        <div class="field">
-             <div class="field-head">使用者 Email</div>
-             <div id="personal-email" style="font-size: 16px; font-weight: 600; padding: 10px; background: #f9fafb; border-radius: 8px;">Loading...</div>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px 0;">
+             <!-- 1. HouseNo-SubNo -->
+             <div id="personal-house-info" style="font-size: 20px; font-weight: 700; color: #333;">-</div>
+             
+             <!-- 2. Profile Picture -->
+             <img id="personal-avatar" src="" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; background: #eee; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+             
+             <!-- 3. Name -->
+             <div id="personal-name" style="font-size: 18px; font-weight: 600; color: #1f2937;">-</div>
+             
+             <!-- 4. QR Code -->
+             <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                  <img id="personal-qrcode" src="" style="width: 150px; height: 150px; display: none;">
+                  <div id="personal-qrcode-text" style="font-size: 14px; color: #666; font-family: monospace;"></div>
+             </div>
+             
+             <!-- 5. Points -->
+             <div style="font-size: 16px; color: #555;">目前點數: <span id="personal-points" style="font-weight: 700; color: #d32f2f; font-size: 20px;">Loading...</span></div>
         </div>
-        <div class="field">
-             <div class="field-head">住戶角色</div>
-             <div id="personal-role" style="font-size: 16px; font-weight: 600; padding: 10px; background: #f9fafb; border-radius: 8px;">-</div>
-        </div>
+      </div>
+      <div id="pane-points" class="personal-pane">
+        <h2 style="font-size:18px; margin-bottom:16px;">點數記錄</h2>
+        <div style="text-align:center; color:#999; padding:40px 0;">載入中...</div>
       </div>
       <div id="pane-booking" class="personal-pane">
         <h2 style="font-size:18px; margin-bottom:16px;">我的預約</h2>
@@ -185,6 +201,6 @@
   </script>
 
   <div class="modal hidden" id="sys-modal"></div>
-  <script type="module" src="app.js?v=24"></script>
+  <script type="module" src="app.js?v=31"></script>
 </body>
 </html>

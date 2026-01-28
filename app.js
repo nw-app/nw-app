@@ -1169,6 +1169,7 @@ async function setupPersonalTab(slug) {
   const homeSections = document.querySelectorAll(".home-section");
   const personalTabs = document.querySelector(".personal-tabs");
   const personalContent = document.querySelector(".personal-content");
+  const frontStack = document.querySelector(".stack.front");
   const subTabs = document.querySelectorAll(".sub-tab-item");
   const panes = document.querySelectorAll(".personal-pane");
 
@@ -1181,12 +1182,14 @@ async function setupPersonalTab(slug) {
       homeSections.forEach(el => el.classList.remove("hidden"));
       if (personalTabs) personalTabs.classList.add("hidden");
       if (personalContent) personalContent.classList.add("hidden");
+      if (frontStack) frontStack.classList.remove("personal-view");
     } else {
       navHome.classList.remove("active");
       navPersonal.classList.add("active");
       homeSections.forEach(el => el.classList.add("hidden"));
       if (personalTabs) personalTabs.classList.remove("hidden");
       if (personalContent) personalContent.classList.remove("hidden");
+      if (frontStack) frontStack.classList.add("personal-view");
       loadPersonalData(slug);
     }
   }
@@ -1211,19 +1214,78 @@ async function loadPersonalData(slug) {
   const u = auth.currentUser;
   if (!u) return;
   
-  const emailEl = document.getElementById("personal-email");
-  const roleEl = document.getElementById("personal-role");
   const bookingPane = document.getElementById("pane-booking");
   const notifPane = document.getElementById("pane-notification");
+  const pointsPane = document.getElementById("pane-points");
+
+  const elHouse = document.getElementById("personal-house-info");
+  const elAvatar = document.getElementById("personal-avatar");
+  const elName = document.getElementById("personal-name");
+  const elQr = document.getElementById("personal-qrcode");
+  const elQrText = document.getElementById("personal-qrcode-text");
+  const elPoints = document.getElementById("personal-points");
+
+  let currentPoints = 0;
   
-  if (emailEl) emailEl.textContent = u.email;
+  if(elAvatar) elAvatar.src = u.photoURL || "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y";
   
-  // 1. Fetch User Details
+  // 1. Fetch User Details & Points
   try {
      const snap = await getDoc(doc(db, "users", u.uid));
      if (snap.exists()) {
        const d = snap.data();
-       if (roleEl) roleEl.textContent = d.role || "住戶";
+       const houseNo = d.houseNo || "";
+       const subNo = d.subNo !== undefined ? d.subNo : "";
+       const name = d.displayName || d.realName || "住戶";
+       const photo = d.photoURL;
+       const qrCodeText = d.qrCodeText || "";
+       const community = d.community || slug || "default";
+
+       if(elHouse) elHouse.textContent = houseNo ? `${houseNo}-${subNo}` : "尚未設定戶號";
+       if(elName) elName.textContent = name;
+       if(elAvatar && photo) elAvatar.src = photo;
+
+       if(elQr && qrCodeText) {
+           try {
+               const url = await getQrDataUrl(qrCodeText, 150);
+               elQr.src = url;
+               elQr.style.display = "block";
+               if(elQrText) elQrText.textContent = qrCodeText;
+           } catch(e) { console.error("QR Error", e); }
+       }
+
+       if(houseNo) {
+          let found = false;
+          
+          if (typeof d.points === 'number') {
+              currentPoints = d.points;
+              found = true;
+          }
+
+          if (!found) {
+            try {
+              const bdoc = await getDoc(doc(db, `communities/${community}/app_modules/points_balances/${houseNo}`));
+              if (bdoc.exists()) {
+                currentPoints = bdoc.data().balance || 0;
+                found = true;
+              }
+            } catch (e) {}
+          }
+          
+          if (!found) {
+            try {
+              const pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
+              if (pdoc.exists()) {
+                const data = pdoc.data();
+                const bmap = data.balances || {};
+                currentPoints = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+              }
+            } catch (e) {}
+          }
+          if (elPoints) elPoints.textContent = currentPoints;
+       } else if (elPoints) {
+           elPoints.textContent = "0";
+       }
      }
   } catch (e) {
     console.error("Personal data load error:", e);
@@ -1233,53 +1295,94 @@ async function loadPersonalData(slug) {
   if (bookingPane) {
       bookingPane.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">載入中...</div>';
       try {
-          // Try with index first
-          let snap;
-          try {
-             const q = query(
-                collection(db, "communities", slug, "reservations"),
-                where("createdBy", "==", u.uid),
-                orderBy("createdAt", "desc")
-             );
-             snap = await getDocs(q);
-          } catch (err) {
-             // Fallback if index missing
-             if (err.message && err.message.includes("index")) {
-                 console.warn("Missing index for reservations, falling back to client sort");
-                 const q2 = query(
-                    collection(db, "communities", slug, "reservations"),
-                    where("createdBy", "==", u.uid)
-                 );
-                 snap = await getDocs(q2);
-             } else {
-                 throw err;
-             }
+          // Parallel fetch: Reservations + Facility Names
+          const [resSnap, navSnap] = await Promise.all([
+             (async () => {
+                 try {
+                     const q = query(
+                        collection(db, "communities", slug, "reservations"),
+                        where("createdBy", "==", u.uid),
+                        orderBy("createdAt", "desc")
+                     );
+                     return await getDocs(q);
+                 } catch (err) {
+                     // Fallback if index missing
+                     if (err.message && err.message.includes("index")) {
+                         console.warn("Missing index for reservations, falling back to client sort");
+                         const q2 = query(
+                            collection(db, "communities", slug, "reservations"),
+                            where("createdBy", "==", u.uid)
+                         );
+                         return await getDocs(q2);
+                     } else {
+                         throw err;
+                     }
+                 }
+             })(),
+             getDoc(doc(db, "communities", slug, "settings", "nav")).catch(e => null)
+          ]);
+
+          // Process Facility Names
+          let facilityMap = {};
+          // Default fallback
+          facilityMap['gym'] = '健身房';
+          
+          if (navSnap && navSnap.exists()) {
+             const tabs = navSnap.data().facility_tabs || [];
+             tabs.forEach(t => {
+                 if (typeof t === 'string') {
+                     facilityMap[t] = t; 
+                 } else if (t.key && t.label) {
+                     facilityMap[t.key] = t.label;
+                 }
+             });
           }
 
-          if (snap.empty) {
+          if (resSnap.empty) {
               bookingPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無預約記錄</div>';
           } else {
-              let docs = snap.docs.map(d => ({id:d.id, ...d.data()}));
+              let docs = resSnap.docs.map(d => ({id:d.id, ...d.data()}));
               // Client-side sort to be safe
               docs.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
 
               let html = '<div class="list-group" style="padding: 10px;">';
               docs.forEach(res => {
-                  const statusMap = {
-                      'valid': '<span style="color:#059669; font-weight:500;">已預約</span>',
-                      'cancelled': '<span style="color:#dc2626; font-weight:500;">已取消</span>'
-                  };
-                  const st = statusMap[res.status] || res.status;
+                  let stText = '已預約';
+                  let stColor = '#2563eb'; // Blue
+                  let divBg = '#fff';
+                  let divBorder = '#e5e7eb';
+
+                  // Determine Status Styles
+                  if (res.status === 'valid') {
+                      stText = `${res.date} 已預約`;
+                      stColor = '#2563eb'; // Blue
+                      divBg = '#fff'; // Default
+                  } else if (res.status === '已報到') {
+                      stText = `${res.date} 已報到`;
+                      stColor = '#059669'; // Green
+                      divBg = '#f0fdf4'; // Light Green
+                  } else if (res.status === 'cancelled') {
+                      stText = `${res.date} 已取消`;
+                      stColor = '#dc2626'; // Red
+                      divBg = '#fef2f2'; // Light Red
+                  } else {
+                      // Fallback
+                      stText = `${res.date} ${res.status}`;
+                      stColor = '#4b5563'; // Gray
+                      divBg = '#fff';
+                  }
+                  
+                  const fName = facilityMap[res.facility] || res.facility || '未知設施';
                   
                   html += `
-                    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                    <div style="background:${divBg}; border:1px solid ${divBorder}; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
-                            <span style="font-weight:600; font-size:16px; color:#1f2937;">${res.facility || '未知設施'}</span>
-                            <span style="font-size:14px;">${st}</span>
+                            <span style="font-weight:600; font-size:16px; color:#1f2937;">${fName}</span>
+                            <span style="font-size:14px;"><span style="color:${stColor}; font-weight:500;">${stText}</span></span>
                         </div>
                         <div style="color:#4b5563; font-size:14px; display:flex; flex-direction:column; gap:4px;">
-                            <div><span style="color:#9ca3af; margin-right:4px;">日期:</span> ${res.date}</div>
-                            <div><span style="color:#9ca3af; margin-right:4px;">時間:</span> ${res.startTime} ~ ${res.endTime}</div>
+                            <div><span style="color:#9ca3af; margin-right:4px;">預約日期:</span> ${res.date}</div>
+                            <div><span style="color:#9ca3af; margin-right:4px;">預約時段:</span> ${res.startTime} ~ ${res.endTime}</div>
                         </div>
                         ${res.note ? `<div style="color:#6b7280; font-size:13px; margin-top:8px; padding-top:8px; border-top:1px solid #f3f4f6;">備註: ${res.note}</div>` : ''}
                     </div>
@@ -1336,6 +1439,101 @@ async function loadPersonalData(slug) {
       } catch (e) {
           console.warn("Fetch notifications failed", e);
           notifPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無新通知</div>';
+      }
+  }
+  // 4. Fetch Points Logs (New)
+  if (pointsPane) {
+      pointsPane.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">載入中...</div>';
+      try {
+          // Find user's houseNo first
+          const uSnap = await getDoc(doc(db, "users", u.uid));
+          const userData = uSnap.exists() ? uSnap.data() : {};
+          const houseNo = userData.houseNo;
+
+          if (houseNo) {
+             let snap;
+             try {
+                 const q = query(
+                     collection(db, "communities", slug, "points_logs"),
+                     where("houseNo", "==", houseNo),
+                     orderBy("createdAt", "desc")
+                 );
+                 snap = await getDocs(q);
+             } catch (err) {
+                 if (err.message && err.message.includes("index")) {
+                     console.warn("Missing index for points_logs, falling back to client sort");
+                     const q2 = query(
+                         collection(db, "communities", slug, "points_logs"),
+                         where("houseNo", "==", houseNo)
+                     );
+                     snap = await getDocs(q2);
+                 } else {
+                     throw err;
+                 }
+             }
+             
+             if (snap.empty) {
+                 pointsPane.innerHTML = `
+                    <div style="background:#fff; border-radius:12px; padding:20px; margin:10px; margin-bottom:0; box-shadow:0 1px 2px rgba(0,0,0,0.05); display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:600; font-size:16px; color:#374151;">目前點數</span>
+                        <span style="font-weight:700; font-size:24px; color:#dc2626;">${currentPoints}</span>
+                    </div>
+                    <div style="text-align:center; color:#999; padding:40px 0;">尚無點數記錄</div>`;
+             } else {
+                 let docs = snap.docs.map(d => d.data());
+                 // Client-side sort
+                 docs.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+                 let html = `
+                    <div style="background:#fff; border-radius:12px; padding:20px; margin:10px; margin-bottom:0; box-shadow:0 1px 2px rgba(0,0,0,0.05); display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:600; font-size:16px; color:#374151;">目前點數</span>
+                        <span style="font-weight:700; font-size:24px; color:#dc2626;">${currentPoints}</span>
+                    </div>
+                    <div class="list-group" style="padding: 10px;">`;
+                 docs.forEach(d => {
+                     // Format date
+                     let dateObj = d.createdAt;
+                     if (dateObj && typeof dateObj.toDate === 'function') {
+                         dateObj = dateObj.toDate();
+                     } else if (dateObj) {
+                         dateObj = new Date(dateObj);
+                     } else {
+                         dateObj = new Date();
+                     }
+                     
+                     const y = dateObj.getFullYear();
+                     const m = String(dateObj.getMonth()+1).padStart(2,'0');
+                     const day = String(dateObj.getDate()).padStart(2,'0');
+                     const hh = String(dateObj.getHours()).padStart(2,'0');
+                     const mm = String(dateObj.getMinutes()).padStart(2,'0');
+                     const dateStr = `${y}-${m}-${day} ${hh}:${mm}`;
+
+                     const isPositive = (d.delta || 0) > 0;
+                     const deltaStr = isPositive ? `+${d.delta}` : `${d.delta}`;
+                     const color = isPositive ? '#059669' : '#dc2626';
+
+                     html += `
+                       <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                           <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
+                               <span style="font-weight:600; font-size:16px; color:#1f2937;">${d.reason || '點數異動'}</span>
+                               <span style="font-weight:700; font-size:18px; color:${color};">${deltaStr}</span>
+                           </div>
+                           <div style="color:#6b7280; font-size:13px; display:flex; justify-content:space-between;">
+                               <span>${dateStr}</span>
+                               <span>${d.operatorName || ''}</span>
+                           </div>
+                       </div>
+                     `;
+                 });
+                 html += '</div>';
+                 pointsPane.innerHTML = html;
+             }
+          } else {
+             pointsPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">無法取得戶號資訊</div>';
+          }
+      } catch (e) {
+          console.error("Fetch points logs failed", e);
+          pointsPane.innerHTML = '<div style="text-align:center; color:#ef4444; padding:20px;">載入失敗</div>';
       }
   }
 }
