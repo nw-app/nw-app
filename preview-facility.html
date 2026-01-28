@@ -593,24 +593,30 @@
 
             if (houseNo) {
               points = 0; // Default to 0 if user has houseNo
-              try {
-                // 1. Try 'points_balances' collection
-                let bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
-                if (bdoc.exists()) {
-                  points = bdoc.data().balance || 0;
-                } else {
-                  // 2. Try 'app_modules/points' document
-                  let pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
-                  if (pdoc.exists()) {
-                     const pdata = pdoc.data();
-                     const bmap = pdata.balances || {};
-                     const val = bmap[houseNo];
-                     if (val !== undefined && val !== null) {
-                         points = val;
-                     }
-                  }
-                }
-              } catch (e) { console.warn("Fetch points failed", e); }
+              
+              // 0. Try User Doc (Optimization)
+              if (typeof d.points === 'number') {
+                  points = d.points;
+              } else {
+                  try {
+                    // 1. Try 'points_balances' collection
+                    let bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
+                    if (bdoc.exists()) {
+                      points = bdoc.data().balance || 0;
+                    } else {
+                      // 2. Try 'app_modules/points' document
+                      let pdoc = await getDoc(doc(db, `communities/${community}/app_modules/points`));
+                      if (pdoc.exists()) {
+                        const pdata = pdoc.data();
+                        const bmap = pdata.balances || {};
+                        const val = bmap[houseNo];
+                        if (val !== undefined && val !== null) {
+                            points = val;
+                        }
+                      }
+                    }
+                  } catch (e) { console.warn("Fetch points failed", e); }
+              }
             }
           }
         }

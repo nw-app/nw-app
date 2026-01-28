@@ -386,14 +386,23 @@ async function openUserProfileModal() {
         const community = d.community || "default";
         if (houseNo) {
           let found = false;
-          try {
-            const bdoc = await getDoc(doc(db, `communities/${community}/app_modules/points_balances/${houseNo}`));
-            if (bdoc.exists()) {
-              points = bdoc.data().balance || 0;
+          
+          // 0. Try User Doc (Optimization)
+          if (typeof d.points === 'number') {
+              points = d.points;
               found = true;
+          }
+
+          if (!found) {
+            try {
+              const bdoc = await getDoc(doc(db, `communities/${community}/app_modules/points_balances/${houseNo}`));
+              if (bdoc.exists()) {
+                points = bdoc.data().balance || 0;
+                found = true;
+              }
+            } catch (e) {
+              console.log("Points fetch error (primary):", e);
             }
-          } catch (e) {
-            console.log("Points fetch error (primary):", e);
           }
           
           if (!found) {
@@ -939,7 +948,7 @@ async function handleRoleRedirect(role) {
             target.ownershipRatio = d.ownershipRatio;
           }
         } catch {}
-        openEditModal(target, isSelf);
+        openEditModal(target, isSelf, "community-admin");
       });
     });
 
@@ -2498,7 +2507,7 @@ if (sysNav.subContainer) {
                 const tr = btn.closest("tr");
                 const targetUid = tr && tr.getAttribute("data-uid");
                 const target = admins.find(a => a.id === targetUid);
-                if (target) openEditModal(target, targetUid === uid);
+                if (target) openEditModal(target, targetUid === uid, "system-admin");
             });
         });
 
@@ -2992,7 +3001,7 @@ if (sysNav.subContainer) {
       }
     });
   }
-  async function openEditModal(target, isSelf) {
+  async function openEditModal(target, isSelf, context) {
     const title = "編輯帳號";
     let commList = [];
     try {
@@ -3238,9 +3247,16 @@ if (sysNav.subContainer) {
 
         closeModal();
         showHint("已更新帳號資料", "success");
-        if (typeof renderSettingsGeneral === "function") await renderSettingsGeneral();
-        if (typeof renderSettingsCommunity === "function") await renderSettingsCommunity();
-        if (typeof renderSettingsResidents === "function") await renderSettingsResidents();
+        
+        if (context === "system-admin") {
+          if (typeof renderSettingsGeneral === "function") await renderSettingsGeneral();
+        } else if (context === "community-admin") {
+          if (typeof renderSettingsResidents === "function") await renderSettingsResidents();
+        } else {
+          if (typeof renderSettingsGeneral === "function") await renderSettingsGeneral();
+          if (typeof renderSettingsCommunity === "function") await renderSettingsCommunity();
+          if (typeof renderSettingsResidents === "function") await renderSettingsResidents();
+        }
 
       } catch (e) {
         console.error(e);
@@ -4103,7 +4119,7 @@ if (sysNav.subContainer) {
             target.ownershipRatio = d.ownershipRatio;
           }
         } catch {}
-        openEditModal(target, isSelf);
+        openEditModal(target, isSelf, "community-admin");
       });
     });
     btnDeletes.forEach(btn => {
@@ -6598,16 +6614,18 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                                  // 1. Refund points
                                  if (cost > 0 && isPointsFound) {
                                      if (balanceRef && !pointsRef) {
-                                         await updateDoc(balanceRef, { balance: currentPoints + cost });
-                                     } else if (pointsRef) {
-                                         const pDoc = await getDoc(pointsRef);
-                                         if (pDoc.exists()) {
-                                             const data = pDoc.data();
-                                             const balances = data.balances || {};
-                                             balances[houseNo] = currentPoints + cost;
-                                             await updateDoc(pointsRef, { balances: balances });
-                                         }
-                                     }
+                                        await updateDoc(balanceRef, { balance: currentPoints + cost });
+                                        await syncPointsToUsers(slug, houseNo, currentPoints + cost);
+                                    } else if (pointsRef) {
+                                        const pDoc = await getDoc(pointsRef);
+                                        if (pDoc.exists()) {
+                                            const data = pDoc.data();
+                                            const balances = data.balances || {};
+                                            balances[houseNo] = currentPoints + cost;
+                                            await updateDoc(pointsRef, { balances: balances });
+                                            await syncPointsToUsers(slug, houseNo, currentPoints + cost);
+                                        }
+                                    }
                                      
                                      // Add Log
                                      try {
@@ -6783,6 +6801,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
                             if (balanceRef && !pointsRef) {
                                 await updateDoc(balanceRef, { balance: currentPoints - cost });
+                                await syncPointsToUsers(slug, houseNo, currentPoints - cost);
                             } else if (pointsRef) {
                                  // Re-fetch to ensure data consistency
                                  const pDoc = await getDoc(pointsRef);
@@ -6791,6 +6810,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                                      const balances = data.balances || {};
                                      balances[houseNo] = currentPoints - cost;
                                      await updateDoc(pointsRef, { balances: balances });
+                                     await syncPointsToUsers(slug, houseNo, currentPoints - cost);
                                  }
                             }
 
@@ -7074,6 +7094,22 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
   });
 }
 
+// Helper to sync points to user profile for easier reading
+async function syncPointsToUsers(slug, houseNo, newBalance) {
+    if (!slug || !houseNo) return;
+    try {
+        const q = query(collection(db, "users"), where("community", "==", slug), where("houseNo", "==", houseNo));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+            const updates = snap.docs.map(d => updateDoc(doc(db, "users", d.id), { points: newBalance }));
+            await Promise.all(updates);
+            console.log(`[SyncPoints] Updated ${updates.length} users in ${houseNo} to ${newBalance}`);
+        }
+    } catch (e) {
+        console.warn("[SyncPoints] Failed to sync points to users", e);
+    }
+}
+
 function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isNewWithDate = false, config = {}) {
     // Ensure slug is valid
     if (!slug) {
@@ -7277,14 +7313,24 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
                 // Fetch Points
                 if (houseNo) {
                     let found = false;
-                    try {
-                        // Correct path: communities/{community}/points_balances/{houseNo}
-                        const bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
-                        if (bdoc.exists()) {
-                            points = bdoc.data().balance || 0;
-                            found = true;
-                        }
-                    } catch(e) { console.warn("FetchPoints: Path 1 failed", e); }
+
+                    // 0. Try User Doc (Optimization)
+                    if (typeof uData.points === 'number') {
+                        points = uData.points;
+                        found = true;
+                        console.log("[FetchPoints] Found points in user doc:", points);
+                    }
+
+                    if (!found) {
+                        try {
+                            // Correct path: communities/{community}/points_balances/{houseNo}
+                            const bdoc = await getDoc(doc(db, `communities/${community}/points_balances/${houseNo}`));
+                            if (bdoc.exists()) {
+                                points = bdoc.data().balance || 0;
+                                found = true;
+                            }
+                        } catch(e) { console.warn("FetchPoints: Path 1 failed", e); }
+                    }
                     
                     if (!found) {
                         try {
@@ -8060,7 +8106,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                 target.ownershipRatio = d.ownershipRatio || target.ownershipRatio;
               }
             } catch {}
-            window.openEditModal && window.openEditModal(target, isSelf);
+            window.openEditModal && window.openEditModal(target, isSelf, "community-admin");
             return;
           }
         });
@@ -8075,6 +8121,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             <div style="display:flex;gap:8px;margin-left:auto;">
               <button id="btn-add-points" class="btn action-btn small">新增點數</button>
               <button id="btn-auto-points" class="btn action-btn small">自動新增</button>
+              <button id="btn-sync-points" class="btn action-btn small" style="background-color:#059669;color:white;">同步舊資料</button>
             </div>
           </div>
           <div class="card-filters">
@@ -8157,18 +8204,35 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                 if (qrText) qrImg = await getQrDataUrl(qrText, 120);
 
                 let balance = 0;
+                let foundUserPoints = false;
+
+                // Optimization: Try to find user by houseNo and use their points
                 try {
-                  const bdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`));
-                  if (bdoc.exists()) balance = bdoc.data().balance || 0;
-                } catch {
-                  try {
-                    const pdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
-                    if (pdoc.exists()) {
-                      const data = pdoc.data();
-                      const bmap = data.balances || {};
-                      balance = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+                    const qUser = query(collection(db, "users"), where("community", "==", slug), where("houseNo", "==", houseNo));
+                    const snapUser = await getDocs(qUser);
+                    if (!snapUser.empty) {
+                        const uData = snapUser.docs[0].data();
+                        if (typeof uData.points === 'number') {
+                            balance = uData.points;
+                            foundUserPoints = true;
+                        }
                     }
-                  } catch {}
+                } catch(e) { console.warn("Fetch user points failed", e); }
+
+                if (!foundUserPoints) {
+                  try {
+                    const bdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points_balances/${houseNo}`));
+                    if (bdoc.exists()) balance = bdoc.data().balance || 0;
+                  } catch {
+                    try {
+                      const pdoc = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
+                      if (pdoc.exists()) {
+                        const data = pdoc.data();
+                        const bmap = data.balances || {};
+                        balance = typeof bmap[houseNo] === "number" ? bmap[houseNo] : 0;
+                      }
+                    } catch {}
+                  }
                 }
                 if (summary) {
                   summary.innerHTML = `
@@ -8324,6 +8388,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                       balance: newBalance,
                       updatedAt: Date.now()
                     }, { merge: true });
+                    await syncPointsToUsers(slug, houseNo, newBalance);
                   } catch (werr) {
                     const pointsDocRef = doc(db, `communities/${slug}/app_modules/points`);
                     let prev = {};
@@ -8336,6 +8401,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                     const balances = typeof prev.balances === "object" && prev.balances ? { ...prev.balances } : {};
                     balances[houseNo] = newBalance;
                     await setDoc(pointsDocRef, { logs, balances, updatedAt: Date.now() }, { merge: true });
+                    await syncPointsToUsers(slug, houseNo, newBalance);
                   }
                   closeModal();
                   showHint("已新增點數", "success");
@@ -8350,6 +8416,92 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             });
             
             const btnAuto = adminNav.content.querySelector("#btn-auto-points");
+
+            
+            // Sync Button Handler
+            const btnSync = adminNav.content.querySelector("#btn-sync-points");
+            btnSync && btnSync.addEventListener("click", async () => {
+                if(!confirm("確定要將目前社區的所有點數資料同步寫入到使用者的個人資料欄位嗎？\n(這可能需要一點時間)")) return;
+                
+                btnSync.disabled = true;
+                btnSync.textContent = "同步中...";
+                
+                try {
+                    let totalSynced = 0;
+                    // 1. Get all balances from collection
+                    let balancesMap = {};
+                    try {
+                        const snapB = await getDocs(collection(db, `communities/${slug}/points_balances`));
+                        snapB.docs.forEach(d => {
+                            balancesMap[d.id] = d.data().balance || 0;
+                        });
+                    } catch {}
+
+                    // 2. Get balances from single doc (fallback/merge)
+                    try {
+                        const pDoc = await getDoc(doc(db, `communities/${slug}/app_modules/points`));
+                        if (pDoc.exists()) {
+                            const data = pDoc.data();
+                            const bmap = data.balances || {};
+                            Object.keys(bmap).forEach(h => {
+                                // If not present in collection or preferred source, take this
+                                // Assuming collection is source of truth if exists, but let's just merge
+                                if (balancesMap[h] === undefined) {
+                                    balancesMap[h] = bmap[h];
+                                }
+                            });
+                        }
+                    } catch {}
+                    
+                    const houseNos = Object.keys(balancesMap);
+                    console.log(`[Sync] Found ${houseNos.length} houses with points.`);
+
+                    // 3. Batch update users
+                    // We need to find users by houseNo. 
+                    // Since we can't do a massive "IN" query easily for all, we iterate or chunk.
+                    // Given scale, iterating query by houseNo is acceptable or query all community users first.
+                    
+                    // Fetch all community users first to avoid N reads
+                    const qUsers = query(collection(db, "users"), where("community", "==", slug));
+                    const snapUsers = await getDocs(qUsers);
+                    const usersByHouse = {};
+                    snapUsers.docs.forEach(d => {
+                        const u = d.data();
+                        const h = u.houseNo;
+                        if(h) {
+                            if(!usersByHouse[h]) usersByHouse[h] = [];
+                            usersByHouse[h].push(d.id);
+                        }
+                    });
+                    
+                    // 4. Update
+                    let updates = [];
+                    for(const h of houseNos) {
+                        const balance = balancesMap[h];
+                        const uids = usersByHouse[h];
+                        if(uids && uids.length > 0) {
+                            uids.forEach(uid => {
+                                updates.push(updateDoc(doc(db, "users", uid), { points: balance }));
+                                totalSynced++;
+                            });
+                        }
+                    }
+                    
+                    // Chunk promises to avoid overwhelming
+                    const chunkSize = 50;
+                    for (let i = 0; i < updates.length; i += chunkSize) {
+                        await Promise.all(updates.slice(i, i + chunkSize));
+                    }
+                    
+                    showHint(`同步完成！共更新了 ${totalSynced} 位住戶的點數資料`, "success");
+                } catch(e) {
+                    console.error(e);
+                    showHint("同步失敗: " + e.message, "error");
+                } finally {
+                    btnSync.disabled = false;
+                    btnSync.textContent = "同步舊資料";
+                }
+            });
             btnAuto && btnAuto.addEventListener("click", async () => {
               const dayOptions = Array.from({length:31}, (_,i) => `<option value="${i+1}">${i+1}</option>`).join("");
               const hourOptions = Array.from({length:24}, (_,i) => `<option value="${i}">${i}</option>`).join("");
