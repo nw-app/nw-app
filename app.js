@@ -1162,6 +1162,184 @@ async function handleRoleRedirect(role) {
 
 }
 
+
+async function setupPersonalTab(slug) {
+  const navHome = document.getElementById("nav-home");
+  const navPersonal = document.getElementById("nav-personal");
+  const homeSections = document.querySelectorAll(".home-section");
+  const personalTabs = document.querySelector(".personal-tabs");
+  const personalContent = document.querySelector(".personal-content");
+  const subTabs = document.querySelectorAll(".sub-tab-item");
+  const panes = document.querySelectorAll(".personal-pane");
+
+  if (!navHome || !navPersonal) return;
+
+  function switchMainTab(tab) {
+    if (tab === "home") {
+      navHome.classList.add("active");
+      navPersonal.classList.remove("active");
+      homeSections.forEach(el => el.classList.remove("hidden"));
+      if (personalTabs) personalTabs.classList.add("hidden");
+      if (personalContent) personalContent.classList.add("hidden");
+    } else {
+      navHome.classList.remove("active");
+      navPersonal.classList.add("active");
+      homeSections.forEach(el => el.classList.add("hidden"));
+      if (personalTabs) personalTabs.classList.remove("hidden");
+      if (personalContent) personalContent.classList.remove("hidden");
+      loadPersonalData(slug);
+    }
+  }
+
+  navHome.addEventListener("click", () => switchMainTab("home"));
+  navPersonal.addEventListener("click", () => switchMainTab("personal"));
+
+  subTabs.forEach(btn => {
+    btn.addEventListener("click", () => {
+      subTabs.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const target = btn.dataset.tab;
+      panes.forEach(p => {
+        p.classList.remove("active");
+        if (p.id === `pane-${target}`) p.classList.add("active");
+      });
+    });
+  });
+}
+
+async function loadPersonalData(slug) {
+  const u = auth.currentUser;
+  if (!u) return;
+  
+  const emailEl = document.getElementById("personal-email");
+  const roleEl = document.getElementById("personal-role");
+  const bookingPane = document.getElementById("pane-booking");
+  const notifPane = document.getElementById("pane-notification");
+  
+  if (emailEl) emailEl.textContent = u.email;
+  
+  // 1. Fetch User Details
+  try {
+     const snap = await getDoc(doc(db, "users", u.uid));
+     if (snap.exists()) {
+       const d = snap.data();
+       if (roleEl) roleEl.textContent = d.role || "住戶";
+     }
+  } catch (e) {
+    console.error("Personal data load error:", e);
+  }
+
+  // 2. Fetch Reservations
+  if (bookingPane) {
+      bookingPane.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">載入中...</div>';
+      try {
+          // Try with index first
+          let snap;
+          try {
+             const q = query(
+                collection(db, "communities", slug, "reservations"),
+                where("createdBy", "==", u.uid),
+                orderBy("createdAt", "desc")
+             );
+             snap = await getDocs(q);
+          } catch (err) {
+             // Fallback if index missing
+             if (err.message && err.message.includes("index")) {
+                 console.warn("Missing index for reservations, falling back to client sort");
+                 const q2 = query(
+                    collection(db, "communities", slug, "reservations"),
+                    where("createdBy", "==", u.uid)
+                 );
+                 snap = await getDocs(q2);
+             } else {
+                 throw err;
+             }
+          }
+
+          if (snap.empty) {
+              bookingPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無預約記錄</div>';
+          } else {
+              let docs = snap.docs.map(d => ({id:d.id, ...d.data()}));
+              // Client-side sort to be safe
+              docs.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+              let html = '<div class="list-group" style="padding: 10px;">';
+              docs.forEach(res => {
+                  const statusMap = {
+                      'valid': '<span style="color:#059669; font-weight:500;">已預約</span>',
+                      'cancelled': '<span style="color:#dc2626; font-weight:500;">已取消</span>'
+                  };
+                  const st = statusMap[res.status] || res.status;
+                  
+                  html += `
+                    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
+                            <span style="font-weight:600; font-size:16px; color:#1f2937;">${res.facility || '未知設施'}</span>
+                            <span style="font-size:14px;">${st}</span>
+                        </div>
+                        <div style="color:#4b5563; font-size:14px; display:flex; flex-direction:column; gap:4px;">
+                            <div><span style="color:#9ca3af; margin-right:4px;">日期:</span> ${res.date}</div>
+                            <div><span style="color:#9ca3af; margin-right:4px;">時間:</span> ${res.startTime} ~ ${res.endTime}</div>
+                        </div>
+                        ${res.note ? `<div style="color:#6b7280; font-size:13px; margin-top:8px; padding-top:8px; border-top:1px solid #f3f4f6;">備註: ${res.note}</div>` : ''}
+                    </div>
+                  `;
+              });
+              html += '</div>';
+              bookingPane.innerHTML = html;
+          }
+      } catch (e) {
+          console.error("Fetch booking failed", e);
+          bookingPane.innerHTML = '<div style="text-align:center; color:#ef4444; padding:20px;">載入失敗</div>';
+      }
+  }
+
+  // 3. Fetch Notifications (Announcements as fallback)
+  if (notifPane) {
+      notifPane.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">載入中...</div>';
+      try {
+           const q = query(
+              collection(db, "communities", slug, "announcements"),
+              orderBy("createdAt", "desc"),
+              limit(5)
+          );
+          const snap = await getDocs(q);
+          if (snap.empty) {
+              notifPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無新通知</div>';
+          } else {
+              let html = '<div class="list-group" style="padding: 10px;">';
+              snap.forEach(doc => {
+                  const d = doc.data();
+                  // Format date: YYYY-MM-DD
+                  let dateStr = "";
+                  if (d.createdAt) {
+                      const date = new Date(d.createdAt);
+                      const y = date.getFullYear();
+                      const m = String(date.getMonth()+1).padStart(2,'0');
+                      const day = String(date.getDate()).padStart(2,'0');
+                      dateStr = `${y}-${m}-${day}`;
+                  }
+                  
+                  html += `
+                    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:12px; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.05);" onclick="window.location.href='preview.html?c=${slug}&tab=${d.category}&title=公告列表'">
+                        <div style="font-weight:600; margin-bottom:8px; color:#1f2937; font-size:16px;">${d.title}</div>
+                        <div style="display:flex; justify-content:space-between; color:#6b7280; font-size:13px;">
+                            <span style="background:#f3f4f6; padding:2px 8px; border-radius:4px;">${d.category || '公告'}</span>
+                            <span>${dateStr}</span>
+                        </div>
+                    </div>
+                  `;
+              });
+              html += '</div>';
+              notifPane.innerHTML = html;
+          }
+      } catch (e) {
+          console.warn("Fetch notifications failed", e);
+          notifPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無新通知</div>';
+      }
+  }
+}
+
   // Auto login check
   onAuthStateChanged(auth, async (user) => {
     if (user) {
@@ -1355,6 +1533,7 @@ async function handleRoleRedirect(role) {
         loadFrontButtons(slug);
         subscribeFrontButtons(slug);
         startFrontPolling(slug);
+        setupPersonalTab(slug);
 
         const btnSOS = document.querySelector(".btn-sos");
         if (btnSOS) {

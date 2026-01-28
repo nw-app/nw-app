@@ -1293,3 +1293,55 @@ input:checked + .slider:before {
   gap: 12px;
   justify-content: center;
 }
+
+/* Personal View Layout */
+.stack.front.view-personal {
+  grid-template-rows: 8% 8% 76% 8%;
+}
+
+/* Sub-tabs */
+.personal-tabs {
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-around;
+  padding: 0;
+}
+.sub-tab-item {
+  flex: 1;
+  height: 100%;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 3px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.sub-tab-item.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Personal Content */
+.personal-content {
+  background: #fff;
+  align-items: flex-start;
+  overflow-y: auto;
+  padding: 20px;
+  display: block;
+}
+.personal-pane {
+  display: none;
+  height: 100%;
+}
+.personal-pane.active {
+  display: block;
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Helper to hide home sections */
+.home-section.hidden {
+  display: none !important;
+}

@@ -35,17 +35,17 @@
         </div>
       </div>
     </section>
-    <section class="row A2">
+    <section class="row home-section A2">
       <div class="section-text">通知與公告</div>
     </section>
-    <section class="row A3"></section>
-    <section class="row A4">
+    <section class="row home-section A3"></section>
+    <section class="row home-section A4">
       <button type="button" class="btn-sos">SOS</button>
     </section>
-    <section class="row A5">
+    <section class="row home-section A5">
       <div class="section-text">社區服務</div>
     </section>
-    <section class="row A6">
+    <section class="row home-section A6">
       <div class="a6-grid">
         <button type="button" class="feature-btn">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle></svg>
@@ -81,10 +81,10 @@
         </button>
       </div>
     </section>
-    <section class="row A7">
+    <section class="row home-section A7">
       <div class="section-text">生活服務</div>
     </section>
-    <section class="row A8">
+    <section class="row home-section A8">
       <div class="a8-grid">
         <button type="button" class="feature-btn">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle></svg>
@@ -120,11 +120,44 @@
         </button>
       </div>
     </section>
+
+    <!-- Personal View Sections -->
+    <section class="row personal-tabs hidden">
+      <button class="sub-tab-item active" data-tab="account">帳號</button>
+      <button class="sub-tab-item" data-tab="booking">預約</button>
+      <button class="sub-tab-item" data-tab="notification">通知</button>
+    </section>
+    <section class="row personal-content hidden">
+      <div id="pane-account" class="personal-pane active">
+        <h2 style="font-size:18px; margin-bottom:16px;">帳號資訊</h2>
+        <div class="field">
+             <div class="field-head">使用者 Email</div>
+             <div id="personal-email" style="font-size: 16px; font-weight: 600; padding: 10px; background: #f9fafb; border-radius: 8px;">Loading...</div>
+        </div>
+        <div class="field">
+             <div class="field-head">住戶角色</div>
+             <div id="personal-role" style="font-size: 16px; font-weight: 600; padding: 10px; background: #f9fafb; border-radius: 8px;">-</div>
+        </div>
+      </div>
+      <div id="pane-booking" class="personal-pane">
+        <h2 style="font-size:18px; margin-bottom:16px;">我的預約</h2>
+        <div style="text-align:center; color:#999; padding:40px 0;">尚無預約記錄</div>
+      </div>
+      <div id="pane-notification" class="personal-pane">
+        <h2 style="font-size:18px; margin-bottom:16px;">通知中心</h2>
+        <div style="text-align:center; color:#999; padding:40px 0;">尚無新通知</div>
+      </div>
+    </section>
+
     <section class="row A9">
       <nav class="nav-bar">
-        <button class="nav-item active" type="button">
+        <button class="nav-item active" type="button" id="nav-home">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
           <span class="nav-text">首頁</span>
+        </button>
+        <button class="nav-item" type="button" id="nav-personal">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          <span class="nav-text">個人</span>
         </button>
       </nav>
     </section>
