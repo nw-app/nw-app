@@ -121,7 +121,7 @@
       display: none;
       align-items: center;
       justify-content: center;
-      z-index: 200;
+      z-index: 2200;
     }
     #sys-modal .modal-dialog {
       background: #fff;
@@ -539,9 +539,8 @@
                         style = "cursor: pointer;";
                         clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                     } else {
-                        // Allow clicking to show "Not yours" message
-                        style = "cursor: pointer;"; 
-                        clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
+                        style = "cursor: not-allowed;"; 
+                        clickAction = "";
                     }
                 } else {
                     // Available and Current -> Yellow
@@ -555,9 +554,8 @@
                         style = "cursor: pointer;";
                         clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                     } else {
-                        // Allow clicking to show "Not yours" message
-                        style = "cursor: pointer;"; 
-                        clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
+                        style = "cursor: not-allowed;"; 
+                        clickAction = "";
                     }
                 } else {
                     clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
@@ -570,9 +568,8 @@
                     style = "cursor: pointer;";
                     clickAction = `onclick="openCancelModal('${bookedRes.id}', '${startStr}', '${endStr}')"`;
                 } else {
-                    // Allow clicking to show "Not yours" message
-                    style = "cursor: pointer;"; 
-                    clickAction = `onclick="alert('此時段已被其他住戶預約，您無法取消。') "`;
+                    style = "cursor: not-allowed;"; 
+                    clickAction = "";
                 }
             } else {
                 clickAction = `onclick="openResidentReserve('${startStr}', '${endStr}')"`;
