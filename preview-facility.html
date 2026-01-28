@@ -219,7 +219,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
-    import { getFirestore, doc, getDoc, collection, query, where, getDocs, limit } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+    import { getFirestore, doc, getDoc, collection, query, where, getDocs, limit, addDoc, updateDoc, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 
     const firebaseConfig = {
@@ -623,13 +623,23 @@
       } catch {}
 
       try {
-        const cfgDoc = await getDoc(doc(db, "communities", slug, "settings", "facility"));
-        if (cfgDoc.exists()) {
-          const data = cfgDoc.data() || {};
-          const cfg = (data.items || []).find(x => x.key === currentFacilityKey) || {};
-          cost = cfg.cost || 0;
+        // Try new config path first: communities/{slug}/facility_configs/{facilityKey}
+        const configSnap = await getDoc(doc(db, "communities", slug, "facility_configs", currentFacilityKey));
+        if (configSnap.exists()) {
+            const data = configSnap.data();
+            cost = data.cost || 0;
+        } else {
+            // Fallback to old path: communities/{slug}/settings/facility
+            const cfgDoc = await getDoc(doc(db, "communities", slug, "settings", "facility"));
+            if (cfgDoc.exists()) {
+              const data = cfgDoc.data() || {};
+              const cfg = (data.items || []).find(x => x.key === currentFacilityKey) || {};
+              cost = cfg.cost || 0;
+            }
         }
-      } catch {}
+      } catch (e) {
+          console.warn("Failed to load facility cost", e);
+      }
 
       let defaultDate = "";
       defaultDate = document.getElementById("date-picker").value || "";
@@ -675,12 +685,93 @@
           </div>
           <div class="modal-foot">
             <button class="btn action-btn" onclick="closeModal()">取消</button>
-            <button class="btn action-btn primary" onclick="closeModal()">確定</button>
+            <button class="btn action-btn" style="background-color: #ef4444; color: white;" onclick="confirmReservation()">確定</button>
           </div>
         </div>
       `;
 
       openModal(body);
+    };
+
+    window.confirmReservation = async function() {
+        const date = document.getElementById("res-date").value;
+        const start = document.getElementById("res-start").value;
+        const end = document.getElementById("res-end").value;
+        const booker = document.getElementById("res-booker").value;
+        const cost = parseInt(document.getElementById("res-cost").value || "0");
+        const note = document.getElementById("res-note").value;
+
+        if (!date || !start || !end || !booker) {
+            alert("預約資訊不完整");
+            return;
+        }
+
+        // Find the button to disable it
+        const btns = document.querySelectorAll("#sys-modal .action-btn");
+        const confirmBtn = btns[btns.length - 1]; // Assuming it's the last one
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.innerText = "處理中...";
+        }
+
+        try {
+            const user = auth.currentUser;
+            if (!user) throw new Error("請先登入");
+
+            await runTransaction(db, async (t) => {
+                // 1. Check User Points
+                const userRef = doc(db, "users", user.uid);
+                const userSnap = await t.get(userRef);
+                if (!userSnap.exists()) throw new Error("找不到用戶資料");
+
+                const userData = userSnap.data();
+                const currentPoints = userData.points || 0;
+
+                if (cost > 0 && currentPoints < cost) {
+                    throw new Error(`點數不足 (現有: ${currentPoints}, 需要: ${cost})`);
+                }
+
+                // 2. Create Reservation
+                const resRef = doc(collection(db, "communities", slug, "reservations"));
+                t.set(resRef, {
+                    facility: currentFacilityKey,
+                    date: date,
+                    startTime: start,
+                    endTime: end,
+                    bookerName: booker,
+                    note: note,
+                    status: "valid",
+                    createdAt: serverTimestamp(),
+                    createdBy: user.uid
+                });
+
+                // 3. Deduct Points & Log
+                if (cost > 0) {
+                    t.update(userRef, { points: currentPoints - cost });
+
+                    const logRef = doc(collection(db, "communities", slug, "points_logs"));
+                    t.set(logRef, {
+                        houseNo: userData.houseNo || booker,
+                        reason: `設施預約: ${currentFacilityName || currentFacilityKey}`,
+                        delta: -cost,
+                        operator: "resident",
+                        createdAt: serverTimestamp()
+                    });
+                }
+            });
+
+            alert("預約成功！");
+            closeModal();
+            fetchReservations(); // Refresh schedule
+
+        } catch (e) {
+            console.error("Reservation failed", e);
+            alert("預約失敗: " + e.message);
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.innerText = "確定";
+            }
+        }
     };
 
     init();

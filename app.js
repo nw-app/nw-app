@@ -6393,7 +6393,8 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 const nameToPass = (communityName === "健身房") ? "" : communityName;
                 const baseParams = `c=${slug}&cn=${encodeURIComponent(nameToPass)}`;
                 const params = `${baseParams}&v=20260127-5`;
-                const url = `${window.location.origin}/preview-facility?${params}#${baseParams}`;
+                // Fix: use .html for compatibility with local http-server
+                const url = `${window.location.origin}/preview-facility.html?${params}#${baseParams}`;
                 
                 let modal = document.getElementById("sys-modal");
                 if (!modal) {
@@ -10515,6 +10516,19 @@ function openLinkView(title, url) {
   // Fix mixed content issue: upgrade http to https for github.io
   if (url && typeof url === 'string' && url.startsWith('http://') && url.includes('github.io')) {
     url = url.replace('http://', 'https://');
+  }
+
+  // Fix: Rewrite production URLs to local if running locally
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    if (url.includes("nw-app.github.io/nw-app")) {
+      url = url.replace("https://nw-app.github.io/nw-app", window.location.origin)
+               .replace("http://nw-app.github.io/nw-app", window.location.origin);
+    }
+  }
+
+  // Fix: Ensure .html extension for internal pages (required for local http-server)
+  if (url.includes("/preview-facility") && !url.includes("preview-facility.html")) {
+    url = url.replace("/preview-facility", "/preview-facility.html");
   }
 
   let root = document.getElementById("sys-modal");
