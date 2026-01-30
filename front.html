@@ -124,6 +124,7 @@
     <!-- Personal View Sections -->
     <section class="row personal-tabs hidden">
       <button class="sub-tab-item active" data-tab="account">帳號</button>
+      <button class="sub-tab-item" data-tab="mail">郵件</button>
       <button class="sub-tab-item" data-tab="points">點數</button>
       <button class="sub-tab-item" data-tab="booking">預約</button>
       <button class="sub-tab-item" data-tab="notification">通知</button>
@@ -150,6 +151,10 @@
              <!-- 5. Points -->
              <div style="font-size: 16px; color: #555;">目前點數: <span id="personal-points" style="font-weight: 700; color: #d32f2f; font-size: 20px;">Loading...</span></div>
         </div>
+      </div>
+      <div id="pane-mail" class="personal-pane">
+        <h2 style="font-size:18px; margin-bottom:16px;">我的郵件</h2>
+        <div style="text-align:center; color:#999; padding:40px 0;">尚無郵件記錄</div>
       </div>
       <div id="pane-points" class="personal-pane">
         <h2 style="font-size:18px; margin-bottom:16px;">點數記錄</h2>
@@ -201,6 +206,6 @@
   </script>
 
   <div class="modal hidden" id="sys-modal"></div>
-  <script type="module" src="app.js?v=32"></script>
+  <script type="module" src="app.js?v=35"></script>
 </body>
 </html>

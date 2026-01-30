@@ -1217,6 +1217,7 @@ async function loadPersonalData(slug) {
   const bookingPane = document.getElementById("pane-booking");
   const notifPane = document.getElementById("pane-notification");
   const pointsPane = document.getElementById("pane-points");
+  const mailPane = document.getElementById("pane-mail");
 
   const elHouse = document.getElementById("personal-house-info");
   const elAvatar = document.getElementById("personal-avatar");
@@ -4631,7 +4632,7 @@ if (sysNav.subContainer) {
       // Ensure 10 rows
       const rows = [];
       for (let i = 1; i <= 10; i++) {
-        const item = adsData.find(x => x.idx === i) || { idx: i, url: '', type: 'image', autoplay: false };
+        const item = adsData.find(x => x.idx === i) || { idx: i, url: '', type: 'image', autoplay: false, description: '' };
         const isYoutube = item.type === 'youtube';
         rows.push(`
           <tr data-idx="${i}">
@@ -4641,6 +4642,9 @@ if (sysNav.subContainer) {
                 <input type="text" class="ad-url-input" value="${item.url}" placeholder="圖片連結或 YouTube 網址" style="flex: 1;">
                 <input type="file" class="ad-image-upload" accept="image/png,image/jpeg" style="width: 200px;">
               </div>
+            </td>
+            <td>
+              <input type="text" class="ad-desc-input" value="${item.description || ''}" placeholder="輸入內容說明" style="width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 4px;">
             </td>
             <td>
               <span class="ad-type-badge ${item.type}">${item.type === 'youtube' ? 'YouTube' : '圖片'}</span>
@@ -4737,11 +4741,12 @@ if (sysNav.subContainer) {
 
           <div class="table-wrap">
             <table class="table">
-              <colgroup><col width="60"><col><col width="100"><col width="120"></colgroup>
+              <colgroup><col width="60"><col><col width="200"><col width="100"><col width="120"></colgroup>
               <thead>
                 <tr>
                   <th>序號</th>
                   <th>圖片或影片位置</th>
+                  <th>內容說明</th>
                   <th>類型</th>
                   <th>設定</th>
                 </tr>
@@ -4917,11 +4922,12 @@ if (sysNav.subContainer) {
            trs.forEach(tr => {
              const idx = parseInt(tr.getAttribute("data-idx"));
              const url = tr.querySelector(".ad-url-input").value.trim();
+             const description = tr.querySelector(".ad-desc-input").value.trim();
              const typeEl = tr.querySelector(".ad-type-badge");
              const type = typeEl.textContent === 'YouTube' ? 'youtube' : 'image';
              const autoplay = tr.querySelector(".ad-autoplay").checked;
              if (url) {
-               items.push({ idx, url, type, autoplay });
+               items.push({ idx, url, type, autoplay, description });
              }
            });
            
@@ -4960,11 +4966,12 @@ if (sysNav.subContainer) {
          trs.forEach(tr => {
            const idx = parseInt(tr.getAttribute("data-idx"));
            const url = tr.querySelector(".ad-url-input").value.trim();
+           const description = tr.querySelector(".ad-desc-input").value.trim();
            const typeEl = tr.querySelector(".ad-type-badge");
            const type = typeEl.textContent === 'YouTube' ? 'youtube' : 'image';
            const autoplay = tr.querySelector(".ad-autoplay").checked;
            if (url) {
-             items.push({ idx, url, type, autoplay });
+             items.push({ idx, url, type, autoplay, description });
            }
          });
          
@@ -5021,7 +5028,8 @@ if (sysNav.subContainer) {
                  const embedUrl = vidId ? `https://www.youtube.com/embed/${vidId}?autoplay=${item.autoplay?1:0}&mute=1&enablejsapi=1&origin=${origin}` : item.url;
                  content = `<iframe src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
               } else {
-                 content = `<img src="${item.url}" alt="Slide ${idx+1}">`;
+                 const safeDesc = (item.description || '').replace(/"/g, '&quot;');
+                 content = `<img src="${item.url}" alt="Slide ${idx+1}" class="clickable-slide" style="cursor: pointer;" data-description="${safeDesc}" onclick="window.showAdModal(this.src, this.getAttribute('data-description'))">`;
               }
               const isActive = idx === currentIdx;
               return `<div class="preview-slide ${isActive?'active':''}">${content}</div>`;
@@ -10799,6 +10807,16 @@ async function loadFrontAds(slug, providedSnap = null) {
        data = snap.data();
     }
     const items = data.items || [];
+    
+    // Inject YouTube API if needed
+    if (items.some(x => x.type === 'youtube') && !window.YT) {
+        if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+            const tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            document.head.appendChild(tag);
+        }
+    }
+
     // Merge defaults to ensure all properties exist even if DB has partial config
     const defaults = { interval: 3, effect: 'slide', loop: 'infinite', nav: true };
     const savedConfig = data.config || {};
@@ -10831,7 +10849,8 @@ async function loadFrontAds(slug, providedSnap = null) {
          const embedUrl = vidId ? `https://www.youtube.com/embed/${vidId}?autoplay=${item.autoplay?1:0}&mute=1&enablejsapi=1&origin=${origin}` : item.url;
          content = `<iframe src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
       } else {
-         content = `<img src="${item.url}" alt="Slide ${idx+1}">`;
+         const safeDesc = (item.description || '').replace(/"/g, '&quot;');
+         content = `<img src="${item.url}" alt="Slide ${idx+1}" class="clickable-slide" style="cursor: pointer;" data-description="${safeDesc}" onclick="window.showAdModal(this.src, this.getAttribute('data-description'))">`;
       }
       return `<div class="preview-slide ${idx===0?'active':''}">${content}</div>`;
     }).join('');
@@ -10854,6 +10873,7 @@ async function loadFrontAds(slug, providedSnap = null) {
 
 function startFrontCarousel(config) {
     if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+    if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
     
     const frontContainer = document.querySelector(".row.A3 .a3-preview-container");
     if (!frontContainer) return;
@@ -10869,8 +10889,17 @@ function startFrontCarousel(config) {
     
     let direction = 1; 
     const intervalTime = Math.max((parseInt(config.interval) || 3) * 1000, 1000);
+    const players = {}; // Map to store YT players
+    let ytRetryCount = 0;
+    let isTransitioning = false;
     
     const showSlide = (i, enterFrom) => {
+        ytRetryCount = 0;
+        // Pause all videos when switching
+        Object.values(players).forEach(p => {
+            if (p && typeof p.pauseVideo === 'function') p.pauseVideo();
+        });
+
         slides.forEach(s => {
           s.classList.remove('active');
           s.classList.remove('enter-left');
@@ -10890,6 +10919,10 @@ function startFrontCarousel(config) {
     };
     
     const next = () => {
+        if (isTransitioning) return;
+        isTransitioning = true;
+        setTimeout(() => isTransitioning = false, 1000); // Lock for 1s to prevent double skip
+
         if (config.loop === 'rewind') {
             if (slides.length <= 1) return;
             if (idx >= slides.length - 1) direction = -1;
@@ -10898,29 +10931,35 @@ function startFrontCarousel(config) {
         } else if (config.loop === 'once') {
             if (idx < slides.length - 1) idx++;
             else {
-                if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+                if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
                 return;
             }
         } else { 
             idx = (idx + 1) % slides.length;
         }
         showSlide(idx, 'right');
+        runLoop();
     };
 
     const prev = () => {
+        if (isTransitioning) return;
+        isTransitioning = true;
+        setTimeout(() => isTransitioning = false, 1000);
+
         if (config.loop === 'once') {
             if (idx > 0) idx--;
         } else { 
             idx = (idx - 1 + slides.length) % slides.length;
         }
         showSlide(idx, 'left');
+        runLoop();
     };
 
     if (btnNext) {
-       btnNext.onclick = (e) => { e.preventDefault(); next(); resetTimer(); };
+       btnNext.onclick = (e) => { e.preventDefault(); next(); };
     }
     if (btnPrev) {
-       btnPrev.onclick = (e) => { e.preventDefault(); prev(); resetTimer(); };
+       btnPrev.onclick = (e) => { e.preventDefault(); prev(); };
     }
 
     // Swipe support
@@ -10931,7 +10970,7 @@ function startFrontCarousel(config) {
         if (e.changedTouches && e.changedTouches.length > 0) {
           touchStartX = e.changedTouches[0].screenX;
         }
-        if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
+        if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
       }, { passive: true });
       frontContainer.addEventListener('touchend', (e) => {
         if (e.changedTouches && e.changedTouches.length > 0) {
@@ -10939,24 +10978,77 @@ function startFrontCarousel(config) {
           if (touchEndX < touchStartX - 50) next();
           if (touchEndX > touchStartX + 50) prev();
         }
-        resetTimer();
+        runLoop();
       }, { passive: true });
     }
 
-    const startTimer = () => {
+    const runLoop = () => {
+        if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
         if (config.loop === 'once' && idx >= slides.length - 1) return;
-        window.frontAdsInterval = setInterval(() => {
+
+        const currentSlide = slides[idx];
+        const iframe = currentSlide.querySelector('iframe');
+        
+        if (iframe) {
+            // Check if YouTube API is ready
+            if (window.YT && window.YT.Player) {
+                 let player = players[idx];
+                 if (!player) {
+                     player = new YT.Player(iframe, {
+                         events: {
+                             'onStateChange': (event) => {
+                                 if (event.data === YT.PlayerState.ENDED) {
+                                     next();
+                                 }
+                             },
+                             'onReady': (event) => {
+                                 event.target.playVideo();
+                             },
+                             'onError': (event) => {
+                                 console.warn('YT Player Error:', event.data);
+                                 next();
+                             }
+                         }
+                     });
+                     players[idx] = player;
+                 } else {
+                     // Ensure it plays
+                     if (typeof player.getPlayerState === 'function') {
+                        const state = player.getPlayerState();
+                        // If paused, buffering, or ENDED (replay), play video
+                        if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) {
+                            if (state === YT.PlayerState.ENDED) {
+                                player.seekTo(0);
+                            }
+                            player.playVideo();
+                        }
+                     }
+                 }
+                 // Do not set timeout; wait for ENDED event
+                 return; 
+            } else {
+                // API not ready, retry in 300ms
+                ytRetryCount++;
+                if (ytRetryCount > 20) {
+                    console.warn('YT API timeout, skipping slide');
+                    next();
+                    return;
+                }
+                window.frontAdsTimer = setTimeout(() => {
+                    runLoop();
+                }, 300);
+                return;
+            }
+        }
+
+        // Image slide
+        window.frontAdsTimer = setTimeout(() => {
           next();
         }, intervalTime);
     };
     
-    const resetTimer = () => {
-        if (window.frontAdsInterval) clearInterval(window.frontAdsInterval);
-        startTimer();
-    };
-
     showSlide(idx, null);
-    startTimer();
+    runLoop();
 }
 
 async function loadFrontButtons(slug) {
@@ -11291,3 +11383,25 @@ function onScanSuccess(decodedText, decodedResult) {
 function onScanFailure(error) {
   // console.warn(`Code scan error = ${error}`);
 }
+
+window.showAdModal = (src, description) => {
+  if (!src) return;
+  const desc = description || "無內容說明";
+  const body = `
+    <div class="modal-dialog" style="width: 90%; max-width: 90vw; height: auto; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-head">
+        <div class="modal-title">內容說明</div>
+        <button class="btn" style="background: transparent; border: none; padding: 4px; display: flex; align-items: center; justify-content: center; color: #666; cursor: pointer;" onclick="closeModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 24px; height: 24px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" style="padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+        <div style="width: 100%; display: flex; justify-content: center; background: #000;">
+            <img src="${src}" style="max-width: 100%; max-height: 50vh; object-fit: contain;">
+        </div>
+        <div style="font-size: 16px; line-height: 1.6; color: #333; white-space: pre-wrap; padding: 10px; background: #f9f9f9; border-radius: 8px;">${desc}</div>
+      </div>
+    </div>
+  `;
+  openModal(body);
+};
