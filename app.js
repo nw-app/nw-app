@@ -1731,6 +1731,7 @@ async function loadPersonalData(slug) {
         loadFrontAds(slug);
         loadFrontButtons(slug);
         subscribeFrontButtons(slug);
+        subscribeFrontAds(slug);
         startFrontPolling(slug);
         setupPersonalTab(slug);
 
@@ -10855,7 +10856,7 @@ async function loadFrontAds(slug, providedSnap = null) {
       return `<div class="preview-slide ${idx===0?'active':''}">${content}</div>`;
     }).join('');
     
-    const showNav = (config.nav === true) || (validItems.length > 1);
+    const showNav = config.nav === true;
     container.innerHTML = `
       <div class="a3-preview-container effect-${config.effect}">
         ${slides}
@@ -11191,8 +11192,8 @@ function subscribeFrontAds(slug) {
     unsubscribeFrontAds = null;
   }
   const ref = doc(db, `communities/${slug}/app_modules/ads`);
-  unsubscribeFrontAds = onSnapshot(ref, () => {
-    loadFrontAds(slug);
+  unsubscribeFrontAds = onSnapshot(ref, (snap) => {
+    loadFrontAds(slug, snap);
   }, (err) => {
     void 0;
   });
@@ -11202,11 +11203,7 @@ function startFrontPolling(slug) {
   try {
     if (window.frontDataPolling) clearInterval(window.frontDataPolling);
   } catch {}
-  const poll = async () => {
-    try { await loadFrontAds(slug); } catch {}
-    try { await loadFrontButtons(slug); } catch {}
-  };
-  window.frontDataPolling = setInterval(poll, 15000);
+  // Polling disabled in favor of real-time subscriptions (subscribeFrontAds/Buttons)
 }
 
 window.addEventListener("beforeunload", () => {
