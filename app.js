@@ -10967,20 +10967,38 @@ function startFrontCarousel(config) {
     if (frontContainer) {
       let touchStartX = 0;
       let touchEndX = 0;
+      let isSwipeAction = false;
+
       frontContainer.addEventListener('touchstart', (e) => {
-        if (e.changedTouches && e.changedTouches.length > 0) {
-          touchStartX = e.changedTouches[0].screenX;
+        isSwipeAction = false;
+        if (e.touches && e.touches.length > 0) {
+          touchStartX = e.touches[0].clientX;
         }
         if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
       }, { passive: true });
+
       frontContainer.addEventListener('touchend', (e) => {
         if (e.changedTouches && e.changedTouches.length > 0) {
-          touchEndX = e.changedTouches[0].screenX;
-          if (touchEndX < touchStartX - 50) next();
-          if (touchEndX > touchStartX + 50) prev();
+          touchEndX = e.changedTouches[0].clientX;
+          const diff = touchStartX - touchEndX;
+          
+          if (Math.abs(diff) > 30) {
+             isSwipeAction = true;
+             if (diff > 0) next(); // Swipe Left -> Next
+             else prev();          // Swipe Right -> Prev
+          }
         }
         runLoop();
       }, { passive: true });
+      
+      // Prevent click if swiped (Capture phase to block inline onclick)
+      frontContainer.addEventListener('click', (e) => {
+         if (isSwipeAction) {
+             e.preventDefault();
+             e.stopPropagation();
+             isSwipeAction = false;
+         }
+      }, { capture: true });
     }
 
     const runLoop = () => {
