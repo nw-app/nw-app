@@ -10981,40 +10981,221 @@ function startFrontCarousel(config) {
        btnPrev.onclick = (e) => { e.preventDefault(); prev(); };
     }
 
-    // Swipe support
+    // Drag support
     if (frontContainer) {
-      let touchStartX = 0;
-      let touchEndX = 0;
-      let isSwipeAction = false;
+      let isDragging = false;
+      let startX = 0;
+      let currentX = 0;
+      let startY = 0; // For detecting vertical scroll
+      let currentY = 0;
+      let containerWidth = 0;
+      let prevIdx = -1;
+      let nextIdx = -1;
+      let hasMoved = false;
 
-      frontContainer.addEventListener('touchstart', (e) => {
-        isSwipeAction = false;
-        if (e.touches && e.touches.length > 0) {
-          touchStartX = e.touches[0].clientX;
-        }
+      // Helper to calculate indices
+      const getIndices = () => {
+          let pIdx, nIdx;
+          const len = slides.length;
+          
+          if (config.loop === 'rewind') {
+              pIdx = idx > 0 ? idx - 1 : (direction === -1 ? len - 1 : 0); // Simplified logic for rewind
+              nIdx = idx < len - 1 ? idx + 1 : (direction === 1 ? 0 : len - 1);
+          } else if (config.loop === 'once') {
+              pIdx = idx > 0 ? idx - 1 : -1;
+              nIdx = idx < len - 1 ? idx + 1 : -1;
+          } else {
+              pIdx = (idx - 1 + len) % len;
+              nIdx = (idx + 1) % len;
+          }
+          return { pIdx, nIdx };
+      };
+
+      const startDrag = (x, y) => {
+        isDragging = true;
+        startX = x;
+        startY = y;
+        currentX = x;
+        currentY = y;
+        hasMoved = false;
+        containerWidth = frontContainer.offsetWidth;
+        
+        // Pause auto-loop
         if (window.frontAdsTimer) clearTimeout(window.frontAdsTimer);
-      }, { passive: true });
+        
+        // Prepare indices
+        const indices = getIndices();
+        prevIdx = indices.pIdx;
+        nextIdx = indices.nIdx;
+
+        // Reset transitions and ensure visibility
+        [idx, prevIdx, nextIdx].forEach(i => {
+           if (i === -1) return;
+           const s = slides[i];
+           s.style.transition = 'none';
+           s.style.display = 'flex';
+           s.style.zIndex = (i === idx) ? 2 : 1;
+           
+           // Pre-position neighbors
+           if (i === prevIdx) s.style.transform = `translateX(${-containerWidth}px)`;
+           if (i === nextIdx) s.style.transform = `translateX(${containerWidth}px)`;
+           if (i === idx) s.style.transform = `translateX(0px)`;
+        });
+      };
+
+      const moveDrag = (x, y, e) => {
+        if (!isDragging) return;
+        
+        const deltaX = x - startX;
+        const deltaY = y - startY;
+
+        // If this is the first move, determine if vertical or horizontal
+        if (!hasMoved) {
+            if (Math.abs(deltaY) > Math.abs(deltaX)) {
+                // Vertical scroll, ignore drag
+                isDragging = false;
+                // Clean up inline styles
+                 [idx, prevIdx, nextIdx].forEach(i => {
+                    if (i === -1) return;
+                    slides[i].style.transition = '';
+                    slides[i].style.transform = '';
+                    slides[i].style.display = '';
+                    slides[i].style.zIndex = '';
+                 });
+                return;
+            }
+            hasMoved = true;
+        }
+
+        if (e.cancelable) e.preventDefault(); // Stop page scroll
+        
+        currentX = x;
+        
+        // Move current
+        slides[idx].style.transform = `translateX(${deltaX}px)`;
+        
+        // Move neighbors
+        if (prevIdx !== -1) {
+            slides[prevIdx].style.transform = `translateX(${-containerWidth + deltaX}px)`;
+        }
+        if (nextIdx !== -1) {
+            slides[nextIdx].style.transform = `translateX(${containerWidth + deltaX}px)`;
+        }
+      };
+
+      const endDrag = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        
+        const deltaX = currentX - startX;
+        const threshold = containerWidth * 0.2; // 20% width to trigger
+        
+        const transitionDuration = '0.3s';
+        
+        const animateTo = (index, xPos) => {
+            if (index === -1) return;
+            const s = slides[index];
+            s.style.transition = `transform ${transitionDuration} ease`;
+            s.style.transform = `translateX(${xPos}px)`;
+        };
+
+        if (Math.abs(deltaX) > 10) {
+            // It was a drag, prevent click
+            // (Handled by capture listener)
+        }
+
+        if (deltaX < -threshold && nextIdx !== -1) {
+            // Next
+            animateTo(idx, -containerWidth);
+            animateTo(nextIdx, 0);
+            
+            setTimeout(() => {
+                // Cleanup and update
+                [idx, prevIdx, nextIdx].forEach(i => {
+                    if (i === -1) return;
+                    slides[i].style.transition = '';
+                    slides[i].style.transform = '';
+                    slides[i].style.display = '';
+                    slides[i].style.zIndex = '';
+                });
+                next(); // Use existing logic to update state/classes
+            }, 300);
+            
+        } else if (deltaX > threshold && prevIdx !== -1) {
+            // Prev
+            animateTo(idx, containerWidth);
+            animateTo(prevIdx, 0);
+            
+            setTimeout(() => {
+                [idx, prevIdx, nextIdx].forEach(i => {
+                    if (i === -1) return;
+                    slides[i].style.transition = '';
+                    slides[i].style.transform = '';
+                    slides[i].style.display = '';
+                    slides[i].style.zIndex = '';
+                });
+                prev();
+            }, 300);
+            
+        } else {
+            // Revert
+            animateTo(idx, 0);
+            if (prevIdx !== -1) animateTo(prevIdx, -containerWidth);
+            if (nextIdx !== -1) animateTo(nextIdx, containerWidth);
+            
+            setTimeout(() => {
+                [idx, prevIdx, nextIdx].forEach(i => {
+                    if (i === -1) return;
+                    slides[i].style.transition = '';
+                    slides[i].style.transform = '';
+                    slides[i].style.display = '';
+                    slides[i].style.zIndex = '';
+                });
+                runLoop();
+            }, 300);
+        }
+      };
+
+      // Touch events
+      frontContainer.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 0) {
+           startDrag(e.touches[0].clientX, e.touches[0].clientY);
+        }
+      }, { passive: false }); // passive: false to allow preventDefault
+
+      frontContainer.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) {
+           moveDrag(e.touches[0].clientX, e.touches[0].clientY, e);
+        }
+      }, { passive: false });
 
       frontContainer.addEventListener('touchend', (e) => {
-        if (e.changedTouches && e.changedTouches.length > 0) {
-          touchEndX = e.changedTouches[0].clientX;
-          const diff = touchStartX - touchEndX;
-          
-          if (Math.abs(diff) > 30) {
-             isSwipeAction = true;
-             if (diff > 0) next(); // Swipe Left -> Next
-             else prev();          // Swipe Right -> Prev
-          }
-        }
-        runLoop();
-      }, { passive: true });
+        endDrag();
+      });
+
+      // Mouse events (for desktop testing)
+      frontContainer.addEventListener('mousedown', (e) => {
+         e.preventDefault(); // Prevent image drag
+         startDrag(e.clientX, e.clientY);
+         frontContainer.style.cursor = 'grabbing';
+      });
       
-      // Prevent click if swiped (Capture phase to block inline onclick)
+      frontContainer.addEventListener('mousemove', (e) => {
+         if (isDragging) moveDrag(e.clientX, e.clientY, e);
+      });
+      
+      window.addEventListener('mouseup', () => {
+         if (isDragging) {
+             frontContainer.style.cursor = '';
+             endDrag();
+         }
+      });
+
+      // Prevent click if dragged
       frontContainer.addEventListener('click', (e) => {
-         if (isSwipeAction) {
+         if (hasMoved && Math.abs(currentX - startX) > 10) {
              e.preventDefault();
              e.stopPropagation();
-             isSwipeAction = false;
          }
       }, { capture: true });
     }
