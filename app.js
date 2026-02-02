@@ -1352,12 +1352,20 @@ async function loadPersonalData(slug) {
                   let stColor = '#2563eb'; // Blue
                   let divBg = '#fff';
                   let divBorder = '#e5e7eb';
+                  
+                  const fName = facilityMap[res.facility] || res.facility || '未知設施';
 
                   // Determine Status Styles
+                  let onclickAttr = '';
+                  let cursorStyle = '';
+                  let divStyle = '';
                   if (res.status === 'valid') {
                       stText = `${res.date} 已預約`;
                       stColor = '#2563eb'; // Blue
                       divBg = '#fff'; // Default
+                      onclickAttr = `onclick="openCancelReservationModal('${slug}', '${res.id}', '${fName}', '${res.date}', '${res.startTime}', '${res.endTime}')"`;
+                      // cursorStyle = 'cursor: pointer; text-decoration: underline;';
+                      divStyle = 'cursor: pointer;'; // Apply pointer to the whole div
                   } else if (res.status === '已報到') {
                       stText = `${res.date} 已報到`;
                       stColor = '#059669'; // Green
@@ -1373,10 +1381,8 @@ async function loadPersonalData(slug) {
                       divBg = '#fff';
                   }
                   
-                  const fName = facilityMap[res.facility] || res.facility || '未知設施';
-                  
                   html += `
-                    <div style="background:${divBg}; border:1px solid ${divBorder}; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+                    <div ${onclickAttr} style="background:${divBg}; border:1px solid ${divBorder}; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); ${divStyle}">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
                             <span style="font-weight:600; font-size:16px; color:#1f2937;">${fName}</span>
                             <span style="font-size:14px;"><span style="color:${stColor}; font-weight:500;">${stText}</span></span>
@@ -11618,4 +11624,53 @@ window.showAdModal = (src, description) => {
     </div>
   `;
   openModal(body);
+};
+
+window.openCancelReservationModal = function(slug, resId, facilityName, date, startTime, endTime) {
+  const body = `
+    <div class="modal-dialog">
+        <div class="modal-head"><div class="modal-title">取消預約</div></div>
+        <div class="modal-body">
+            <p>您確定要取消 <strong>${facilityName}</strong> 的預約嗎？</p>
+            <p style="color:#666; font-size:14px; margin-top:8px;">時間: ${date} ${startTime}~${endTime}</p>
+        </div>
+        <div class="modal-foot">
+            <button class="btn action-btn" onclick="closeModal()">保留</button>
+            <button class="btn action-btn primary" onclick="confirmCancelReservation('${slug}', '${resId}')" style="background-color: #ef4444; color: white;">確定取消</button>
+        </div>
+    </div>
+  `;
+  openModal(body);
+};
+
+window.confirmCancelReservation = async function(slug, resId) {
+    try {
+        const btns = document.querySelectorAll("#sys-modal .action-btn");
+        const confirmBtn = btns[btns.length - 1];
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.innerText = "處理中...";
+        }
+
+        await updateDoc(doc(db, "communities", slug, "reservations", resId), {
+            status: "cancelled"
+        });
+        
+        closeModal();
+        
+        if (typeof showHint === 'function') {
+             showHint("已取消預約", "success");
+        } else {
+             alert("已取消預約");
+        }
+        
+        if (typeof loadPersonalData === 'function') {
+            loadPersonalData(slug);
+        }
+
+    } catch(e) {
+        console.error("Cancel failed", e);
+        alert(`取消失敗: ${e.code || e.message} (ID: ${resId})`);
+        closeModal();
+    }
 };
