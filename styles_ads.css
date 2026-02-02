@@ -46,11 +46,19 @@
 }
 .a3-preview-container.effect-slide .preview-slide.enter-right {
   z-index: 2;
-  animation: slideInRight 0.45s ease forwards;
+  animation: slideInRight 0.5s ease forwards;
 }
 .a3-preview-container.effect-slide .preview-slide.enter-left {
   z-index: 2;
-  animation: slideInLeft 0.45s ease forwards;
+  animation: slideInLeft 0.5s ease forwards;
+}
+.a3-preview-container.effect-slide .preview-slide.exit-left {
+  z-index: 1;
+  animation: slideOutLeft 0.5s ease forwards;
+}
+.a3-preview-container.effect-slide .preview-slide.exit-right {
+  z-index: 1;
+  animation: slideOutRight 0.5s ease forwards;
 }
 @keyframes slideInRight {
   from { transform: translateX(100%); }
@@ -59,6 +67,14 @@
 @keyframes slideInLeft {
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
+}
+@keyframes slideOutLeft {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+@keyframes slideOutRight {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
 }
 
 .preview-nav-btn {

@@ -10901,20 +10901,38 @@ function startFrontCarousel(config) {
             if (p && typeof p.pauseVideo === 'function') p.pauseVideo();
         });
 
+        let currentActive = null;
         slides.forEach(s => {
+          if (s.classList.contains('active')) currentActive = s;
           s.classList.remove('active');
           s.classList.remove('enter-left');
           s.classList.remove('enter-right');
+          s.classList.remove('exit-left');
+          s.classList.remove('exit-right');
         });
+
         const target = slides[i];
         if (target) {
           target.classList.add('active');
+          
           if (enterFrom === 'right') {
             target.classList.add('enter-right');
-            setTimeout(() => target.classList.remove('enter-right'), 500);
+            if (currentActive && currentActive !== target) {
+                currentActive.classList.add('exit-left');
+            }
+            setTimeout(() => {
+                target.classList.remove('enter-right');
+                if (currentActive) currentActive.classList.remove('exit-left');
+            }, 500);
           } else if (enterFrom === 'left') {
             target.classList.add('enter-left');
-            setTimeout(() => target.classList.remove('enter-left'), 500);
+            if (currentActive && currentActive !== target) {
+                currentActive.classList.add('exit-right');
+            }
+            setTimeout(() => {
+                target.classList.remove('enter-left');
+                if (currentActive) currentActive.classList.remove('exit-right');
+            }, 500);
           }
         }
     };
