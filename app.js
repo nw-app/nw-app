@@ -10414,22 +10414,30 @@ function renderAdminSubNav(key) {
               const d = String(today.getDate()).padStart(2, '0');
               const dateStr = `${y}-${m}-${d}`;
 
+              // Query by date only to avoid index issues, filter status client-side
               const q = query(
                   collection(db, "communities", slug, "reservations"),
-                  where("date", "==", dateStr),
-                  where("status", "!=", "cancelled")
+                  where("date", "==", dateStr)
               );
 
               badgeUnsub = onSnapshot(q, (rsnap) => {
+                  console.log(`[Badge] Fetching for ${dateStr}, found ${rsnap.size} docs`);
                   const counts = {};
                   rsnap.forEach(doc => {
                       const rd = doc.data();
+                      // Filter cancelled
+                      if (rd.status === 'cancelled' || rd.status === '已取消') return;
+                      
                       if (rd.facility) {
                           counts[rd.facility] = (counts[rd.facility] || 0) + 1;
                       }
                   });
+                  console.log("[Badge] Counts:", counts);
                   
-                  adminNav.subContainer.querySelectorAll(".sub-nav-item").forEach(btn => {
+                  const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item");
+                  if (buttons.length === 0) console.warn("[Badge] No sub-nav items found to attach badges");
+
+                  buttons.forEach(btn => {
                       const k = btn.getAttribute("data-key");
                       const count = counts[k] || 0;
                       
