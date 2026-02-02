@@ -133,9 +133,8 @@ async function ensureQrLib() {
   }
   
   const sources = [
-    'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js',
-    'https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/qrcode/1.5.3/qrcode.min.js'
+    'https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js', 
+    'https://cdn.jsdelivr.net/gh/soldair/node-qrcode/build/qrcode.min.js'
   ];
 
   window._qrLibLoading = new Promise((resolve) => {
@@ -431,6 +430,10 @@ async function openUserProfileModal() {
 }
 
 function showHint(text, type = "info") {
+  if (!el.hint) {
+    if (type === "error" || type === "success") alert(text);
+    return;
+  }
   el.hint.textContent = text;
   el.hint.style.color = type === "error" ? "#b71c1c" : type === "success" ? "#0ea5e9" : "#6b7280";
 }
@@ -7480,7 +7483,8 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             const eTime = formatTime(nextH, nextM);
             
             // Find reservation - CHANGED to filter to support multiple reservations per slot
-            const resList = dayItems.filter(i => i.startTime === sTime);
+            // Exclude cancelled reservations so they appear as available slots
+            const resList = dayItems.filter(i => i.startTime === sTime && (i.status !== 'cancelled' && i.status !== '已取消'));
             
             slots.push({
                 sTime,
@@ -7582,18 +7586,41 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
         return items
             .filter(item => item.bookerName !== "暫停")
             .map(item => {
-                const isCheckedIn = item.status === "已報到";
-                const rowStyle = isCheckedIn ? "background:#dcfce7;" : (item.date === selectedDate ? "background:#f0f9ff;" : "");
+                // Status Mapping and Coloring
+                // Default: Valid/Reserved -> Light Blue
+                let statusText = "已預約";
+                let rowBg = "#e0f2fe"; // Light Blue
+                
+                const s = item.status || "valid";
+                
+                if (s === "checked_in" || s === "已報到") {
+                    statusText = "已報到";
+                    rowBg = "#dcfce7"; // Light Green
+                } else if (s === "cancelled" || s === "已取消") {
+                    statusText = "已取消";
+                    rowBg = "#fee2e2"; // Light Red
+                } else if (s === "no_show" || s === "未報到") {
+                    statusText = "未報到";
+                    rowBg = "#ffedd5"; // Light Orange
+                }
+
+                const rowStyle = `background:${rowBg};`;
                 
                 return `
                     <tr data-id="${item.id}" style="${rowStyle}">
                         <td>${item.date}</td>
                         <td>${item.startTime} - ${item.endTime}</td>
                         <td>${item.formattedBooker || formatBookerName(item.bookerName)}</td>
-                        <td>${item.status === 'valid' ? '已預約' : (item.status || '已預約')}</td>
+                        <td>${statusText}</td>
                         <td class="actions">
                             ${(() => {
-                                const isCheckedIn = item.status === "已報到";
+                                const isCheckedIn = (statusText === "已報到");
+                                const isCancelled = (statusText === "已取消");
+                                
+                                if (isCancelled) {
+                                    return `<span style="color:#6b7280; font-size:13px; margin-right:8px;">無操作</span>`;
+                                }
+                                
                                 return `<button class="btn small action-btn btn-checkin-res" ${isCheckedIn ? 'style="background:#6b7280;color:white;"' : 'style="background:#10b981;color:white;"'}>${isCheckedIn ? '取消報到' : '報到'}</button>`;
                             })()}
                             <button class="btn small action-btn btn-edit-res">編輯</button>
@@ -10341,7 +10368,11 @@ function renderAdminSubNav(key) {
       })();
   } else if (key === 'facility') {
       let localUnsub = null;
-      const wrapper = () => { if (localUnsub) localUnsub(); };
+      let badgeUnsub = null;
+      const wrapper = () => { 
+          if (localUnsub) localUnsub(); 
+          if (badgeUnsub) badgeUnsub();
+      };
       navUnsubscribe = wrapper;
 
       (async () => {
@@ -10374,6 +10405,46 @@ function renderAdminSubNav(key) {
               
               adminNav.subContainer.innerHTML = renderButtons(currentList);
               attachListeners(currentList);
+
+              // Setup Badge Listener (Reservations Today)
+              if (badgeUnsub) badgeUnsub();
+              const today = new Date();
+              const y = today.getFullYear();
+              const m = String(today.getMonth() + 1).padStart(2, '0');
+              const d = String(today.getDate()).padStart(2, '0');
+              const dateStr = `${y}-${m}-${d}`;
+
+              const q = query(
+                  collection(db, "communities", slug, "reservations"),
+                  where("date", "==", dateStr),
+                  where("status", "!=", "cancelled")
+              );
+
+              badgeUnsub = onSnapshot(q, (rsnap) => {
+                  const counts = {};
+                  rsnap.forEach(doc => {
+                      const rd = doc.data();
+                      if (rd.facility) {
+                          counts[rd.facility] = (counts[rd.facility] || 0) + 1;
+                      }
+                  });
+                  
+                  adminNav.subContainer.querySelectorAll(".sub-nav-item").forEach(btn => {
+                      const k = btn.getAttribute("data-key");
+                      const count = counts[k] || 0;
+                      
+                      // Remove existing
+                      const old = btn.querySelector(".nav-badge");
+                      if(old) old.remove();
+                      
+                      if(count > 0) {
+                          const badge = document.createElement("div");
+                          badge.className = "nav-badge";
+                          badge.textContent = count;
+                          btn.appendChild(badge);
+                      }
+                  });
+              }, (err) => console.error("Badge fetch error", err));
               
               const activeBtn = adminNav.subContainer.querySelector(".sub-nav-item.active");
               if(activeBtn) {

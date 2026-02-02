@@ -462,7 +462,7 @@
         const reservations = [];
         snap.forEach(doc => {
             const data = doc.data();
-            if (data.status !== 'cancelled') {
+            if (data.status !== 'cancelled' && data.status !== '已取消') {
                 reservations.push({ id: doc.id, ...data });
             }
         });
