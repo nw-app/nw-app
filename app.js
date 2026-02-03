@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-storage.js";
-import { initializeFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+import { initializeFirestore, doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, setLogLevel, onSnapshot, writeBatch, addDoc, orderBy, deleteField, limit } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
 // === Error Suppression Logic ===
 // Note: Global error suppression is now handled in the <head> of each HTML file.
@@ -8137,6 +8137,556 @@ function openFacilityReservationModal(item, displayTitle, slug, facilityKey, isN
     }, 100);
 }
 
+function renderAdminMailInbox() {
+  if (window.adminMailUnsub) {
+    window.adminMailUnsub();
+    window.adminMailUnsub = null;
+  }
+
+  const container = adminNav.content;
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="card data-card">
+      <div class="card-head">
+        <h1 class="card-title">郵件包裹收件登記</h1>
+        <div style="display:flex;gap:8px;">
+           <button id="btn-add-mail" class="btn small action-btn">新增收件</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>登記時間</th>
+              <th>戶號</th>
+              <th>收件人</th>
+              <th>類型</th>
+              <th>物流/備註</th>
+              <th>狀態</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="mail-list-body">
+            <tr><td colspan="7" style="text-align:center;padding:20px;">載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("btn-add-mail").addEventListener("click", () => openMailModal());
+
+  const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+
+  const q = query(
+    collection(db, "communities", slug, "mails"),
+    orderBy("arrivedAt", "desc"),
+    limit(100)
+  );
+
+  window.adminMailUnsub = onSnapshot(q, (snap) => {
+    const list = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    renderMailTable(list);
+  }, (err) => {
+    console.error(err);
+    const tbody = document.getElementById("mail-list-body");
+    if(tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:red;">載入失敗: ${err.message}</td></tr>`;
+  });
+}
+
+function renderMailTable(list) {
+  const tbody = document.getElementById("mail-list-body");
+  if (!tbody) return;
+  
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:20px;color:#888;">目前無資料</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(item => {
+    let dateStr = "";
+    if (item.arrivedAt) {
+        const d = new Date(item.arrivedAt);
+        const y = d.getFullYear();
+        const m = String(d.getMonth()+1).padStart(2,'0');
+        const dd = String(d.getDate()).padStart(2,'0');
+        const h = String(d.getHours()).padStart(2,'0');
+        const min = String(d.getMinutes()).padStart(2,'0');
+        dateStr = `${y}-${m}-${dd} ${h}:${min}`;
+    }
+
+    const isPicked = item.status === 'picked_up';
+    const statusClass = isPicked ? 'status-green' : 'status-orange';
+    const statusText = isPicked ? '已領取' : '未領取';
+    
+    return `
+      <tr>
+        <td>${dateStr}</td>
+        <td>${item.houseNo || ""}</td>
+        <td>${item.recipient || ""}</td>
+        <td>${item.type || ""}</td>
+        <td>${item.carrier || ""}${item.note ? `<br><small style="color:#666">${item.note}</small>` : ""}</td>
+        <td><span class="status-badge ${statusClass}" style="background-color:${isPicked?'#d1fae5':'#ffedd5'};color:${isPicked?'#065f46':'#9a3412'};padding:2px 8px;border-radius:999px;font-size:12px;">${statusText}</span></td>
+        <td>
+          ${!isPicked ? `<button class="btn small action-btn" onclick="pickupMail('${item.id}')">領取</button>` : ""}
+          <button class="btn small action-btn danger" onclick="deleteMail('${item.id}')">刪除</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+window.pickupMail = async (id) => {
+    if(!confirm("確定已領取？")) return;
+    try {
+        const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+        await updateDoc(doc(db, "communities", slug, "mails", id), {
+            status: 'picked_up',
+            pickedUpAt: Date.now(),
+            pickedUpBy: auth.currentUser.uid
+        });
+    } catch(e) { 
+        console.error(e);
+        alert("操作失敗"); 
+    }
+};
+
+window.deleteMail = async (id) => {
+    if(!confirm("確定刪除此記錄？")) return;
+    try {
+        const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+        await deleteDoc(doc(db, "communities", slug, "mails", id));
+    } catch(e) { 
+        console.error(e);
+        alert("刪除失敗"); 
+    }
+};
+
+window.openMailModal = (item = null) => {
+    const modalId = "mail-modal";
+    let modal = document.getElementById(modalId);
+    if(modal) modal.remove();
+    
+    modal = document.createElement("div");
+    modal.id = modalId;
+    modal.className = "modal active";
+    modal.style.zIndex = "11000"; // Ensure it's on top of everything
+    modal.innerHTML = `
+      <div class="modal-dialog">
+        <div class="modal-head">
+          <h3 class="modal-title">${item ? "編輯收件" : "新增收件"}</h3>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">戶號 *</label>
+            <input type="text" id="mail-house" class="form-input" placeholder="例如: A-10-2" value="${item?.houseNo || ''}" list="mail-house-list" autocomplete="off">
+            <datalist id="mail-house-list"></datalist>
+          </div>
+          <div class="form-group">
+            <label class="form-label">收件人 *</label>
+            <input type="text" id="mail-recipient" class="form-input" placeholder="姓名" value="${item?.recipient || ''}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">類型 *</label>
+            <select id="mail-type" class="form-input">
+                <option value="包裹" ${item?.type === '包裹' ? 'selected' : ''}>包裹</option>
+                <option value="掛號" ${item?.type === '掛號' ? 'selected' : ''}>掛號</option>
+                <option value="信件" ${item?.type === '信件' ? 'selected' : ''}>信件</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">狀態</label>
+            <select id="mail-status-detail" class="form-input">
+                <!-- Populated by JS -->
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">物流業者</label>
+            <select id="mail-carrier" class="form-input">
+                <option value="">載入中...</option>
+            </select>
+          </div>
+          <div class="form-group">
+             <label class="form-label">物流單號</label>
+             <div class="input-wrap" style="display: flex; gap: 8px; align-items: stretch;">
+               <input type="text" id="mail-tracking-no" class="form-input" placeholder="掃碼或手動輸入" value="${item?.trackingNo || ''}" style="flex: 1;">
+               <button type="button" class="btn small action-btn" id="btn-scan-mail-qr" style="padding: 0 10px; display: flex; align-items: center; justify-content: center; height: auto;" title="掃碼輸入">
+                 <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                   <rect width="5" height="5" x="3" y="3" rx="1"></rect>
+                   <rect width="5" height="5" x="16" y="3" rx="1"></rect>
+                   <rect width="5" height="5" x="3" y="16" rx="1"></rect>
+                   <path d="M21 16h-3a2 2 0 0 0-2 2v3"></path>
+                   <path d="M21 21v.01"></path>
+                   <path d="M12 7v3a2 2 0 0 1-2 2H7"></path>
+                   <path d="M3 12h.01"></path>
+                   <path d="M12 3h.01"></path>
+                   <path d="M12 16v.01"></path>
+                   <path d="M16 12h1"></path>
+                   <path d="M21 12v.01"></path>
+                   <path d="M12 21v-1"></path>
+                 </svg>
+               </button>
+             </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">備註</label>
+            <input type="text" id="mail-note" class="form-input" value="${item?.note || ''}">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn action-btn" onclick="document.getElementById('${modalId}').remove()">取消</button>
+          <button class="btn primary" id="btn-save-mail">儲存</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Auto-load residents and setup fields
+    (async () => {
+        try {
+            const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+            
+            // 1. Load Residents
+            const q = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"));
+            const snap = await getDocs(q);
+            const residents = [];
+            snap.forEach(d => {
+                const data = d.data();
+                if (data.houseNo) residents.push({ h: data.houseNo, n: data.displayName || data.realName || "" });
+            });
+            residents.sort((a, b) => a.h.localeCompare(b.h, undefined, { numeric: true }));
+            
+            const dl = document.getElementById("mail-house-list");
+            if (dl) dl.innerHTML = residents.map(r => `<option value="${r.h}">${r.n}</option>`).join("");
+            
+            const hInput = document.getElementById("mail-house");
+            const rInput = document.getElementById("mail-recipient");
+            if (hInput && rInput) {
+                const autoFill = () => {
+                    const val = hInput.value.trim();
+                    const match = residents.find(r => r.h === val);
+                    if (match && match.n) rInput.value = match.n;
+                };
+                hInput.addEventListener("input", autoFill);
+                hInput.addEventListener("change", autoFill);
+            }
+
+            // 2. Setup Type & Status Logic
+            const typeSelect = document.getElementById("mail-type");
+            const statusSelect = document.getElementById("mail-status-detail");
+            
+            const updateStatusOptions = () => {
+                const type = typeSelect.value;
+                let options = [];
+                if (type === "包裹") {
+                    options = ["常溫", "冷藏", "冷凍"];
+                } else if (type === "掛號") {
+                    options = ["一般", "限時", "雙掛號", "政府公文"];
+                } else if (type === "信件") {
+                    options = ["一般", "限時", "其他"];
+                }
+                
+                statusSelect.innerHTML = options.map(opt => `<option value="${opt}" ${item?.statusDetail === opt ? 'selected' : ''}>${opt}</option>`).join("");
+            };
+            
+            typeSelect.addEventListener("change", updateStatusOptions);
+            updateStatusOptions(); // Init
+
+            // 3. Load Carriers
+            let carriers = window.currentCarriers;
+            if(!carriers) {
+                const settingsRef = doc(db, "communities", slug, "settings", "mail");
+                const sSnap = await getDoc(settingsRef);
+                if(sSnap.exists() && sSnap.data().carriers) {
+                    carriers = sSnap.data().carriers;
+                } else {
+                     // Default fallback if not loaded
+                     carriers = ["郵局", "中華郵政", "黑貓宅急便", "新竹物流", "嘉里大榮", "宅配通", "順豐速運", "DHL", "FedEx", "UPS"];
+                }
+            }
+            
+            const carrierSelect = document.getElementById("mail-carrier");
+            if(carrierSelect) {
+                carrierSelect.innerHTML = carriers.map(c => `<option value="${c}" ${item?.carrier === c ? 'selected' : ''}>${c}</option>`).join("");
+                // Add "Other" option just in case? Or strictly from list. User said "dropdown brings in". Strict is safer.
+            }
+
+            // 4. Setup Scanner
+            const scanBtn = document.getElementById("btn-scan-mail-qr");
+            if(scanBtn) {
+                scanBtn.addEventListener("click", () => {
+                     // Reuse existing scanner logic but target tracking no input
+                     if (window.startQrScanner) {
+                         window.startQrScanner((text) => {
+                             const trackInput = document.getElementById("mail-tracking-no");
+                             if(trackInput) trackInput.value = text;
+                             // Close scanner handled by scanner logic or manual close
+                         });
+                     } else {
+                         alert("掃碼功能未初始化");
+                     }
+                });
+            }
+
+        } catch (e) { console.error("Load mail modal data error", e); }
+    })();
+    
+    document.getElementById("btn-save-mail").addEventListener("click", async () => {
+        const house = document.getElementById("mail-house").value.trim();
+        const recipient = document.getElementById("mail-recipient").value.trim();
+        const type = document.getElementById("mail-type").value;
+        const statusDetail = document.getElementById("mail-status-detail").value;
+        const carrier = document.getElementById("mail-carrier").value;
+        const trackingNo = document.getElementById("mail-tracking-no").value.trim();
+        const note = document.getElementById("mail-note").value.trim();
+        
+        if(!house || !recipient) {
+            alert("請填寫戶號和收件人");
+            return;
+        }
+        
+        const btn = document.getElementById("btn-save-mail");
+        btn.disabled = true;
+        btn.textContent = "儲存中...";
+        
+        try {
+            const data = {
+                houseNo: house,
+                recipient: recipient,
+                type: type,
+                statusDetail: statusDetail,
+                carrier: carrier,
+                trackingNo: trackingNo,
+                note: note,
+                status: 'pending',
+                arrivedAt: Date.now()
+            };
+            
+            const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+            await addDoc(collection(db, "communities", slug, "mails"), data);
+            
+            document.getElementById(modalId).remove();
+        } catch(e) {
+            console.error(e);
+            alert("儲存失敗: " + e.message);
+            btn.disabled = false;
+            btn.textContent = "儲存";
+        }
+    });
+};
+
+window.renderAdminMailSettings = async () => {
+  const container = adminNav.content;
+  if(!container) return;
+  
+  const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+  
+  // Default carriers
+  const defaultCarriers = [
+      // Taiwan Local
+      "郵局", "中華郵政", "黑貓宅急便", "新竹物流", "嘉里大榮", "宅配通", "順豐速運",
+      // International
+      "DHL", "FedEx", "UPS", "TNT", "EMS",
+      // China / Cross-border
+      "淘寶集運", "京東物流", "圓通速遞", "中通快遞", "申通快遞", "韻達快遞"
+  ];
+  
+  container.innerHTML = `
+    <div class="card data-card">
+      <div class="card-head">
+        <h1 class="card-title">物流業者設定</h1>
+        <div class="card-actions">
+           <button class="btn small action-btn" onclick="openCarrierModal()">新增業者</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>業者名稱</th>
+                        <th style="width: 100px; text-align: center;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="carrier-list-body">
+                    <tr><td colspan="2" style="text-align:center;">載入中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // Fetch existing settings
+  try {
+      const settingsRef = doc(db, "communities", slug, "settings", "mail");
+      let settingsSnap = await getDoc(settingsRef);
+      
+      let carriers = [];
+      
+      if (!settingsSnap.exists()) {
+          // Initialize with defaults if not exists
+          carriers = [...defaultCarriers];
+          await setDoc(settingsRef, { carriers: carriers }, { merge: true });
+      } else {
+          const data = settingsSnap.data();
+          if (!data.carriers || !Array.isArray(data.carriers)) {
+              // Merge defaults if field missing
+               carriers = [...defaultCarriers];
+               await setDoc(settingsRef, { carriers: carriers }, { merge: true });
+          } else {
+              carriers = data.carriers;
+          }
+      }
+      
+      // Ensure '郵局' is present if not already (for existing data migration)
+      if (!carriers.includes("郵局")) {
+          carriers.unshift("郵局");
+          await setDoc(settingsRef, { carriers: carriers }, { merge: true });
+      }
+
+      renderCarrierTable(carriers);
+      
+      // Store locally for edits
+      window.currentCarriers = carriers;
+      
+  } catch(e) {
+      console.error(e);
+      document.getElementById("carrier-list-body").innerHTML = `<tr><td colspan="2" style="color:red;">載入失敗: ${e.message}</td></tr>`;
+  }
+};
+
+window.renderCarrierTable = (list) => {
+    const tbody = document.getElementById("carrier-list-body");
+    if(!tbody) return;
+    
+    if(list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="2" style="text-align:center; color:#999;">無資料</td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = list.map((name, index) => `
+        <tr>
+            <td>${name}</td>
+            <td style="text-align: center;">
+                <div style="display: flex; gap: 6px; justify-content: center; align-items: center;">
+                    <button class="btn small icon-btn" onclick="moveCarrier(${index}, -1)" title="上移" 
+                        style="background: #f5f5f5; border: 1px solid #ddd; visibility: ${index === 0 ? 'hidden' : 'visible'};">
+                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                    </button>
+                    <button class="btn small icon-btn" onclick="moveCarrier(${index}, 1)" title="下移" 
+                        style="background: #f5f5f5; border: 1px solid #ddd; visibility: ${index === list.length - 1 ? 'hidden' : 'visible'};">
+                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
+                    <button class="btn small action-btn danger" onclick="deleteCarrier(${index})" title="刪除">刪除</button>
+                </div>
+            </td>
+        </tr>
+    `).join("");
+};
+
+window.moveCarrier = async (index, direction) => {
+    try {
+        const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+        const newList = [...window.currentCarriers];
+        
+        // Swap elements
+        const targetIndex = index + direction;
+        if(targetIndex < 0 || targetIndex >= newList.length) return;
+        
+        [newList[index], newList[targetIndex]] = [newList[targetIndex], newList[index]];
+        
+        await setDoc(doc(db, "communities", slug, "settings", "mail"), { carriers: newList }, { merge: true });
+        
+        window.currentCarriers = newList;
+        renderCarrierTable(newList);
+    } catch(e) {
+        console.error(e);
+        alert("移動失敗: " + e.message);
+    }
+};
+
+window.openCarrierModal = () => {
+    const modalId = "carrier-modal";
+    let modal = document.getElementById(modalId);
+    if(modal) modal.remove();
+    
+    modal = document.createElement("div");
+    modal.id = modalId;
+    modal.className = "modal active";
+    modal.style.zIndex = "11000";
+    modal.innerHTML = `
+      <div class="modal-dialog">
+        <div class="modal-head">
+          <h3 class="modal-title">新增物流業者</h3>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">業者名稱</label>
+            <input type="text" id="carrier-name" class="form-input" placeholder="例如: 郵局">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn action-btn" onclick="document.getElementById('${modalId}').remove()">取消</button>
+          <button class="btn primary" id="btn-save-carrier">新增</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    
+    document.getElementById("btn-save-carrier").addEventListener("click", async () => {
+        const name = document.getElementById("carrier-name").value.trim();
+        if(!name) {
+            alert("請輸入名稱");
+            return;
+        }
+        
+        if(window.currentCarriers.includes(name)) {
+            alert("此業者已存在");
+            return;
+        }
+        
+        const btn = document.getElementById("btn-save-carrier");
+        btn.disabled = true;
+        btn.textContent = "處理中...";
+        
+        try {
+            const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+            const newList = [...window.currentCarriers, name];
+            
+            await setDoc(doc(db, "communities", slug, "settings", "mail"), { carriers: newList }, { merge: true });
+            
+            window.currentCarriers = newList;
+            renderCarrierTable(newList);
+            document.getElementById(modalId).remove();
+        } catch(e) {
+            console.error(e);
+            alert("新增失敗: " + e.message);
+            btn.disabled = false;
+            btn.textContent = "新增";
+        }
+    });
+};
+
+window.deleteCarrier = async (index) => {
+    if(!confirm("確定要刪除此業者嗎?")) return;
+    
+    try {
+        const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
+        const newList = [...window.currentCarriers];
+        newList.splice(index, 1);
+        
+        await setDoc(doc(db, "communities", slug, "settings", "mail"), { carriers: newList }, { merge: true });
+        
+        window.currentCarriers = newList;
+        renderCarrierTable(newList);
+    } catch(e) {
+        console.error(e);
+        alert("刪除失敗: " + e.message);
+    }
+};
+
 function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
   // Cleanup previous SOS list listener if exists
   if (window.sosListUnsub) {
@@ -8175,7 +8725,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
   }
   if (mainKey === "mail") {
     if (sub === "收件") {
-      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">收件</h1></div><div class="empty-hint">尚未建立表單</div></div>`;
+      renderAdminMailInbox();
       return;
     }
     if (sub === "取件") {
@@ -8187,7 +8737,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
       return;
     }
     if (sub === "設定") {
-      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">郵件包裹設定</h1></div><div class="empty-hint">尚未建立設定</div></div>`;
+      renderAdminMailSettings();
       return;
     }
   }
