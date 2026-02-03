@@ -1180,6 +1180,10 @@ async function setupPersonalTab(slug) {
 
   function switchMainTab(tab) {
     if (tab === "home") {
+      if (window.personalUnsubs) {
+        window.personalUnsubs.forEach(u => u && u());
+        window.personalUnsubs = [];
+      }
       navHome.classList.add("active");
       navPersonal.classList.remove("active");
       homeSections.forEach(el => el.classList.remove("hidden"));
@@ -1214,8 +1218,16 @@ async function setupPersonalTab(slug) {
 }
 
 async function loadPersonalData(slug) {
+  if (window.personalUnsubs) {
+    window.personalUnsubs.forEach(u => u && u());
+    window.personalUnsubs = [];
+  }
+
   const u = auth.currentUser;
   if (!u) return;
+  
+  let houseNo = "";
+  let subNo = "0";
   
   const bookingPane = document.getElementById("pane-booking");
   const notifPane = document.getElementById("pane-notification");
@@ -1238,8 +1250,8 @@ async function loadPersonalData(slug) {
      const snap = await getDoc(doc(db, "users", u.uid));
      if (snap.exists()) {
        const d = snap.data();
-       const houseNo = d.houseNo || "";
-       const subNo = d.subNo !== undefined ? d.subNo : "";
+       houseNo = d.houseNo || "";
+       subNo = (d.subNo !== undefined && d.subNo !== null && d.subNo !== "") ? d.subNo : "0";
        const name = d.displayName || d.realName || "住戶";
        const photo = d.photoURL;
        const qrCodeText = d.qrCodeText || "";
@@ -1298,41 +1310,116 @@ async function loadPersonalData(slug) {
   // 2. Fetch Reservations
   if (bookingPane) {
       bookingPane.innerHTML = '<div style="text-align:center; padding:20px; color:#666;">載入中...</div>';
-      try {
-          // Parallel fetch: Reservations + Facility Names
-          const [resSnap, navSnap] = await Promise.all([
-             (async () => {
-                 try {
-                     const q = query(
-                        collection(db, "communities", slug, "reservations"),
-                        where("createdBy", "==", u.uid),
-                        orderBy("createdAt", "desc")
-                     );
-                     return await getDocs(q);
-                 } catch (err) {
-                     // Fallback if index missing
-                     if (err.message && err.message.includes("index")) {
-                         console.warn("Missing index for reservations, falling back to client sort");
-                         const q2 = query(
-                            collection(db, "communities", slug, "reservations"),
-                            where("createdBy", "==", u.uid)
-                         );
-                         return await getDocs(q2);
-                     } else {
-                         throw err;
-                     }
-                 }
-             })(),
-             getDoc(doc(db, "communities", slug, "settings", "nav")).catch(e => null)
-          ]);
-
-          // Process Facility Names
-          let facilityMap = {};
-          // Default fallback
-          facilityMap['gym'] = '健身房';
+      
+      let selfReservations = [];
+      let adminReservations = [];
+      let facilityMap = { 'gym': '健身房' };
+      
+      const renderReservations = () => {
+          const allRes = [...selfReservations];
+          const seenIds = new Set(selfReservations.map(r => r.id));
           
-          if (navSnap && navSnap.exists()) {
-             const tabs = navSnap.data().facility_tabs || [];
+          adminReservations.forEach(r => {
+              if (!seenIds.has(r.id)) {
+                  allRes.push(r);
+                  seenIds.add(r.id);
+              }
+          });
+          
+          allRes.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
+          
+          if (allRes.length === 0) {
+              bookingPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無預約記錄</div>';
+              return;
+          }
+          
+          let html = '<div class="list-group" style="padding: 10px;">';
+          allRes.forEach(res => {
+              let stText = '已預約';
+              let stColor = '#2563eb';
+              let divBg = '#fff';
+              let divBorder = '#e5e7eb';
+              
+              const fName = facilityMap[res.facility] || res.facility || '未知設施';
+              
+              let onclickAttr = '';
+              let divStyle = '';
+              
+              let isPast = false;
+              try {
+                  const endD = new Date(`${res.date}T${res.endTime}`);
+                  if (endD < new Date()) isPast = true;
+              } catch(e) {}
+
+              if (res.status === 'valid' || !res.status || res.status === '已預約') {
+                  if (isPast) {
+                      stText = `${res.date} 未報到`;
+                      stColor = '#b45309'; // Dark Orange
+                      divBg = '#fff7ed';   // Light Orange
+                      onclickAttr = '';    // No action
+                      divStyle = 'cursor: default;';
+                  } else {
+                      stText = `${res.date} 已預約`;
+                      stColor = '#2563eb';
+                      divBg = '#fff';
+                      onclickAttr = `onclick="openCancelReservationModal('${slug}', '${res.id}', '${fName}', '${res.date}', '${res.startTime}', '${res.endTime}')"`;
+                      divStyle = 'cursor: pointer;'; 
+                  }
+              } else if (res.status === '已報到') {
+                  stText = `${res.date} 已報到`;
+                  stColor = '#059669';
+                  divBg = '#f0fdf4';
+              } else if (res.status === 'cancelled' || res.status === '已取消') {
+                  stText = `${res.date} 已取消`;
+                  stColor = '#dc2626';
+                  divBg = '#fef2f2';
+              } else {
+                  stText = `${res.date} ${res.status}`;
+                  stColor = '#4b5563';
+                  divBg = '#fff';
+              }
+              
+              let createdStr = "";
+              if (res.createdAt) {
+                  let d;
+                  if (typeof res.createdAt.toDate === 'function') {
+                      d = res.createdAt.toDate();
+                  } else {
+                      d = new Date(res.createdAt);
+                  }
+                  const y = d.getFullYear();
+                  const m = String(d.getMonth()+1).padStart(2,'0');
+                  const dd = String(d.getDate()).padStart(2,'0');
+                  const h = String(d.getHours()).padStart(2,'0');
+                  const min = String(d.getMinutes()).padStart(2,'0');
+                  const s = String(d.getSeconds()).padStart(2,'0');
+                  createdStr = `${y}-${m}-${dd} ${h}:${min}:${s}`;
+              }
+
+              const sourceStr = (res.createdBy === u.uid) ? "(APP)" : "(櫃台)";
+
+              html += `
+                <div ${onclickAttr} style="background:${divBg}; border:1px solid ${divBorder}; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); ${divStyle}">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
+                        <span style="font-weight:600; font-size:16px; color:#1f2937;">${fName}</span>
+                        <span style="font-size:14px;"><span style="color:${stColor}; font-weight:500;">${stText}</span></span>
+                    </div>
+                    <div style="color:#4b5563; font-size:14px; display:flex; flex-direction:column; gap:4px;">
+                        <div><span style="color:#9ca3af; margin-right:4px;">預約日期:</span> ${res.date}</div>
+                        <div><span style="color:#9ca3af; margin-right:4px;">預約時段:</span> ${res.startTime} ~ ${res.endTime}</div>
+                        ${createdStr ? `<div><span style="color:#9ca3af; margin-right:4px;">操作時間:</span> ${createdStr} 預約 ${sourceStr}</div>` : ''}
+                    </div>
+                    ${res.note ? `<div style="color:#6b7280; font-size:13px; margin-top:8px; padding-top:8px; border-top:1px solid #f3f4f6;">備註: ${res.note}</div>` : ''}
+                </div>
+              `;
+          });
+          html += '</div>';
+          bookingPane.innerHTML = html;
+      };
+      
+      getDoc(doc(db, "communities", slug, "settings", "nav")).then(snap => {
+          if (snap.exists()) {
+             const tabs = snap.data().facility_tabs || [];
              tabs.forEach(t => {
                  if (typeof t === 'string') {
                      facilityMap[t] = t; 
@@ -1341,69 +1428,38 @@ async function loadPersonalData(slug) {
                  }
              });
           }
+          renderReservations();
+      }).catch(e => console.error("Nav fetch error", e));
 
-          if (resSnap.empty) {
-              bookingPane.innerHTML = '<div style="text-align:center; color:#999; padding:40px 0;">尚無預約記錄</div>';
-          } else {
-              let docs = resSnap.docs.map(d => ({id:d.id, ...d.data()}));
-              // Client-side sort to be safe
-              docs.sort((a,b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-              let html = '<div class="list-group" style="padding: 10px;">';
-              docs.forEach(res => {
-                  let stText = '已預約';
-                  let stColor = '#2563eb'; // Blue
-                  let divBg = '#fff';
-                  let divBorder = '#e5e7eb';
-                  
-                  const fName = facilityMap[res.facility] || res.facility || '未知設施';
-
-                  // Determine Status Styles
-                  let onclickAttr = '';
-                  let cursorStyle = '';
-                  let divStyle = '';
-                  if (res.status === 'valid') {
-                      stText = `${res.date} 已預約`;
-                      stColor = '#2563eb'; // Blue
-                      divBg = '#fff'; // Default
-                      onclickAttr = `onclick="openCancelReservationModal('${slug}', '${res.id}', '${fName}', '${res.date}', '${res.startTime}', '${res.endTime}')"`;
-                      // cursorStyle = 'cursor: pointer; text-decoration: underline;';
-                      divStyle = 'cursor: pointer;'; // Apply pointer to the whole div
-                  } else if (res.status === '已報到') {
-                      stText = `${res.date} 已報到`;
-                      stColor = '#059669'; // Green
-                      divBg = '#f0fdf4'; // Light Green
-                  } else if (res.status === 'cancelled') {
-                      stText = `${res.date} 已取消`;
-                      stColor = '#dc2626'; // Red
-                      divBg = '#fef2f2'; // Light Red
-                  } else {
-                      // Fallback
-                      stText = `${res.date} ${res.status}`;
-                      stColor = '#4b5563'; // Gray
-                      divBg = '#fff';
-                  }
-                  
-                  html += `
-                    <div ${onclickAttr} style="background:${divBg}; border:1px solid ${divBorder}; border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); ${divStyle}">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:8px; align-items:center;">
-                            <span style="font-weight:600; font-size:16px; color:#1f2937;">${fName}</span>
-                            <span style="font-size:14px;"><span style="color:${stColor}; font-weight:500;">${stText}</span></span>
-                        </div>
-                        <div style="color:#4b5563; font-size:14px; display:flex; flex-direction:column; gap:4px;">
-                            <div><span style="color:#9ca3af; margin-right:4px;">預約日期:</span> ${res.date}</div>
-                            <div><span style="color:#9ca3af; margin-right:4px;">預約時段:</span> ${res.startTime} ~ ${res.endTime}</div>
-                        </div>
-                        ${res.note ? `<div style="color:#6b7280; font-size:13px; margin-top:8px; padding-top:8px; border-top:1px solid #f3f4f6;">備註: ${res.note}</div>` : ''}
-                    </div>
-                  `;
+      try {
+          const q1 = query(
+             collection(db, "communities", slug, "reservations"),
+             where("createdBy", "==", u.uid)
+          );
+          const unsub1 = onSnapshot(q1, (snap) => {
+              selfReservations = snap.docs.map(d => ({id:d.id, ...d.data()}));
+              renderReservations();
+          });
+          window.personalUnsubs.push(unsub1);
+      } catch(e) { console.error("Self res listener error", e); }
+      
+      if (houseNo) {
+          try {
+              // Use broader query (HouseNo prefix only) to catch all household members and potential subNo format mismatches
+              // e.g. "250011TP-1-Name" (Admin) vs "250011TP-01-Name" (User subNo)
+              // We will filter client-side if necessary, but showing household reservations is generally acceptable/desired.
+              const prefix = `${houseNo}-`;
+              const q2 = query(
+                 collection(db, "communities", slug, "reservations"),
+                 where("bookerName", ">=", prefix),
+                 where("bookerName", "<=", prefix + "\uf8ff")
+              );
+              const unsub2 = onSnapshot(q2, (snap) => {
+                  adminReservations = snap.docs.map(d => ({id:d.id, ...d.data()}));
+                  renderReservations();
               });
-              html += '</div>';
-              bookingPane.innerHTML = html;
-          }
-      } catch (e) {
-          console.error("Fetch booking failed", e);
-          bookingPane.innerHTML = '<div style="text-align:center; color:#ef4444; padding:20px;">載入失敗</div>';
+              window.personalUnsubs.push(unsub2);
+          } catch(e) { console.error("Admin res listener error", e); }
       }
   }
 
@@ -6465,10 +6521,19 @@ function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
 async function renderAdminFacilityList(displayTitle, facilityKey) {
   if (!adminNav.content) return;
   
+  const currentViewId = Date.now().toString();
+  adminNav.content.dataset.viewId = currentViewId;
+
   // Cleanup previous listeners
   if (window.adminFacilityUnsub) {
     window.adminFacilityUnsub();
     window.adminFacilityUnsub = null;
+  }
+  
+  // Cleanup reservation listener
+  if (window.adminReservationsUnsub) {
+    window.adminReservationsUnsub();
+    window.adminReservationsUnsub = null;
   }
   
   adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">${displayTitle} - 預約管理</h1></div><div class="empty-hint">載入中...</div></div>`;
@@ -6507,69 +6572,6 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
     }
 
     let items = [];
-    try {
-        const ref = collection(db, "communities", slug, "reservations");
-        const q = query(ref, where("facility", "==", facilityKey));
-        // Use onSnapshot for realtime updates? The previous code used getDocs inside onAuthStateChanged.
-        // But let's stick to single fetch for now to match the pattern, or upgrade to onSnapshot if I want realtime.
-        // Actually, the previous code was inside onAuthStateChanged which runs once on login.
-        // It didn't have a real-time listener for the collection itself.
-        // Let's use getDocs for now as per previous implementation to avoid complexity with multiple listeners.
-        const snap = await getDocs(q);
-        items = snap.docs.map(d => ({id: d.id, ...d.data()}));
-        // Sort by date/time desc
-        items.sort((a,b) => {
-            const dateA = a.date + (a.startTime || "");
-            const dateB = b.date + (b.startTime || "");
-            return dateA.localeCompare(dateB);
-        });
-
-        // Pre-fetch user names
-        const houseNos = new Set();
-        items.forEach(item => {
-             if (!item.bookerName || item.bookerName === "暫停") return;
-             const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
-             if (m) houseNos.add(m[1]);
-        });
-        
-        const userMap = {};
-        const hList = Array.from(houseNos);
-        if (hList.length > 0) {
-            const chunks = [];
-            for (let i=0; i<hList.length; i+=10) chunks.push(hList.slice(i, i+10));
-            for (const chunk of chunks) {
-                try {
-                    const q = query(collection(db, "users"), where("community", "==", slug), where("houseNo", "in", chunk));
-                    const usnap = await getDocs(q);
-                    usnap.forEach(d => {
-                        const u = d.data();
-                        userMap[`${u.houseNo}-${u.subNo}`] = u.name || u.realName || u.displayName || "住戶";
-                    });
-                } catch(e) { console.error("Error fetching users", e); }
-            }
-        }
-
-        items.forEach(item => {
-            if (!item.bookerName) { item.formattedBooker = ""; return; }
-            if (item.bookerName === "暫停") { item.formattedBooker = "暫停"; return; }
-            
-            const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
-            if (m) {
-                const h = m[1];
-                const s = m[2];
-                const name = userMap[`${h}-${s}`];
-                if (name) {
-                    item.formattedBooker = `${h}-${s}-${name}`;
-                } else {
-                    item.formattedBooker = `${h}-${s}`; 
-                }
-            } else {
-                item.formattedBooker = item.bookerName;
-            }
-        });
-    } catch (e) {
-        console.error("Failed to load reservations", e);
-    }
 
     // State for Calendar
     let currentYear = new Date().getFullYear();
@@ -7517,8 +7519,17 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 let style = "width:100%; margin-bottom:2px; display:block; padding:5px; border-radius:4px; transition:all 0.2s; font-size:14px; text-align:left;";
                 let clickable = true;
                 if (isReserved) {
+                    const s = res.status || "valid";
+                    const isCheckedIn = (s === "checked_in" || s === "已報到");
+                    const isCancelled = (s === "cancelled" || s === "已取消");
+                    const isExpired = isPastDate || (isToday && slot.eTime <= nowTimeStr);
+
                     if (res.bookerName === "暫停") {
                         style += "background-color: #4b5563; color: white; border: 1px solid #374151; cursor:not-allowed;";
+                        clickable = false;
+                    } else if (isExpired && !isCheckedIn && !isCancelled) {
+                        // No Show -> Light Orange, Not Clickable
+                        style += "background-color: #ffedd5; color: #9a3412; border: 1px solid #fed7aa; cursor:not-allowed;";
                         clickable = false;
                     } else {
                         style += "background-color: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; cursor:pointer;";
@@ -7582,6 +7593,14 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
     };
 
     const generateTableHTML = () => {
+        // Current time for expiry check
+        const now = new Date();
+        const ty = now.getFullYear();
+        const tm = String(now.getMonth() + 1).padStart(2, '0');
+        const td = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${ty}-${tm}-${td}`;
+        const nowTimeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
         // Show all items, but exclude "paused" items (bookerName === "暫停")
         return items
             .filter(item => item.bookerName !== "暫停")
@@ -7592,6 +7611,7 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                 let rowBg = "#e0f2fe"; // Light Blue
                 
                 const s = item.status || "valid";
+                const isExpired = (item.date < todayStr) || (item.date === todayStr && item.endTime <= nowTimeStr);
                 
                 if (s === "checked_in" || s === "已報到") {
                     statusText = "已報到";
@@ -7600,6 +7620,9 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                     statusText = "已取消";
                     rowBg = "#fee2e2"; // Light Red
                 } else if (s === "no_show" || s === "未報到") {
+                    statusText = "未報到";
+                    rowBg = "#ffedd5"; // Light Orange
+                } else if (isExpired && (s === "valid" || s === "已預約")) {
                     statusText = "未報到";
                     rowBg = "#ffedd5"; // Light Orange
                 }
@@ -7616,8 +7639,9 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                             ${(() => {
                                 const isCheckedIn = (statusText === "已報到");
                                 const isCancelled = (statusText === "已取消");
+                                const isNoShow = (statusText === "未報到");
                                 
-                                if (isCancelled) {
+                                if (isCancelled || isNoShow) {
                                     return `<span style="color:#6b7280; font-size:13px; margin-right:8px;">無操作</span>`;
                                 }
                                 
@@ -7631,7 +7655,73 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
             }).join("");
     };
 
-    renderUI();
+    // Real-time listener for reservations
+    try {
+        const ref = collection(db, "communities", slug, "reservations");
+        const q = query(ref, where("facility", "==", facilityKey));
+        
+        window.adminReservationsUnsub = onSnapshot(q, async (snap) => {
+            items = snap.docs.map(d => ({id: d.id, ...d.data()}));
+            
+            // Sort by date/time desc
+            items.sort((a,b) => {
+                const dateA = a.date + (a.startTime || "");
+                const dateB = b.date + (b.startTime || "");
+                return dateA.localeCompare(dateB);
+            });
+
+            // Pre-fetch user names
+            const houseNos = new Set();
+            items.forEach(item => {
+                 if (!item.bookerName || item.bookerName === "暫停") return;
+                 const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
+                 if (m) houseNos.add(m[1]);
+            });
+            
+            const userMap = {};
+            const hList = Array.from(houseNos);
+            if (hList.length > 0) {
+                const chunks = [];
+                for (let i=0; i<hList.length; i+=10) chunks.push(hList.slice(i, i+10));
+                for (const chunk of chunks) {
+                    try {
+                        const q = query(collection(db, "users"), where("community", "==", slug), where("houseNo", "in", chunk));
+                        const usnap = await getDocs(q);
+                        usnap.forEach(d => {
+                            const u = d.data();
+                            userMap[`${u.houseNo}-${u.subNo}`] = u.name || u.realName || u.displayName || "住戶";
+                        });
+                    } catch(e) { console.error("Error fetching users", e); }
+                }
+            }
+
+            items.forEach(item => {
+                if (!item.bookerName) { item.formattedBooker = ""; return; }
+                if (item.bookerName === "暫停") { item.formattedBooker = "暫停"; return; }
+                
+                const m = item.bookerName.match(/([A-Za-z0-9]+)-(\d+)/);
+                if (m) {
+                    const h = m[1];
+                    const s = m[2];
+                    const name = userMap[`${h}-${s}`];
+                    if (name) {
+                        item.formattedBooker = `${h}-${s}-${name}`;
+                    } else {
+                        item.formattedBooker = `${h}-${s}`; 
+                    }
+                } else {
+                    item.formattedBooker = item.bookerName;
+                }
+            });
+
+            renderUI();
+        }, (error) => {
+            console.error("Reservation listener error:", error);
+        });
+    } catch (e) {
+        console.error("Failed to setup reservation listener", e);
+        renderUI(); // Render empty if failed
+    }
   });
 }
 
@@ -10269,7 +10359,70 @@ function openConfirmModal(message, onConfirm) {
 
 
 let navUnsubscribe = null;
+let mainBadgeUnsub = null;
+let mainBadgeSlug = null;
+
+async function checkAndSetupMainBadge() {
+    let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+    
+    if (slug === "default" && auth.currentUser) {
+         try {
+             const fetchedSlug = await getUserCommunity(auth.currentUser.uid);
+             if (fetchedSlug !== "default") {
+                 slug = fetchedSlug;
+                 window.currentAdminCommunitySlug = slug;
+                 localStorage.setItem("adminCurrentCommunity", slug);
+             }
+         } catch (e) { }
+    }
+
+    if (slug === "default") return;
+    if (mainBadgeSlug === slug && mainBadgeUnsub) return;
+
+    if (mainBadgeUnsub) { mainBadgeUnsub(); mainBadgeUnsub = null; }
+    
+    mainBadgeSlug = slug;
+    
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const d = String(today.getDate()).padStart(2, '0');
+    const dateStr = `${y}-${m}-${d}`;
+
+    const q = query(
+        collection(db, "communities", slug, "reservations"),
+        where("date", "==", dateStr)
+    );
+
+    mainBadgeUnsub = onSnapshot(q, (rsnap) => {
+        let total = 0;
+        rsnap.forEach(doc => {
+            const rd = doc.data();
+            if (rd.status !== 'cancelled' && rd.status !== '已取消') {
+                total++;
+            }
+        });
+        
+        const btn = document.getElementById("admin-tab-facility");
+        if (btn) {
+            let badge = btn.querySelector(".nav-badge-main");
+            if (total > 0) {
+                if (!badge) {
+                    badge = document.createElement("div");
+                    badge.className = "nav-badge-main";
+                    btn.appendChild(badge);
+                }
+                badge.textContent = total;
+            } else {
+                if (badge) badge.remove();
+            }
+        }
+    }, (err) => {
+        console.error("Main badge fetch error", err);
+    });
+}
 function renderAdminSubNav(key) {
+  checkAndSetupMainBadge();
   if (navUnsubscribe) { navUnsubscribe(); navUnsubscribe = null; }
   if (!adminNav.subContainer) return;
   const items = adminSubMenus[key] || [];
@@ -11590,7 +11743,8 @@ window.openQRScanner = function() {
       const config = { fps: 10, qrbox: { width: 250, height: 250 } };
       if (window.currentQrScanner) {
           window.currentQrScanner.stop().then(() => {
-             window.currentQrScanner.clear();
+             try { window.currentQrScanner.clear(); } catch(e){}
+             window.currentQrScanner = null;
              startScannerInstance(config);
           }).catch(err => {
              console.error("Failed to stop previous scanner", err);
@@ -11601,33 +11755,6 @@ window.openQRScanner = function() {
           startScannerInstance(config);
       }
   }, 100);
-};
-
-window.openQRScanner = function() {
-    // Check/Create Modal
-    let modal = document.getElementById('qr-scanner-modal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'qr-scanner-modal';
-        modal.className = 'modal'; 
-        modal.style.cssText = "display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:99999; align-items:center; justify-content:center;";
-        
-        modal.innerHTML = `
-            <div style="background:#fff; padding:20px; border-radius:12px; width:90%; max-width:400px; position:relative; display:flex; flex-direction:column; align-items:center;">
-                <h3 style="margin:0 0 15px 0; color:#333;">掃描 QR Code</h3>
-                <div id="qr-reader" style="width:100%;"></div>
-                <button onclick="closeQRScanner()" style="margin-top:15px; padding:8px 20px; border:none; background:#eee; border-radius:6px; cursor:pointer; color:#333;">關閉</button>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }
-    
-    modal.style.display = 'flex';
-    
-    // Start Scanner
-    setTimeout(() => {
-        startScannerInstance({ fps: 10, qrbox: 250 });
-    }, 100);
 };
 
 function startScannerInstance(config) {
@@ -11657,11 +11784,14 @@ window.closeQRScanner = function() {
   }
   
   if (window.currentQrScanner) {
-    window.currentQrScanner.stop().then(() => {
-      window.currentQrScanner.clear();
-      window.currentQrScanner = null;
+    const scanner = window.currentQrScanner;
+    window.currentQrScanner = null;
+    
+    scanner.stop().then(() => {
+      return scanner.clear();
     }).catch(err => {
-      console.error("Failed to stop scanner", err);
+      console.warn("Failed to stop scanner", err);
+      try { scanner.clear(); } catch(e) {}
     });
   }
 };

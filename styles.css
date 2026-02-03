@@ -421,6 +421,8 @@ select:focus {
   transition: all 0.2s;
   flex: 1 1 0;
   min-width: 0;
+  position: relative;
+  overflow: visible;
 }
 .nav-item.active {
   color: var(--primary);
@@ -581,6 +583,25 @@ select:focus {
   padding: 0 4px;
   z-index: 10;
   box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+.nav-badge-main {
+  position: absolute;
+  top: 2px;
+  right: 15%;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--primary);
+  border: 1px solid #fff;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  z-index: 60;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 .sys-brand {
   display: flex;
