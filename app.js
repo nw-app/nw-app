@@ -12259,7 +12259,7 @@ document.addEventListener("touchend", handleCreateResidentTrigger, { passive: tr
 // ==========================================
 // QR Code Scanner Implementation
 // ==========================================
-window.openQRScanner = function() {
+window.openQRScanner = function(callback) {
   const modalId = 'qr-scanner-modal';
   let modal = document.getElementById(modalId);
   if (!modal) {
@@ -12295,19 +12295,22 @@ window.openQRScanner = function() {
           window.currentQrScanner.stop().then(() => {
              try { window.currentQrScanner.clear(); } catch(e){}
              window.currentQrScanner = null;
-             startScannerInstance(config);
+             startScannerInstance(config, callback);
           }).catch(err => {
              console.error("Failed to stop previous scanner", err);
              window.currentQrScanner = null;
-             startScannerInstance(config); 
+             startScannerInstance(config, callback); 
           });
       } else {
-          startScannerInstance(config);
+          startScannerInstance(config, callback);
       }
   }, 100);
 };
 
-function startScannerInstance(config) {
+// Alias for generic usage
+window.startQrScanner = window.openQRScanner;
+
+function startScannerInstance(config, callback) {
     if (typeof Html5Qrcode === 'undefined') {
         alert("掃描模組尚未載入，請稍後再試或重新整理頁面。");
         closeQRScanner();
@@ -12317,7 +12320,16 @@ function startScannerInstance(config) {
     const html5QrCode = new Html5Qrcode("qr-reader");
     window.currentQrScanner = html5QrCode;
     
-    html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
+    const successHandler = (decodedText, decodedResult) => {
+        if (callback) {
+            callback(decodedText, decodedResult);
+            closeQRScanner();
+        } else {
+            onScanSuccess(decodedText, decodedResult);
+        }
+    };
+    
+    html5QrCode.start({ facingMode: "environment" }, config, successHandler, onScanFailure)
     .catch(err => {
         console.error("Error starting scanner", err);
         const reader = document.getElementById("qr-reader");
