@@ -12259,15 +12259,32 @@ document.addEventListener("touchend", handleCreateResidentTrigger, { passive: tr
 // ==========================================
 // QR Code Scanner Implementation
 // ==========================================
-window.openQRScanner = function(callback) {
+window.openQRScanner = async function(callback) {
   const modalId = 'qr-scanner-modal';
+  
+  // 1. Safely stop existing scanner BEFORE touching the DOM
+  // This prevents "Device in use" errors caused by destroying the video element while scanner is running
+  if (window.currentQrScanner) {
+      try {
+          await window.currentQrScanner.stop();
+          window.currentQrScanner.clear();
+      } catch(e) {
+          console.warn("Failed to stop existing scanner", e);
+      }
+      window.currentQrScanner = null;
+  }
+
   let modal = document.getElementById(modalId);
   if (!modal) {
     modal = document.createElement('div');
     modal.id = modalId;
     // Use fixed positioning and high z-index to overlay everything
     modal.style.cssText = 'display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:99999; align-items:center; justify-content:center;';
-    modal.innerHTML = `
+    document.body.appendChild(modal);
+  }
+  
+  // 2. Reset DOM content
+  modal.innerHTML = `
       <div class="modal-dialog" style="background:#fff; width:90%; max-width:400px; border-radius:12px; overflow:hidden; display:flex; flex-direction:column; max-height:90vh; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
         <div class="modal-head" style="padding:16px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
           <div class="modal-title" style="font-size:18px; font-weight:600; color:#333;">掃描 QR Code</div>
@@ -12283,27 +12300,13 @@ window.openQRScanner = function(callback) {
         </div>
       </div>
     `;
-    document.body.appendChild(modal);
-  }
   
   modal.style.display = 'flex';
   
-  // Delay to allow DOM render
+  // 3. Start Scanner
   setTimeout(() => {
       const config = { fps: 10, qrbox: { width: 250, height: 250 } };
-      if (window.currentQrScanner) {
-          window.currentQrScanner.stop().then(() => {
-             try { window.currentQrScanner.clear(); } catch(e){}
-             window.currentQrScanner = null;
-             startScannerInstance(config, callback);
-          }).catch(err => {
-             console.error("Failed to stop previous scanner", err);
-             window.currentQrScanner = null;
-             startScannerInstance(config, callback); 
-          });
-      } else {
-          startScannerInstance(config, callback);
-      }
+      startScannerInstance(config, callback);
   }, 100);
 };
 
@@ -12314,6 +12317,12 @@ function startScannerInstance(config, callback) {
     if (typeof Html5Qrcode === 'undefined') {
         alert("掃描模組尚未載入，請稍後再試或重新整理頁面。");
         closeQRScanner();
+        return;
+    }
+
+    // Ensure element exists
+    if (!document.getElementById("qr-reader")) {
+        console.error("QR Reader element not found");
         return;
     }
 
@@ -12334,7 +12343,8 @@ function startScannerInstance(config, callback) {
         console.error("Error starting scanner", err);
         const reader = document.getElementById("qr-reader");
         if (reader) {
-            reader.innerHTML = `<div style="color:white; padding:20px; text-align:center;">無法啟動相機<br><br>${err}</div>`;
+            // Show error but keep retry possibility
+            reader.innerHTML = `<div style="color:white; padding:20px; text-align:center;">無法啟動相機<br><br>${err}<br><br><button class="btn small" onclick="closeQRScanner(); setTimeout(() => openQRScanner(${callback}), 500)">重試</button></div>`;
         }
     });
 }
@@ -12347,13 +12357,21 @@ window.closeQRScanner = function() {
   
   if (window.currentQrScanner) {
     const scanner = window.currentQrScanner;
-    window.currentQrScanner = null;
+    // Note: We do NOT set window.currentQrScanner = null immediately.
+    // We wait until it stops. This ensures openQRScanner knows it's still active/stopping
+    // and can await it properly to avoid "Device in use" errors.
     
     scanner.stop().then(() => {
-      return scanner.clear();
+      try { scanner.clear(); } catch(e) {}
+      if (window.currentQrScanner === scanner) {
+          window.currentQrScanner = null;
+      }
     }).catch(err => {
       console.warn("Failed to stop scanner", err);
-      try { scanner.clear(); } catch(e) {}
+      // Even if error, we should clear the reference eventually
+      if (window.currentQrScanner === scanner) {
+          window.currentQrScanner = null;
+      }
     });
   }
 };
