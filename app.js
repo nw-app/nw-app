@@ -50,6 +50,41 @@ function hideLoading() {
   if (overlay) overlay.remove();
 }
 
+// === Phone Lookup Sync Helper ===
+async function syncUserLookup(oldPhone, newPhone, email) {
+  // Normalize phones (trim)
+  oldPhone = oldPhone ? oldPhone.trim() : "";
+  newPhone = newPhone ? newPhone.trim() : "";
+  
+  // If no change, but email might need update (if phone exists)
+  if (oldPhone === newPhone) {
+    if (newPhone && email) {
+       try {
+         await setDoc(doc(db, "user_lookup", newPhone), { email }, { merge: true });
+       } catch(e) { console.warn("Sync phone lookup email failed", e); }
+    }
+    return;
+  }
+
+  // 1. Remove old mapping if exists
+  if (oldPhone) {
+    try {
+      await deleteDoc(doc(db, "user_lookup", oldPhone));
+    } catch (e) {
+      console.warn("Failed to delete old phone lookup", e);
+    }
+  }
+
+  // 2. Add new mapping if exists
+  if (newPhone && email) {
+    try {
+      await setDoc(doc(db, "user_lookup", newPhone), { email });
+    } catch (e) {
+      console.warn("Failed to set new phone lookup", e);
+    }
+  }
+}
+
 const defaultFirebaseConfig = {
   apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
   authDomain: "nw-app-all.firebaseapp.com",
@@ -508,14 +543,41 @@ const loginForm = document.getElementById("login-form");
 if (loginForm) {
   loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = el.email.value.trim();
+    const loginInput = el.email.value.trim();
     const password = el.password.value;
-    if (!email || !password) return showHint("請輸入帳號密碼", "error");
+    if (!loginInput || !password) return showHint("請輸入帳號密碼", "error");
 
     el.btnLogin.disabled = true;
     el.btnLogin.textContent = "登入中...";
     try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
+      let emailToAuth = loginInput;
+      // Simple email check
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginInput);
+      
+      if (!isEmail) {
+         // Assume phone number - lookup email
+         try {
+           const phoneDocRef = doc(db, "user_lookup", loginInput);
+           const phoneDoc = await getDoc(phoneDocRef);
+           if (!phoneDoc.exists()) {
+              throw { code: 'custom/user-not-found' };
+           }
+           emailToAuth = phoneDoc.data().email;
+         } catch (lookupErr) {
+           if (lookupErr.code === 'custom/user-not-found') {
+             throw lookupErr;
+           }
+           console.error("Phone lookup error:", lookupErr);
+           // If we can't query (e.g. permission denied before auth), this strategy fails.
+           // However, usually login requires no auth to read some data? 
+           // Actually, standard Firestore rules might BLOCK reading users if not authenticated.
+           // If rules are "allow read: if request.auth != null", then we CANNOT lookup phone before login.
+           // WE NEED TO CHECK FIREBASE RULES.
+           throw lookupErr; 
+        }
+      }
+
+      const cred = await signInWithEmailAndPassword(auth, emailToAuth, password);
       const role = await getOrCreateUserRole(cred.user.uid, cred.user.email);
       if (role === "停用") {
         showHint("帳號已停用，請聯繫管理員", "error");
@@ -541,6 +603,7 @@ if (loginForm) {
       let msg = "登入失敗";
       if (err.code === 'auth/invalid-credential') msg = "帳號或密碼錯誤";
       else if (err.code === 'auth/too-many-requests') msg = "嘗試次數過多，請稍後再試";
+      else if (err.code === 'custom/user-not-found') msg = "查無此手機號碼";
       showHint(msg, "error");
       el.btnLogin.disabled = false;
       el.btnLogin.textContent = "登入";
@@ -768,6 +831,12 @@ async function handleRoleRedirect(role) {
                             if (!uid) { failCount++; return null; }
                         }
                         if (uid) {
+                            let oldPhone = null;
+                            try {
+                                const snap = await getDoc(doc(db, "users", uid));
+                                if (snap.exists()) oldPhone = snap.data().phone;
+                            } catch(e) {}
+
                             const docRef = doc(db, "users", uid);
                             const payload = {
                                 email, role: "住戶", status, displayName, phone, photoURL,
@@ -775,7 +844,7 @@ async function handleRoleRedirect(role) {
                                 ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
                                 qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
                             };
-                            return { docRef, payload };
+                            return { docRef, payload, oldPhone, newPhone: phone, email };
                         }
                     } catch (err) { failCount++; }
                     return null;
@@ -789,6 +858,14 @@ async function handleRoleRedirect(role) {
                     }
                 });
                 if (hasWrites) await batch.commit();
+
+                // Sync phone lookup
+                await Promise.all(results.map(async (res) => {
+                    if (res && (res.oldPhone || res.newPhone)) {
+                        await syncUserLookup(res.oldPhone, res.newPhone, res.email);
+                    }
+                }));
+
                 updateProgress(Math.min(i + CHUNK_SIZE, total));
               }
               overlay.innerHTML = `
@@ -866,6 +943,14 @@ async function handleRoleRedirect(role) {
             const limit = 10;
             const processItem = async (uid) => {
                try {
+                 try {
+                    const snap = await getDoc(doc(db, "users", uid));
+                    if (snap.exists()) {
+                        const d = snap.data();
+                        if (d.phone) await syncUserLookup(d.phone, null, null);
+                    }
+                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+                 
                  await deleteDoc(doc(db, "users", uid));
                  successCount++;
                } catch (e) {
@@ -1038,6 +1123,12 @@ async function handleRoleRedirect(role) {
                             if (!uid) { failCount++; return null; }
                         }
                         if (uid) {
+                            let oldPhone = null;
+                            try {
+                                const snap = await getDoc(doc(db, "users", uid));
+                                if (snap.exists()) oldPhone = snap.data().phone;
+                            } catch(e) {}
+
                             const docRef = doc(db, "users", uid);
                             const payload = {
                                 email, role: "住戶", status, displayName, phone, photoURL,
@@ -1045,7 +1136,7 @@ async function handleRoleRedirect(role) {
                                 ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
                                 qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
                             };
-                            return { docRef, payload };
+                            return { docRef, payload, oldPhone, newPhone: phone, email };
                         }
                     } catch (err) { failCount++; }
                     return null;
@@ -1059,6 +1150,14 @@ async function handleRoleRedirect(role) {
                     }
                 });
                 if (hasWrites) await batch.commit();
+
+                // Sync phone lookup
+                await Promise.all(results.map(async (res) => {
+                    if (res && (res.oldPhone || res.newPhone)) {
+                        await syncUserLookup(res.oldPhone, res.newPhone, res.email);
+                    }
+                }));
+
                 updateProgress(Math.min(i + CHUNK_SIZE, total));
               }
               overlay.innerHTML = `
@@ -1136,6 +1235,14 @@ async function handleRoleRedirect(role) {
             const limit = 10;
             const processItem = async (uid) => {
                try {
+                 try {
+                    const snap = await getDoc(doc(db, "users", uid));
+                    if (snap.exists()) {
+                        const d = snap.data();
+                        if (d.phone) await syncUserLookup(d.phone, null, null);
+                    }
+                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+
                  await deleteDoc(doc(db, "users", uid));
                  successCount++;
                } catch (e) {
@@ -2939,6 +3046,7 @@ if (sysNav.subContainer) {
                 if (!ok) return;
 
                 try {
+                    if (target && target.phone) await syncUserLookup(target.phone, null, null);
                     await deleteDoc(doc(db, "users", targetUid));
                     showHint("已刪除帳號", "success");
                     // Remove from local list and re-render
@@ -3391,7 +3499,9 @@ if (sysNav.subContainer) {
           community: slug,
           createdAt: Date.now()
         }, { merge: true });
+        await syncUserLookup(null, phone, email);
         await updateProfile(cred.user, { displayName, photoURL });
+        await syncUserLookup(null, phone, email);
         closeModal();
         await renderSettingsCommunity();
         showHint("已建立社區後台帳號", "success");
@@ -3624,6 +3734,7 @@ if (sysNav.subContainer) {
         };
         
         await setDoc(doc(db, "users", target.id), payload, { merge: true });
+        await syncUserLookup(target.phone, payload.phone, payload.email);
 
         const curr = auth.currentUser;
         if (isSelf && curr) {
@@ -3903,6 +4014,7 @@ if (sysNav.subContainer) {
         };
         
         await setDoc(doc(db, "users", cred.user.uid), payload, { merge: true });
+        await syncUserLookup(null, phone, email);
         await updateProfile(cred.user, { displayName: name, photoURL });
 
         closeModal();
@@ -4112,6 +4224,11 @@ if (sysNav.subContainer) {
           community: slug,
           createdAt: Date.now()
         }, { merge: true });
+        
+        if (phone) {
+             await syncUserLookup(null, phone, email);
+        }
+        
         await updateProfile(cred.user, { displayName, photoURL });
         closeModal();
         await renderSettingsResidents();
@@ -4382,6 +4499,12 @@ if (sysNav.subContainer) {
                             if (!uid) { failCount++; return null; }
                         }
                         if (uid) {
+                            let oldPhone = null;
+                            try {
+                                const snap = await getDoc(doc(db, "users", uid));
+                                if (snap.exists()) oldPhone = snap.data().phone;
+                            } catch(e) {}
+
                             const docRef = doc(db, "users", uid);
                             const payload = {
                                 email, role: "住戶", status, displayName, phone, photoURL,
@@ -4389,7 +4512,7 @@ if (sysNav.subContainer) {
                                 ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
                                 qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
                             };
-                            return { docRef, payload };
+                            return { docRef, payload, oldPhone, newPhone: phone, email };
                         }
                     } catch (err) { failCount++; }
                     return null;
@@ -4403,6 +4526,14 @@ if (sysNav.subContainer) {
                     }
                 });
                 if (hasWrites) await batch.commit();
+
+                // Sync phone lookup
+                await Promise.all(results.map(async (res) => {
+                    if (res && (res.oldPhone || res.newPhone)) {
+                        await syncUserLookup(res.oldPhone, res.newPhone, res.email);
+                    }
+                }));
+
                 updateProgress(Math.min(i + CHUNK_SIZE, total));
               }
               overlay.innerHTML = `
@@ -4477,6 +4608,14 @@ if (sysNav.subContainer) {
             const limit = 10;
             const processItem = async (uid) => {
                try {
+                 try {
+                    const snap = await getDoc(doc(db, "users", uid));
+                    if (snap.exists()) {
+                        const d = snap.data();
+                        if (d.phone) await syncUserLookup(d.phone, null, null);
+                    }
+                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+
                  await deleteDoc(doc(db, "users", uid));
                  successCount++;
                } catch (e) {
@@ -4606,6 +4745,19 @@ if (sysNav.subContainer) {
             <p>若配置錯誤導致無法登入，請點擊「重置預設」恢復原始設定。</p>
         </div>
       </div>
+      
+      <div class="card data-card" style="margin-top: 20px;">
+        <div class="card-head">
+           <h1 class="card-title">資料維護</h1>
+        </div>
+        <div style="padding: 16px;">
+           <button id="btn-sync-user-lookup" class="btn action-btn">同步所有用戶手機號碼 (修復手機登入)</button>
+           <p style="margin-top: 8px; color: var(--muted); font-size: 0.9em;">
+             若遇到「查無此手機號碼」錯誤，請執行此同步功能。此操作會遍歷所有用戶並更新 user_lookup 集合。
+           </p>
+           <div id="sync-lookup-status" style="margin-top: 8px; font-weight: bold;"></div>
+        </div>
+      </div>
     `;
 
     const btnSave = document.getElementById("btn-save-sys-config");
@@ -4633,6 +4785,58 @@ if (sysNav.subContainer) {
             localStorage.removeItem("nw_firebase_config");
             window.location.reload();
         }
+    });
+
+    const btnSyncLookup = document.getElementById("btn-sync-user-lookup");
+    btnSyncLookup && btnSyncLookup.addEventListener("click", async () => {
+       if (!confirm("確定要同步所有用戶的手機號碼嗎？這可能需要一些時間。")) return;
+       const statusEl = document.getElementById("sync-lookup-status");
+       btnSyncLookup.disabled = true;
+       statusEl.textContent = "準備中...";
+       
+       try {
+         const snap = await getDocs(collection(db, "users"));
+         const total = snap.size;
+         let processed = 0;
+         let updated = 0;
+         statusEl.textContent = `共 ${total} 筆用戶，開始同步...`;
+         
+         const batchSize = 400;
+         const docs = snap.docs;
+         
+         for (let i = 0; i < total; i += batchSize) {
+            const chunk = docs.slice(i, i + batchSize);
+            const batch = writeBatch(db);
+            let hasOps = false;
+            
+            for (const docSnap of chunk) {
+                const data = docSnap.data();
+                if (data.phone && data.email) {
+                    const phone = data.phone.trim();
+                    if (phone) {
+                        batch.set(doc(db, "user_lookup", phone), { email: data.email }, { merge: true });
+                        hasOps = true;
+                        updated++;
+                    }
+                }
+            }
+            
+            if (hasOps) {
+                await batch.commit();
+            }
+            processed += chunk.length;
+            statusEl.textContent = `進度: ${Math.min(processed, total)} / ${total} (已排程更新: ${updated})`;
+         }
+         
+         statusEl.textContent = `同步完成！共處理 ${total} 筆，更新 ${updated} 筆手機資料。`;
+         alert("同步完成");
+       } catch (e) {
+         console.error(e);
+         statusEl.textContent = "同步失敗: " + e.message;
+         alert("同步失敗");
+       } finally {
+         btnSyncLookup.disabled = false;
+       }
     });
   }
 
@@ -9231,10 +9435,18 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                 const limit = 10;
                 
                 const processItem = async (uid) => {
-                   try {
-                     await deleteDoc(doc(db, "users", uid));
-                     successCount++;
-                   } catch (e) {
+               try {
+                 try {
+                    const snap = await getDoc(doc(db, "users", uid));
+                    if (snap.exists()) {
+                        const d = snap.data();
+                        if (d.phone) await syncUserLookup(d.phone, null, null);
+                    }
+                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+
+                 await deleteDoc(doc(db, "users", uid));
+                 successCount++;
+               } catch (e) {
                      console.error(e);
                      failCount++;
                    }
@@ -10551,6 +10763,7 @@ if (!window.openCreateResidentModal) {
           createdAt: Date.now()
         }, { merge: true });
         await updateProfile(cred.user, { displayName, photoURL });
+        await syncUserLookup(null, phone, email);
         closeModal();
         showHint("已建立住戶帳號", "success");
         const savedMain = localStorage.getItem("adminActiveMain") || "residents";
@@ -10739,6 +10952,7 @@ if (!window.openEditModal) {
           };
           if (newSubNoRaw !== "") payload.subNo = isNaN(newSubNo) ? target.subNo : newSubNo;
           await setDoc(doc(db, "users", target.id), payload, { merge: true });
+          await syncUserLookup(target.phone, payload.phone, payload.email);
           const curr = auth.currentUser;
           if (isSelf && curr) {
             const profilePatch = {};
