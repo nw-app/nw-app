@@ -260,7 +260,7 @@ select:focus {
   height: 100svh;
 }
 .stack.front.personal-view {
-  grid-template-rows: 8% 8% 76vh 1fr;
+  grid-template-rows: 8% 8% 1fr 8%;
 }
 .row {
   width: 100%;
@@ -1340,10 +1340,7 @@ input:checked + .slider:before {
   justify-content: center;
 }
 
-/* Personal View Layout */
-.stack.front.view-personal {
-  grid-template-rows: 8% 8% 76% 8%;
-}
+/* Removed duplicate style */
 
 /* Sub-tabs */
 .personal-tabs {
