@@ -684,7 +684,7 @@ select:focus {
 .row.A9 {
   position: sticky;
   top: 92svh;
-  z-index: 12;
+  z-index: 999;
 }
 .row.A9 {
   background: #fff;
