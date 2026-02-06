@@ -8,7 +8,7 @@
   aspect-ratio: 16/9;
   height: auto;
   min-height: 280px;
-  background: #000;
+  background: transparent;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -113,7 +113,7 @@
   display: none;
   justify-content: center;
   align-items: center;
-  background: #000; /* Ensure no see-through */
+  background: transparent;
 }
 .preview-slide.active {
   display: flex;

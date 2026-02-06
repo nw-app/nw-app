@@ -12142,8 +12142,17 @@ function startFrontCarousel(config) {
         } else {
             // Revert
             animateTo(idx, 0);
-            if (prevIdx !== -1) animateTo(prevIdx, -containerWidth);
-            if (nextIdx !== -1) animateTo(nextIdx, containerWidth);
+            if (prevIdx !== -1 && nextIdx !== -1 && prevIdx === nextIdx) {
+                // Special case for 2 slides revert
+                if (deltaX > 0) {
+                     animateTo(prevIdx, -containerWidth);
+                } else {
+                     animateTo(nextIdx, containerWidth);
+                }
+            } else {
+                if (prevIdx !== -1) animateTo(prevIdx, -containerWidth);
+                if (nextIdx !== -1) animateTo(nextIdx, containerWidth);
+            }
             
             setTimeout(() => {
                 [idx, prevIdx, nextIdx].forEach(i => {
