@@ -4935,7 +4935,12 @@ if (sysNav.subContainer) {
       if (validItems.length === 0) {
         previewContent = `<div class="preview-placeholder">A3 輪播預覽區 (目前無內容)</div>`;
       } else {
-        const slides = validItems.map((item, idx) => {
+        let renderItems = [...validItems];
+    if (renderItems.length === 2 && config.loop !== 'once') {
+        renderItems = [...renderItems, ...renderItems];
+    }
+    
+    const slides = renderItems.map((item, idx) => {
           let content = '';
           if (item.type === 'youtube') {
              let vidId = '';
@@ -5275,10 +5280,16 @@ if (sysNav.subContainer) {
          if (validItems.length === 0) {
             previewContent = `<div class="preview-placeholder">A3 輪播預覽區 (目前無內容)</div>`;
          } else {
-            // Adjust currentIdx if out of bounds
-            if (currentIdx >= validItems.length) currentIdx = 0;
+            // Check for 2-item loop duplication
+            let renderItems = [...validItems];
+            if (renderItems.length === 2 && currentConfig.loop !== 'once') {
+                renderItems = [...renderItems, ...renderItems];
+            }
 
-            const slidesHtml = validItems.map((item, idx) => {
+            // Adjust currentIdx if out of bounds
+            if (currentIdx >= renderItems.length) currentIdx = 0;
+
+            const slidesHtml = renderItems.map((item, idx) => {
               let content = '';
               if (item.type === 'youtube') {
                  let vidId = '';
@@ -11831,8 +11842,14 @@ async function loadFrontAds(slug, providedSnap = null) {
       container.innerHTML = `<div class="section-text">尚無廣告內容</div>`;
       return;
     }
+
+    // Check for 2-item loop duplication
+    let renderItems = [...validItems];
+    if (renderItems.length === 2 && config.loop !== 'once') {
+        renderItems = [...renderItems, ...renderItems];
+    }
     
-    const slides = validItems.map((item, idx) => {
+    const slides = renderItems.map((item, idx) => {
       let content = '';
       if (item.type === 'youtube') {
          let vidId = '';
