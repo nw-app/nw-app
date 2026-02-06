@@ -12053,6 +12053,7 @@ function startFrontCarousel(config) {
            const s = slides[i];
            s.style.transition = 'none';
            s.style.display = 'flex';
+           s.style.opacity = '1';
            s.style.zIndex = (i === idx) ? 2 : 1;
            
            // Pre-position neighbors
@@ -12079,6 +12080,7 @@ function startFrontCarousel(config) {
                     slides[i].style.transition = '';
                     slides[i].style.transform = '';
                     slides[i].style.display = '';
+                    slides[i].style.opacity = '';
                     slides[i].style.zIndex = '';
                  });
                 return;
@@ -12135,6 +12137,7 @@ function startFrontCarousel(config) {
                     slides[i].style.transition = '';
                     slides[i].style.transform = '';
                     slides[i].style.display = '';
+                    slides[i].style.opacity = '';
                     slides[i].style.zIndex = '';
                 });
                 next(); // Use existing logic to update state/classes
@@ -12151,6 +12154,7 @@ function startFrontCarousel(config) {
                     slides[i].style.transition = '';
                     slides[i].style.transform = '';
                     slides[i].style.display = '';
+                    slides[i].style.opacity = '';
                     slides[i].style.zIndex = '';
                 });
                 prev();
@@ -12177,6 +12181,7 @@ function startFrontCarousel(config) {
                     slides[i].style.transition = '';
                     slides[i].style.transform = '';
                     slides[i].style.display = '';
+                    slides[i].style.opacity = '';
                     slides[i].style.zIndex = '';
                 });
                 runLoop();
