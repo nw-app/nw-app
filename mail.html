@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>郵件查詢</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="suppress-errors.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 0; color: #1f2937; height: 100vh; display: flex; flex-direction: column; }
+    .container { max-width: 600px; margin: 0 auto; background: #fff; height: 100%; width: 100%; display: flex; flex-direction: column; }
+    
+    .header { background: #fff; padding: 16px; flex-shrink: 0; z-index: 10; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .header-title { font-size: 18px; font-weight: 600; color: #111; text-align: center; }
+    
+    .tabs { display: flex; border-bottom: 1px solid #e5e7eb; background: #fff; }
+    .tab { flex: 1; text-align: center; padding: 12px; cursor: pointer; color: #6b7280; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; }
+    .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+    
+    .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px; background: #f9fafb; }
+    
+    .mail-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+      position: relative;
+    }
+    
+    .mail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .mail-type-badge { 
+        display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; 
+        background: #e5e7eb; color: #374151;
+    }
+    .mail-type-badge.package { background: #dbeafe; color: #1e40af; } /* 包裹 Blue */
+    .mail-type-badge.registered { background: #fce7f3; color: #9d174d; } /* 掛號 Pink */
+    .mail-type-badge.letter { background: #f3f4f6; color: #1f2937; } /* 信件 Gray */
+    
+    .mail-date { font-size: 12px; color: #9ca3af; }
+    
+    .mail-info-row { margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .mail-label { color: #6b7280; font-size: 13px; width: 60px; }
+    .mail-value { color: #1f2937; font-size: 14px; font-weight: 500; }
+    
+    .mail-status-tag { 
+        position: absolute; right: 16px; bottom: 16px; 
+        font-size: 12px; font-weight: 600; padding: 2px 6px; border-radius: 4px;
+        background: #fee2e2; color: #991b1b; /* Default pending red */
+    }
+    .mail-status-tag.collected { background: #d1fae5; color: #065f46; } /* Collected green */
+
+    .loading { text-align: center; color: #6b7280; padding: 40px; }
+    .error { text-align: center; color: #ef4444; padding: 20px; font-size: 14px; }
+    .empty-hint { text-align: center; color: #9ca3af; padding: 40px; font-size: 14px; }
+    
+    .login-prompt { padding: 30px; text-align: center; }
+    .btn { display: inline-block; padding: 8px 16px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px; border: none; cursor: pointer; }
+    
+  </style>
+</head>
+<body>
+  <div class="container">
+     <div class="header">
+        <div class="header-title" id="page-title">郵件查詢</div>
+     </div>
+     <div class="tabs">
+       <div class="tab active" id="tab-pending" onclick="switchTab('pending')">未領取</div>
+       <div class="tab" id="tab-history" onclick="switchTab('history')">領取紀錄</div>
+     </div>
+     <div class="content" id="mail-list">
+        <div class="loading">載入中...</div>
+     </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+    import { initializeFirestore, doc, getDoc, collection, query, where, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+    // Initialize Firebase
+    const firebaseConfig = {
+      apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+      authDomain: "nw-app-all.firebaseapp.com",
+      projectId: "nw-app-all",
+      storageBucket: "nw-app-all.firebasestorage.app",
+      messagingSenderId: "205108931232",
+      appId: "1:205108931232:web:ee7868f73ed883253577c5",
+      measurementId: "G-8F1WD772LP"
+    };
+    
+    // Try to load config from localStorage if available (consistent with app.js)
+    try {
+        const saved = localStorage.getItem("nw_firebase_config");
+        if (saved) Object.assign(firebaseConfig, JSON.parse(saved));
+    } catch(e) {}
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = initializeFirestore(app, { experimentalForceLongPolling: true });
+
+    let currentSlug = new URLSearchParams(window.location.search).get("c");
+    let currentTab = 'pending';
+    let currentUserHouse = null;
+    let currentUserData = null;
+
+    // Tab Switching
+    window.switchTab = (tab) => {
+        currentTab = tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById(`tab-${tab}`).classList.add('active');
+        if (currentUserHouse) {
+            loadMails();
+        }
+    };
+
+    // Format Date
+    function formatDate(ts) {
+        if (!ts) return "-";
+        const d = new Date(ts);
+        return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    }
+
+    async function init() {
+        const container = document.getElementById("mail-list");
+        
+        if (!currentSlug) {
+            // Try to recover slug from localStorage if previously visited or linked
+            currentSlug = localStorage.getItem("last_community_slug");
+        }
+
+        if (!currentSlug) {
+             container.innerHTML = '<div class="error">無效的社區連結 (缺少參數 c)</div>';
+             return;
+        }
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                // Fetch User Profile to get HouseNo
+                try {
+                    const uSnap = await getDoc(doc(db, "users", user.uid));
+                    if (uSnap.exists()) {
+                        currentUserData = uSnap.data();
+                        currentUserHouse = currentUserData.houseNo;
+                        
+                        // Verify community match
+                        if (currentUserData.community && currentUserData.community !== currentSlug) {
+                            // Warn if user belongs to different community, but maybe allow if they have multiple properties?
+                            // For now, strict check or just warn.
+                            console.warn("User community mismatch", currentUserData.community, currentSlug);
+                        }
+                        
+                        if (!currentUserHouse) {
+                             container.innerHTML = '<div class="error">您的帳號尚未綁定戶號，無法查詢郵件。請聯繫管理中心。</div>';
+                        } else {
+                             // Update Title
+                             const name = currentUserData.displayName || currentUserData.realName || "住戶";
+                             document.getElementById("page-title").textContent = `${currentUserHouse} ${name} 郵件查詢`;
+                             
+                             loadMails();
+                        }
+                    } else {
+                        container.innerHTML = '<div class="error">找不到您的住戶資料。</div>';
+                    }
+                } catch (e) {
+                    console.error(e);
+                    container.innerHTML = '<div class="error">讀取個人資料失敗</div>';
+                }
+            } else {
+                // Not logged in
+                container.innerHTML = `
+                    <div class="login-prompt">
+                        <p>請先登入以查詢個人郵件</p>
+                        <!-- Assuming main index handles login, redirect or show simple message -->
+                        <a href="index.html" class="btn">前往登入</a>
+                    </div>
+                `;
+            }
+        });
+    }
+
+    async function loadMails() {
+        const container = document.getElementById("mail-list");
+        container.innerHTML = '<div class="loading">載入中...</div>';
+        
+        try {
+            // Query Mails
+            // Index might be needed: houseNo + status + arrivedAt
+            // For now, client-side filter if dataset is small, or simple compound query.
+            
+            // Note: 'status' in DB is 'pending' or 'collected' (assumed).
+            // Let's verify status values. usually 'pending' vs others.
+            
+            const mailsRef = collection(db, "communities", currentSlug, "mails");
+            // Must use where clause to satisfy security rules
+            const q = query(mailsRef, where("houseNo", "==", currentUserHouse));
+            
+            console.log(`Querying mails for house: "${currentUserHouse}"`);
+            
+            const snap = await getDocs(q);
+            let mails = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            console.log(`Found ${mails.length} mails`);
+
+            // Client-side filtering and sorting to avoid index requirements for now
+            if (currentTab === 'pending') {
+                mails = mails.filter(m => m.status === 'pending');
+            } else {
+                mails = mails.filter(m => m.status !== 'pending');
+            }
+            
+            // Sort by arrivedAt desc
+            mails.sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0));
+            
+            if (mails.length === 0) {
+                container.innerHTML = `<div class="empty-hint">${currentTab === 'pending' ? '目前沒有未領取的郵件' : '沒有領取紀錄'}</div>`;
+                return;
+            }
+            
+            container.innerHTML = mails.map(m => {
+                const typeClass = m.type === '包裹' ? 'package' : (m.type === '掛號' ? 'registered' : 'letter');
+                const statusText = m.status === 'pending' ? '未領取' : '已領取';
+                const statusClass = m.status === 'pending' ? '' : 'collected';
+                
+                return `
+                    <div class="mail-card">
+                        <div class="mail-header">
+                            <span class="mail-type-badge ${typeClass}">${m.type || '郵件'}</span>
+                            <span class="mail-date">${formatDate(m.arrivedAt)}</span>
+                        </div>
+                        <div class="mail-info-row">
+                            <span class="mail-label">收件人</span>
+                            <span class="mail-value">${m.recipient || ''}</span>
+                        </div>
+                        <div class="mail-info-row">
+                            <span class="mail-label">物流</span>
+                            <span class="mail-value">${m.carrier || '-'}</span>
+                        </div>
+                        <div class="mail-info-row">
+                            <span class="mail-label">單號</span>
+                            <span class="mail-value">${m.trackingNo || '-'}</span>
+                        </div>
+                        ${m.note ? `
+                        <div class="mail-info-row">
+                            <span class="mail-label">備註</span>
+                            <span class="mail-value">${m.note}</span>
+                        </div>` : ''}
+                        
+                        <div class="mail-status-tag ${statusClass}">${statusText}</div>
+                    </div>
+                `;
+            }).join("");
+            
+        } catch (e) {
+            console.error(e);
+            container.innerHTML = `<div class="error">載入郵件失敗: ${e.message}</div>`;
+        }
+    }
+
+    init();
+  </script>
+</body>
+</html>

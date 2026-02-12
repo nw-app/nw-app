@@ -8488,15 +8488,43 @@ window.openMailModal = (item = null) => {
     modal.className = "modal active";
     modal.style.zIndex = "11000"; // Ensure it's on top of everything
     modal.innerHTML = `
+      <style>
+        .suggestion-box {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: none;
+        }
+        .suggestion-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f3f4f6;
+            display: flex;
+            justify-content: space-between;
+        }
+        .suggestion-item:last-child { border-bottom: none; }
+        .suggestion-item:hover { background-color: #f9fafb; }
+        .suggestion-h { font-weight: 600; color: #1f2937; }
+        .suggestion-n { color: #6b7280; font-size: 0.9em; }
+      </style>
       <div class="modal-dialog">
         <div class="modal-head">
           <h3 class="modal-title">${item ? "編輯收件" : "新增收件"}</h3>
         </div>
         <div class="modal-body">
-          <div class="form-group">
+          <div class="form-group" style="position: relative;">
             <label class="form-label">戶號 *</label>
-            <input type="text" id="mail-house" class="form-input" placeholder="例如: A-10-2" value="${item?.houseNo || ''}" list="mail-house-list" autocomplete="off">
-            <datalist id="mail-house-list"></datalist>
+            <input type="text" id="mail-house" class="form-input" placeholder="選擇或輸入戶號" value="${item?.houseNo || ''}" autocomplete="off">
+            <div id="mail-house-suggestions" class="suggestion-box"></div>
           </div>
           <div class="form-group">
             <label class="form-label">收件人 *</label>
@@ -8562,29 +8590,96 @@ window.openMailModal = (item = null) => {
         try {
             const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
             
-            // 1. Load Residents
-            const q = query(collection(db, "users"), where("community", "==", slug), where("role", "==", "住戶"));
-            const snap = await getDocs(q);
+            // 1. Load Residents - Robust logic with fallback matching renderAdminResidentList
+            let cname = slug;
+            try {
+                const csnap = await getDoc(doc(db, "communities", slug));
+                if (csnap.exists()) {
+                    cname = csnap.data().name || slug;
+                }
+            } catch (e) { console.warn("Fetch community name failed", e); }
+
+            const communitiesFilter = [slug];
+            if (cname && cname !== slug) communitiesFilter.push(cname);
+            
+            let snapList;
+            try {
+                // Try to use 'in' query to cover both slug and name
+                if (communitiesFilter.length > 1) {
+                    snapList = await getDocs(query(collection(db, "users"), where("community", "in", communitiesFilter)));
+                } else {
+                    snapList = await getDocs(query(collection(db, "users"), where("community", "==", slug)));
+                }
+            } catch (err) {
+                console.warn("'in' query failed, falling back to slug only", err);
+                // Fallback to simple query if 'in' query fails (e.g. missing index)
+                snapList = await getDocs(query(collection(db, "users"), where("community", "==", slug)));
+            }
+
             const residents = [];
-            snap.forEach(d => {
+            const seenIds = new Set(); // Avoid duplicates if fallback logic gets complex or if we merge results manually later
+
+            snapList.forEach(d => {
+                if (seenIds.has(d.id)) return;
+                seenIds.add(d.id);
+                
                 const data = d.data();
-                if (data.houseNo) residents.push({ h: data.houseNo, n: data.displayName || data.realName || "" });
+                // If role is missing, default to '住戶'
+                const r = data.role || "住戶";
+                if (r === "住戶" && data.houseNo) {
+                    residents.push({ h: data.houseNo, n: data.displayName || data.realName || "" });
+                }
             });
             residents.sort((a, b) => a.h.localeCompare(b.h, undefined, { numeric: true }));
             
-            const dl = document.getElementById("mail-house-list");
-            if (dl) dl.innerHTML = residents.map(r => `<option value="${r.h}">${r.n}</option>`).join("");
+            console.log(`Loaded ${residents.length} residents for mail dropdown`);
             
+            const suggestionBox = document.getElementById("mail-house-suggestions");
             const hInput = document.getElementById("mail-house");
             const rInput = document.getElementById("mail-recipient");
-            if (hInput && rInput) {
-                const autoFill = () => {
-                    const val = hInput.value.trim();
-                    const match = residents.find(r => r.h === val);
-                    if (match && match.n) rInput.value = match.n;
-                };
-                hInput.addEventListener("input", autoFill);
-                hInput.addEventListener("change", autoFill);
+
+            // Render function
+            const renderSuggestions = (filter = "") => {
+                if (!suggestionBox) return;
+                const search = filter.toLowerCase().trim();
+                const matches = search 
+                    ? residents.filter(r => r.h.toLowerCase().includes(search) || r.n.toLowerCase().includes(search))
+                    : residents;
+                
+                if (matches.length === 0) {
+                    suggestionBox.style.display = "none";
+                    return;
+                }
+                
+                suggestionBox.innerHTML = matches.map(r => `
+                    <div class="suggestion-item" data-h="${r.h}" data-n="${r.n}">
+                        <span class="suggestion-h">${r.h}</span>
+                        <span class="suggestion-n">${r.n || "住戶"}</span>
+                    </div>
+                `).join("");
+                suggestionBox.style.display = "block";
+                
+                // Add click handlers
+                suggestionBox.querySelectorAll(".suggestion-item").forEach(item => {
+                    item.addEventListener("click", (e) => {
+                        e.stopPropagation(); // Prevent document click from closing immediately
+                        hInput.value = item.getAttribute("data-h");
+                        if (rInput) rInput.value = item.getAttribute("data-n");
+                        suggestionBox.style.display = "none";
+                    });
+                });
+            };
+
+            if (hInput) {
+                hInput.addEventListener("input", (e) => renderSuggestions(e.target.value));
+                hInput.addEventListener("focus", () => renderSuggestions(hInput.value));
+                
+                // Close when clicking outside
+                document.addEventListener("click", (e) => {
+                    if (e.target !== hInput && !suggestionBox.contains(e.target)) {
+                        suggestionBox.style.display = "none";
+                    }
+                });
             }
 
             // 2. Setup Type & Status Logic
