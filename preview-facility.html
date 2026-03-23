@@ -333,7 +333,7 @@
               });
 
               if (!enabledFacilities.length) {
-                document.getElementById("content").innerHTML = '<div class="empty-hint">「社區目前無預約設施」</div>';
+                document.getElementById("content").innerHTML = '<div class="empty-hint" style="font-size:18px; font-weight:700; color:#dc2626;">「社區目前無預約設施」</div>';
                 return;
               }
               renderFacilities(enabledFacilities);
@@ -356,7 +356,7 @@
                  return status !== "closed";
                });
                if (!enabledFacilities.length) {
-                 document.getElementById("content").innerHTML = '<div class="empty-hint">「社區目前無預約設施」</div>';
+                 document.getElementById("content").innerHTML = '<div class="empty-hint" style="font-size:18px; font-weight:700; color:#dc2626;">「社區目前無預約設施」</div>';
                  return;
                }
                renderFacilities(enabledFacilities);

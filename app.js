@@ -5725,7 +5725,7 @@ const adminNav = {
 
 const adminSubMenus = {
   shortcuts: ["通知跑馬燈"],
-  mail: ["收件", "取件", "寄放", "設定"],
+  mail: ["領取", "寄放", "設定"],
   facility: ["設定"],
   announce: [{ key: "announce_list", label: "社區園地" }],
   residents: ["住戶", "點數", "通知", "警報", "設定"],
@@ -8462,7 +8462,7 @@ function renderAdminMailInbox() {
       <div class="card-head">
         <h1 class="card-title">郵件包裹收件登記</h1>
         <div style="display:flex;gap:8px;">
-           <button id="btn-add-mail" class="btn small action-btn">新增收件</button>
+           <button id="btn-add-mail" class="btn small action-btn">新增領取</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -8614,7 +8614,7 @@ window.openMailModal = (item = null) => {
       </style>
       <div class="modal-dialog">
         <div class="modal-head">
-          <h3 class="modal-title">${item ? "編輯收件" : "新增收件"}</h3>
+          <h3 class="modal-title">${item ? "編輯收件" : "新增領取"}</h3>
         </div>
         <div class="modal-body">
           <div class="form-group" style="position: relative;">
@@ -9130,7 +9130,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
     return;
   }
   if (mainKey === "mail") {
-    if (sub === "收件") {
+    if (sub === "領取") {
       renderAdminMailInbox();
       return;
     }
