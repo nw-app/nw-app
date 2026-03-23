@@ -4174,8 +4174,10 @@ if (sysNav.subContainer) {
     const title = "新增住戶";
     const seqGuess = (() => {
       try {
-        const tbody = document.getElementById("sys-content")?.querySelector("tbody");
-        if (tbody) return String(tbody.querySelectorAll("tr").length + 1);
+        const sysTbody = document.getElementById("sys-content")?.querySelector("tbody");
+        if (sysTbody) return String(sysTbody.querySelectorAll("tr").length + 1);
+        const adminTbody = document.querySelector("#admin-stack .row.B3")?.querySelector("tbody");
+        if (adminTbody) return String(adminTbody.querySelectorAll("tr").length + 1);
       } catch {}
       return "";
     })();
@@ -4366,7 +4368,14 @@ if (sysNav.subContainer) {
         
         await updateProfile(cred.user, { displayName, photoURL });
         closeModal();
-        await renderSettingsResidents();
+        try {
+          const adminStack = document.getElementById("admin-stack");
+          if (adminStack && !adminStack.classList.contains("hidden")) {
+            renderAdminContent("residents", "住戶");
+          } else {
+            await renderSettingsResidents();
+          }
+        } catch {}
         showHint("已建立住戶帳號", "success");
       } catch (e) {
         console.error(e);
@@ -4420,6 +4429,27 @@ if (sysNav.subContainer) {
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(a => (a.role || "住戶") === "住戶");
     } catch {}
+
+    const parseSeq = (v) => {
+      if (v === null || v === undefined) return Number.POSITIVE_INFINITY;
+      const n = Number(String(v).trim());
+      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    };
+    residents.sort((a, b) => {
+      const sa = parseSeq(a.seq);
+      const sb = parseSeq(b.seq);
+      if (sa !== sb) return sa - sb;
+      const ha = String(a.houseNo || "");
+      const hb = String(b.houseNo || "");
+      const hc = ha.localeCompare(hb, "zh-Hant");
+      if (hc !== 0) return hc;
+      const na = String(a.displayName || a.email || "");
+      const nb = String(b.displayName || b.email || "");
+      const nc = na.localeCompare(nb, "zh-Hant");
+      if (nc !== 0) return nc;
+      return String(a.id || "").localeCompare(String(b.id || ""), "en");
+    });
+
     const rows = residents.map((a, idx) => {
       const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
       const av = a.photoURL
@@ -4451,7 +4481,7 @@ if (sysNav.subContainer) {
         </tr>
       `;
     }).join("");
-    const emptyText = rows ? "" : "目前沒有住戶資料";
+    const emptyText = residents.length ? "" : "目前沒有住戶資料";
     const options = communities.map(c => `<option value="${c.id}"${c.id === selectedSlug ? " selected" : ""}>${c.name || c.id}</option>`).join("");
     sysNav.content.innerHTML = `
       <div class="card data-card">
@@ -9422,6 +9452,27 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
              }
           }
         }
+
+        const parseSeq = (v) => {
+          if (v === null || v === undefined) return Number.POSITIVE_INFINITY;
+          const n = Number(String(v).trim());
+          return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+        };
+        residents.sort((a, b) => {
+          const sa = parseSeq(a.seq);
+          const sb = parseSeq(b.seq);
+          if (sa !== sb) return sa - sb;
+          const ha = String(a.houseNo || "");
+          const hb = String(b.houseNo || "");
+          const hc = ha.localeCompare(hb, "zh-Hant");
+          if (hc !== 0) return hc;
+          const na = String(a.displayName || a.email || "");
+          const nb = String(b.displayName || b.email || "");
+          const nc = na.localeCompare(nb, "zh-Hant");
+          if (nc !== 0) return nc;
+          return String(a.id || "").localeCompare(String(b.id || ""), "en");
+        });
+
         const rows = residents.map((a, idx) => {
           const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
           const av = a.photoURL ? `<img class="avatar" src="${a.photoURL}" alt="avatar">` : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
@@ -9453,7 +9504,9 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             </tr>
           `;
         }).join("");
-        const emptyText = fetchError ? `<span style="color:red">${fetchError}</span>` : "目前沒有住戶資料";
+        const emptyText = fetchError
+          ? `<span style="color:red">${fetchError}</span>`
+          : (residents.length ? "" : "目前沒有住戶資料");
         adminNav.content.innerHTML = `
           <div class="card data-card">
             <div class="card-head">
@@ -11068,6 +11121,7 @@ if (!window.openCreateResidentModal) {
         const displayName = document.getElementById("create-r-name").value.trim();
         const phone = document.getElementById("create-r-phone").value.trim();
         const photoFile = document.getElementById("create-r-photo-file").files[0];
+        const seq = document.getElementById("create-r-seq").value.trim();
         const houseNo = document.getElementById("create-r-house-no").value.trim();
         const subNoRaw = document.getElementById("create-r-sub-no").value.trim();
         const address = document.getElementById("create-r-address").value.trim();
@@ -11112,6 +11166,7 @@ if (!window.openCreateResidentModal) {
           displayName,
           phone,
           photoURL,
+          seq,
           houseNo,
           address,
           area,
@@ -11122,11 +11177,10 @@ if (!window.openCreateResidentModal) {
           createdAt: Date.now()
         }, { merge: true });
         await updateProfile(cred.user, { displayName, photoURL });
-        await syncUserLookup(null, phone, email);
+        if (phone) await syncUserLookup(null, phone, email);
         closeModal();
         showHint("已建立住戶帳號", "success");
-        const savedMain = localStorage.getItem("adminActiveMain") || "residents";
-        setActiveAdminNav(savedMain);
+        renderAdminContent("residents", "住戶");
       } catch (e) {
         console.error(e);
         let msg = "建立失敗";
