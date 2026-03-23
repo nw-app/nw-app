@@ -543,6 +543,32 @@ select:focus {
   overflow-x: auto;
   overflow-y: visible; /* Try to allow vertical overflow if x allows */
 }
+.sub-nav-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.sub-nav-open-btn {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #065f46;
+  background: #d1fae5;
+  border: 1px solid #a7f3d0;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.sub-nav-open-btn.is-closed {
+  color: #374151;
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
+.sub-nav-open-btn:hover {
+  filter: brightness(0.98);
+}
 .sub-nav-item {
   padding: 6px 16px;
   border-radius: 20px;

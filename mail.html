@@ -7,15 +7,67 @@
   <link rel="stylesheet" href="styles.css">
   <script src="suppress-errors.js"></script>
   <style>
+    * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f3f4f6; margin: 0; padding: 0; color: #1f2937; height: 100vh; display: flex; flex-direction: column; }
     .container { max-width: 600px; margin: 0 auto; background: #fff; height: 100%; width: 100%; display: flex; flex-direction: column; }
     
-    .header { background: #fff; padding: 16px; flex-shrink: 0; z-index: 10; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .header { 
+        background: #fff; 
+        height: 8%; 
+        min-height: 48px; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        padding: 0;
+        flex-shrink: 0; 
+        z-index: 10; 
+    }
     .header-title { font-size: 18px; font-weight: 600; color: #111; text-align: center; }
     
-    .tabs { display: flex; border-bottom: 1px solid #e5e7eb; background: #fff; }
-    .tab { flex: 1; text-align: center; padding: 12px; cursor: pointer; color: #6b7280; border-bottom: 2px solid transparent; font-size: 14px; font-weight: 500; }
-    .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+    .nav-bar { 
+        display: flex; 
+        height: 8%; 
+        min-height: 48px; 
+        background: #fff; 
+        flex-shrink: 0;
+    }
+    .nav-item { 
+        flex: 1; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        cursor: pointer; 
+        color: #6b7280; 
+        font-size: 15px; 
+        font-weight: 500; 
+        border-bottom: 2px solid transparent; 
+    }
+    .nav-item.active { 
+        color: #dc2626; 
+        border-bottom-color: #dc2626; 
+        font-weight: 600; 
+    }
+
+    .tabs { 
+        display: flex; 
+        height: 8%; 
+        min-height: 48px; 
+        border-bottom: 1px solid #e5e7eb; 
+        background: #fff; 
+        flex-shrink: 0; 
+    }
+    .tab { 
+        flex: 1; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        cursor: pointer; 
+        color: #6b7280; 
+        border-bottom: 2px solid transparent; 
+        font-size: 14px; 
+        font-weight: 500; 
+    }
+    .tab.active { color: #dc2626; border-bottom-color: #dc2626; font-weight: 600; }
     
     .content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px; background: #f9fafb; }
     
@@ -34,7 +86,7 @@
         display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; 
         background: #e5e7eb; color: #374151;
     }
-    .mail-type-badge.package { background: #dbeafe; color: #1e40af; } /* 包裹 Blue */
+    .mail-type-badge.package { background: #fee2e2; color: #991b1b; } /* 包裹 Red */
     .mail-type-badge.registered { background: #fce7f3; color: #9d174d; } /* 掛號 Pink */
     .mail-type-badge.letter { background: #f3f4f6; color: #1f2937; } /* 信件 Gray */
     
@@ -56,7 +108,7 @@
     .empty-hint { text-align: center; color: #9ca3af; padding: 40px; font-size: 14px; }
     
     .login-prompt { padding: 30px; text-align: center; }
-    .btn { display: inline-block; padding: 8px 16px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px; border: none; cursor: pointer; }
+    .btn { display: inline-block; padding: 8px 16px; background: #dc2626; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px; border: none; cursor: pointer; }
     
   </style>
 </head>
@@ -65,11 +117,20 @@
      <div class="header">
         <div class="header-title" id="page-title">郵件查詢</div>
      </div>
+     <div class="nav-bar">
+       <div class="nav-item active" data-nav="mail" onclick="switchNav('mail')">收件</div>
+       <div class="nav-item" data-nav="pickup" onclick="switchNav('pickup')">取件</div>
+       <div class="nav-item" data-nav="deposit" onclick="switchNav('deposit')">寄放</div>
+     </div>
+
+     <!-- Shared Sub-tabs -->
      <div class="tabs">
        <div class="tab active" id="tab-pending" onclick="switchTab('pending')">未領取</div>
        <div class="tab" id="tab-history" onclick="switchTab('history')">領取紀錄</div>
      </div>
-     <div class="content" id="mail-list">
+
+     <!-- Shared Content Container -->
+     <div class="content" id="item-list">
         <div class="loading">載入中...</div>
      </div>
   </div>
@@ -101,17 +162,37 @@
     const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 
     let currentSlug = new URLSearchParams(window.location.search).get("c");
-    let currentTab = 'pending';
+    let currentCategory = 'mail'; // mail, pickup, deposit
+    let currentStatus = 'pending'; // pending, history
     let currentUserHouse = null;
     let currentUserData = null;
 
+    // Nav Switching
+    window.switchNav = (nav) => {
+        currentCategory = nav;
+        // Update nav items
+        document.querySelectorAll('.nav-item').forEach(el => {
+            if (el.dataset.nav === nav) {
+                el.classList.add('active');
+            } else {
+                el.classList.remove('active');
+            }
+        });
+
+        if (currentUserHouse) {
+             loadData();
+        }
+    };
+
     // Tab Switching
     window.switchTab = (tab) => {
-        currentTab = tab;
+        currentStatus = tab;
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.getElementById(`tab-${tab}`).classList.add('active');
+        const targetTab = document.getElementById(`tab-${tab}`);
+        if (targetTab) targetTab.classList.add('active');
+        
         if (currentUserHouse) {
-            loadMails();
+            loadData();
         }
     };
 
@@ -123,7 +204,7 @@
     }
 
     async function init() {
-        const container = document.getElementById("mail-list");
+        const container = document.getElementById("item-list");
         
         if (!currentSlug) {
             // Try to recover slug from localStorage if previously visited or linked
@@ -146,8 +227,6 @@
                         
                         // Verify community match
                         if (currentUserData.community && currentUserData.community !== currentSlug) {
-                            // Warn if user belongs to different community, but maybe allow if they have multiple properties?
-                            // For now, strict check or just warn.
                             console.warn("User community mismatch", currentUserData.community, currentSlug);
                         }
                         
@@ -158,7 +237,7 @@
                              const name = currentUserData.displayName || currentUserData.realName || "住戶";
                              document.getElementById("page-title").textContent = `${currentUserHouse} ${name} 郵件查詢`;
                              
-                             loadMails();
+                             loadData();
                         }
                     } else {
                         container.innerHTML = '<div class="error">找不到您的住戶資料。</div>';
@@ -172,7 +251,6 @@
                 container.innerHTML = `
                     <div class="login-prompt">
                         <p>請先登入以查詢個人郵件</p>
-                        <!-- Assuming main index handles login, redirect or show simple message -->
                         <a href="index.html" class="btn">前往登入</a>
                     </div>
                 `;
@@ -180,66 +258,79 @@
         });
     }
 
-    async function loadMails() {
-        const container = document.getElementById("mail-list");
+    async function loadData() {
+        const container = document.getElementById("item-list");
         container.innerHTML = '<div class="loading">載入中...</div>';
         
         try {
-            // Query Mails
-            // Index might be needed: houseNo + status + arrivedAt
-            // For now, client-side filter if dataset is small, or simple compound query.
-            
-            // Note: 'status' in DB is 'pending' or 'collected' (assumed).
-            // Let's verify status values. usually 'pending' vs others.
-            
-            const mailsRef = collection(db, "communities", currentSlug, "mails");
-            // Must use where clause to satisfy security rules
-            const q = query(mailsRef, where("houseNo", "==", currentUserHouse));
-            
-            console.log(`Querying mails for house: "${currentUserHouse}"`);
-            
-            const snap = await getDocs(q);
-            let mails = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            console.log(`Found ${mails.length} mails`);
+            let collectionName = "mails";
+            if (currentCategory === 'pickup') collectionName = "pickups";
+            else if (currentCategory === 'deposit') collectionName = "deposits";
 
-            // Client-side filtering and sorting to avoid index requirements for now
-            if (currentTab === 'pending') {
-                mails = mails.filter(m => m.status === 'pending');
+            const colRef = collection(db, "communities", currentSlug, collectionName);
+            // Must use where clause to satisfy security rules
+            const q = query(colRef, where("houseNo", "==", currentUserHouse));
+            
+            console.log(`Querying ${collectionName} for house: "${currentUserHouse}"`);
+            
+            let items = [];
+            try {
+                const snap = await getDocs(q);
+                items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            } catch (err) {
+                console.warn(`Fetch ${collectionName} failed (maybe collection missing?):`, err);
+                items = [];
+            }
+            
+            // Client-side filtering by status
+            if (currentStatus === 'pending') {
+                items = items.filter(m => m.status === 'pending');
             } else {
-                mails = mails.filter(m => m.status !== 'pending');
+                items = items.filter(m => m.status !== 'pending');
             }
             
             // Sort by arrivedAt desc
-            mails.sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0));
+            items.sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0));
             
-            if (mails.length === 0) {
-                container.innerHTML = `<div class="empty-hint">${currentTab === 'pending' ? '目前沒有未領取的郵件' : '沒有領取紀錄'}</div>`;
+            if (items.length === 0) {
+                const actionText = currentStatus === 'pending' ? '未領取' : '紀錄';
+                const catText = currentCategory === 'mail' ? '郵件' : (currentCategory === 'pickup' ? '取件' : '寄放');
+                container.innerHTML = `<div class="empty-hint">目前沒有${actionText}的${catText}</div>`;
                 return;
             }
             
-            container.innerHTML = mails.map(m => {
-                const typeClass = m.type === '包裹' ? 'package' : (m.type === '掛號' ? 'registered' : 'letter');
+            container.innerHTML = items.map(m => {
+                let typeBadge = '';
+                if (currentCategory === 'mail') {
+                     const typeClass = m.type === '包裹' ? 'package' : (m.type === '掛號' ? 'registered' : 'letter');
+                     typeBadge = `<span class="mail-type-badge ${typeClass}">${m.type || '郵件'}</span>`;
+                } else {
+                     typeBadge = `<span class="mail-type-badge letter">${currentCategory === 'pickup' ? '取件' : '寄放'}</span>`;
+                }
+
                 const statusText = m.status === 'pending' ? '未領取' : '已領取';
                 const statusClass = m.status === 'pending' ? '' : 'collected';
                 
                 return `
                     <div class="mail-card">
                         <div class="mail-header">
-                            <span class="mail-type-badge ${typeClass}">${m.type || '郵件'}</span>
+                            ${typeBadge}
                             <span class="mail-date">${formatDate(m.arrivedAt)}</span>
                         </div>
                         <div class="mail-info-row">
                             <span class="mail-label">收件人</span>
                             <span class="mail-value">${m.recipient || ''}</span>
                         </div>
+                        ${m.carrier ? `
                         <div class="mail-info-row">
                             <span class="mail-label">物流</span>
-                            <span class="mail-value">${m.carrier || '-'}</span>
-                        </div>
+                            <span class="mail-value">${m.carrier}</span>
+                        </div>` : ''}
+                        ${m.trackingNo ? `
                         <div class="mail-info-row">
                             <span class="mail-label">單號</span>
-                            <span class="mail-value">${m.trackingNo || '-'}</span>
-                        </div>
+                            <span class="mail-value">${m.trackingNo}</span>
+                        </div>` : ''}
                         ${m.note ? `
                         <div class="mail-info-row">
                             <span class="mail-label">備註</span>
@@ -253,7 +344,7 @@
             
         } catch (e) {
             console.error(e);
-            container.innerHTML = `<div class="error">載入郵件失敗: ${e.message}</div>`;
+            container.innerHTML = `<div class="error">載入失敗: ${e.message}</div>`;
         }
     }
 

@@ -6413,6 +6413,102 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
 }
 
 
+async function openFacilityBookingSwitchModal(facilityKey, facilityLabel) {
+  const u = auth.currentUser;
+  if (!u) {
+    openModal(`<div class="modal-dialog"><div class="modal-body">請先登入</div><div class="modal-foot"><button class="btn action-btn" onclick="closeModal()">關閉</button></div></div>`);
+    return;
+  }
+
+  let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || "default";
+  if (slug === "default") {
+    try {
+      const fetchedSlug = await getUserCommunity(u.uid);
+      if (fetchedSlug && fetchedSlug !== "default") {
+        slug = fetchedSlug;
+        window.currentAdminCommunitySlug = slug;
+        localStorage.setItem("adminCurrentCommunity", slug);
+      }
+    } catch {}
+  }
+
+  let enabled = true;
+  const configRef = doc(db, "communities", slug, "facility_configs", facilityKey);
+  try {
+    const snap = await getDoc(configRef);
+    if (snap.exists()) {
+      const d = snap.data() || {};
+      if (typeof d.bookingEnabled === "boolean") enabled = d.bookingEnabled;
+      else if (typeof d.status === "string") enabled = d.status !== "closed";
+    }
+  } catch {}
+
+  const safeLabel = facilityLabel || facilityKey || "設施";
+  const modalHtml = `
+    <div class="modal-dialog">
+      <div class="modal-head">
+        <div class="modal-title">${safeLabel} - 設施預約</div>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <div class="input-wrap" style="display:flex; align-items:center; gap:10px;">
+            <input type="checkbox" id="facility-booking-enabled" ${enabled ? "checked" : ""} style="width:20px; height:20px;">
+            <label for="facility-booking-enabled" style="font-weight:600;">設施預約開啟</label>
+          </div>
+          <div style="margin-top:10px; color:#6b7280; font-size:13px; line-height:1.5;">
+            關閉時，前台「預約設施」將顯示「社區目前無預約設施」。
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn" id="facility-booking-cancel">取消</button>
+        <button class="btn action-btn primary" id="facility-booking-save">儲存</button>
+      </div>
+    </div>
+  `;
+
+  openModal(modalHtml);
+  setTimeout(() => {
+    const btnCancel = document.getElementById("facility-booking-cancel");
+    const btnSave = document.getElementById("facility-booking-save");
+    const checkbox = document.getElementById("facility-booking-enabled");
+
+    if (btnCancel) btnCancel.onclick = closeModal;
+    if (btnSave) {
+      btnSave.onclick = async () => {
+        const nextEnabled = !!(checkbox && checkbox.checked);
+        btnSave.disabled = true;
+        btnSave.textContent = "儲存中...";
+        try {
+          await setDoc(configRef, { status: nextEnabled ? "open" : "closed" }, { merge: true });
+          if (typeof showHint === "function") showHint("已儲存", "success");
+          closeModal();
+          renderAdminSubNav("facility");
+        } catch (e) {
+          console.error(e);
+          alert("儲存失敗: " + e.message);
+          btnSave.disabled = false;
+          btnSave.textContent = "儲存";
+        }
+      };
+    }
+  }, 30);
+}
+
+async function getFacilityStatusMap(slug, list) {
+  const map = {};
+  const keys = (list || []).map((item) => (typeof item === "object" ? item.key : item)).filter(Boolean);
+  await Promise.all(keys.map(async (facilityKey) => {
+    try {
+      const snap = await getDoc(doc(db, "communities", slug, "facility_configs", facilityKey));
+      if (!snap.exists()) return;
+      const d = snap.data() || {};
+      if (typeof d.status === "string") map[facilityKey] = d.status;
+    } catch {}
+  }));
+  return map;
+}
+
 function openFacilitySettingsModal(facilityKey, currentTitle, slug) {
   // Use global openModal for consistency
   // Initial loading state
@@ -11296,6 +11392,7 @@ function renderAdminSubNav(key) {
   if (navUnsubscribe) { navUnsubscribe(); navUnsubscribe = null; }
   if (!adminNav.subContainer) return;
   const items = adminSubMenus[key] || [];
+  let facilityStatusMap = {};
   
   // Render buttons
   const renderButtons = (list) => {
@@ -11313,7 +11410,15 @@ function renderAdminSubNav(key) {
             style = `style="background-color: ${buttonColor} !important; color: #fff !important; border-color: ${buttonColor} !important;"`;
         }
 
-        return `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}" ${style} ${titleAttr}>${label}</button>`;
+        const mainBtn = `<button class="sub-nav-item ${isActive ? "active" : ""}" data-key="${itemKey}" data-label="${label}" ${style} ${titleAttr}>${label}</button>`;
+        if (key === "facility") {
+          const status = facilityStatusMap[itemKey];
+          const isClosed = status === "closed";
+          const btnText = isClosed ? "關閉" : "開啟";
+          const btnClass = `sub-nav-open-btn ${isClosed ? "is-closed" : ""}`.trim();
+          return `<div class="sub-nav-pair"><button type="button" class="${btnClass}" data-key="${itemKey}" data-label="${label}" title="設施預約開關">${btnText}</button>${mainBtn}</div>`;
+        }
+        return mainBtn;
       }).join("");
 
       if (key === 'announce' || key === 'facility') {
@@ -11415,7 +11520,7 @@ function renderAdminSubNav(key) {
           if (navUnsubscribe !== wrapper) return;
           if (slug === "default" || !auth.currentUser) return;
 
-          localUnsub = onSnapshot(doc(db, "communities", slug, "settings", "nav"), (snap) => {
+          localUnsub = onSnapshot(doc(db, "communities", slug, "settings", "nav"), async (snap) => {
               // Default list for facility
               let currentList = [{ key: 'gym', label: '健身房' }];
               
@@ -11426,6 +11531,8 @@ function renderAdminSubNav(key) {
                   }
               }
               
+              facilityStatusMap = await getFacilityStatusMap(slug, currentList);
+              if (navUnsubscribe !== wrapper) return;
               adminNav.subContainer.innerHTML = renderButtons(currentList);
               attachListeners(currentList);
 
@@ -11498,6 +11605,19 @@ function renderAdminSubNav(key) {
   function attachListeners(currentList) {
       const buttons = adminNav.subContainer.querySelectorAll(".sub-nav-item:not(.add-btn)");
       const addBtn = adminNav.subContainer.querySelector(".add-btn");
+      const openButtons = adminNav.subContainer.querySelectorAll(".sub-nav-open-btn");
+
+      if (key === "facility" && openButtons.length) {
+        openButtons.forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const k = btn.getAttribute("data-key");
+            const l = btn.getAttribute("data-label");
+            openFacilityBookingSwitchModal(k, l);
+          });
+        });
+      }
 
       // Helper: Reorder Logic
       const handleReorder = async (index, direction) => {

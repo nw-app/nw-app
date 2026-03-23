@@ -315,10 +315,51 @@
             if (navSnap.exists()) {
               const data = navSnap.data();
               const facilities = data.facility_tabs || [{ key: 'gym', label: '健身房' }];
-              renderFacilities(facilities);
+              const statusMap = {};
+              try {
+                const cfgSnap = await getDocs(collection(db, "communities", slug, "facility_configs"));
+                cfgSnap.forEach((d) => {
+                  statusMap[d.id] = (d.data() && d.data().status) || "open";
+                });
+              } catch (e) {
+                console.warn("Fetch facility configs failed", e);
+              }
+
+              const enabledFacilities = (facilities || []).filter((item) => {
+                const key = (typeof item === "object") ? item.key : item;
+                const status = statusMap[key];
+                if (!status) return true;
+                return status !== "closed";
+              });
+
+              if (!enabledFacilities.length) {
+                document.getElementById("content").innerHTML = '<div class="empty-hint">「社區目前無預約設施」</div>';
+                return;
+              }
+              renderFacilities(enabledFacilities);
             } else {
                // Default fallback if settings doc doesn't exist
-               renderFacilities([{ key: 'gym', label: '健身房' }]);
+               const fallback = [{ key: 'gym', label: '健身房' }];
+               const statusMap = {};
+               try {
+                 const cfgSnap = await getDocs(collection(db, "communities", slug, "facility_configs"));
+                 cfgSnap.forEach((d) => {
+                   statusMap[d.id] = (d.data() && d.data().status) || "open";
+                 });
+               } catch (e) {
+                 console.warn("Fetch facility configs failed", e);
+               }
+               const enabledFacilities = fallback.filter((item) => {
+                 const key = (typeof item === "object") ? item.key : item;
+                 const status = statusMap[key];
+                 if (!status) return true;
+                 return status !== "closed";
+               });
+               if (!enabledFacilities.length) {
+                 document.getElementById("content").innerHTML = '<div class="empty-hint">「社區目前無預約設施」</div>';
+                 return;
+               }
+               renderFacilities(enabledFacilities);
             }
         } catch (e) {
             throw e; // Re-throw to be caught by outer catch
