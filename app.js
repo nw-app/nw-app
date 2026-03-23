@@ -358,6 +358,84 @@ function closeModal() {
   root.innerHTML = "";
 }
 window.closeModal = closeModal;
+
+function showAutoClosePopup(message, durationMs = 5000) {
+  const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[ch]));
+
+  try {
+    if (window._autoClosePopupTimer) clearTimeout(window._autoClosePopupTimer);
+  } catch {}
+  window._autoClosePopupTimer = null;
+  try {
+    if (window._autoClosePopupInterval) clearInterval(window._autoClosePopupInterval);
+  } catch {}
+  window._autoClosePopupInterval = null;
+
+  const existing = document.getElementById("auto-close-popup");
+  if (existing && existing.parentElement) existing.parentElement.removeChild(existing);
+
+  const overlay = document.createElement("div");
+  overlay.id = "auto-close-popup";
+  overlay.style.cssText = "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:10050;padding:16px;";
+
+  const safeMessage = escapeHtml(message);
+  const totalSeconds = Math.max(1, Math.ceil((Number(durationMs) || 0) / 1000));
+  overlay.innerHTML = `
+    <div style="width:min(420px,92vw);background:#fff;border-radius:12px;border:1px solid rgba(0,0,0,0.06);box-shadow:0 12px 28px rgba(0,0,0,0.18);overflow:hidden;">
+      <div style="padding:16px 18px;font-size:16px;line-height:1.5;color:#111827;display:flex;gap:12px;align-items:flex-start;">
+        <div style="flex:1 1 auto;">
+          <div>${safeMessage}</div>
+          <div id="auto-close-popup-countdown" style="margin-top:8px;font-size:13px;color:#6b7280;">倒數 ${totalSeconds} 秒</div>
+        </div>
+        <button type="button" id="auto-close-popup-x" class="btn" style="background:transparent;border:none;color:#6b7280;cursor:pointer;padding:0;line-height:1;font-size:22px;">×</button>
+      </div>
+    </div>
+  `;
+
+  const close = () => {
+    try {
+      if (window._autoClosePopupTimer) clearTimeout(window._autoClosePopupTimer);
+    } catch {}
+    window._autoClosePopupTimer = null;
+    try {
+      if (window._autoClosePopupInterval) clearInterval(window._autoClosePopupInterval);
+    } catch {}
+    window._autoClosePopupInterval = null;
+    if (overlay && overlay.parentElement) overlay.parentElement.removeChild(overlay);
+  };
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  document.body.appendChild(overlay);
+
+  const x = document.getElementById("auto-close-popup-x");
+  x && x.addEventListener("click", close);
+
+  let remainingSeconds = totalSeconds;
+  const updateCountdown = () => {
+    const countdownEl = document.getElementById("auto-close-popup-countdown");
+    if (!countdownEl) return;
+    countdownEl.textContent = `倒數 ${Math.max(0, remainingSeconds)} 秒`;
+  };
+  updateCountdown();
+  window._autoClosePopupInterval = setInterval(() => {
+    remainingSeconds -= 1;
+    updateCountdown();
+    if (remainingSeconds <= 0) close();
+  }, 1000);
+
+  window._autoClosePopupTimer = setTimeout(() => {
+    close();
+  }, Math.max(0, Number(durationMs) || 0));
+}
+
 async function openUserProfileModal() {
   const u = auth.currentUser;
   const email = (u && u.email) || "";
@@ -12604,7 +12682,7 @@ async function loadFrontButtons(slug) {
         btn.onclick = null;
         if (cfg && cfg.status === "closed") {
           btn.addEventListener("click", () => {
-            showHint("該社區無開啟此功能", "error");
+            showAutoClosePopup("該社區無開啟此功能", 5000);
           });
         } else if (cfg && cfg.link) {
           btn.addEventListener("click", () => {
