@@ -436,6 +436,26 @@ function showAutoClosePopup(message, durationMs = 5000) {
   }, Math.max(0, Number(durationMs) || 0));
 }
 
+function updateAvatarUrlsInDom(previousUrl, nextUrl) {
+  const normalize = (u) => {
+    if (!u) return "";
+    try { return new URL(u, window.location.href).href; } catch { return String(u); }
+  };
+  const prev = normalize(previousUrl);
+  const next = normalize(nextUrl);
+  if (!next) return;
+
+  const imgs = document.querySelectorAll("img");
+  imgs.forEach((img) => {
+    const current = normalize(img.currentSrc || img.src || img.getAttribute("src"));
+    if (!prev) return;
+    if (current === prev) img.src = next;
+  });
+
+  const personal = document.getElementById("personal-avatar");
+  if (personal && personal.tagName === "IMG") personal.src = next;
+}
+
 async function openUserProfileModal() {
   const u = auth.currentUser;
   const email = (u && u.email) || "";
@@ -514,7 +534,7 @@ async function openUserProfileModal() {
       <div class="modal-head"><div class="modal-title">${title}</div></div>
       <div class="modal-body" style="display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 20px; gap: 20px;">
         ${houseInfo}
-        <img class="avatar-preview" src="${photo || ""}" style="width: 120px; height: 120px;">
+        <img id="profile-avatar-preview" class="avatar-preview" src="${photo || ""}" style="width: 120px; height: 120px; cursor: pointer; object-fit: cover; border-radius: 999px;" title="點擊更新大頭照">
         ${qrCodeUrl ? `
             <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
                 <img src="${qrCodeUrl}" style="width: 150px; height: 150px;">
@@ -540,6 +560,43 @@ async function openUserProfileModal() {
       redirectAfterSignOut();
     }
   });
+
+  const avatarImg = document.getElementById("profile-avatar-preview");
+  if (avatarImg) {
+    avatarImg.addEventListener("click", async () => {
+      const u2 = auth.currentUser;
+      if (!u2) return;
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg";
+      input.onchange = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const prevSrc = avatarImg.currentSrc || avatarImg.src || avatarImg.getAttribute("src") || "";
+        avatarImg.style.opacity = "0.65";
+        try {
+          const ext = file.type === "image/png" ? "png" : "jpg";
+          const path = `avatars/${u2.uid}.${ext}`;
+          const ref = storageRef(storage, path);
+          await uploadBytes(ref, file, { contentType: file.type });
+          const url = await getDownloadURL(ref);
+          await updateProfile(u2, { photoURL: url });
+          await setDoc(doc(db, "users", u2.uid), { photoURL: url }, { merge: true });
+          avatarImg.src = url;
+          updateAvatarUrlsInDom(prevSrc, url);
+          showAutoClosePopup("大頭照已更新", 2000);
+        } catch (err) {
+          console.error(err);
+          avatarImg.setAttribute("src", prevSrc);
+          showAutoClosePopup("更新失敗，請稍後再試", 5000);
+        } finally {
+          avatarImg.style.opacity = "";
+          input.value = "";
+        }
+      };
+      input.click();
+    });
+  }
 }
 
 function showHint(text, type = "info") {
