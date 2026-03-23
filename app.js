@@ -5063,13 +5063,11 @@ if (sysNav.subContainer) {
       const getMergedItems = (defItems, specItems) => {
           const merged = [];
           for (let i = 1; i <= 8; i++) {
-              const def = defItems.find(x => x.idx === i);
-              const spec = specItems ? specItems.find(x => x.idx === i) : null;
-              if (spec) {
-                  merged.push(spec);
-              } else if (def) {
-                  merged.push(def);
-              }
+              const def = defItems.find(x => x.idx === i) || null;
+              const spec = specItems ? (specItems.find(x => x.idx === i) || null) : null;
+              if (def && spec) merged.push({ ...def, ...spec, idx: i });
+              else if (spec) merged.push({ ...spec, idx: i });
+              else if (def) merged.push({ ...def, idx: i });
           }
           return merged;
       };
@@ -5080,9 +5078,19 @@ if (sysNav.subContainer) {
       const buildRows = (items, section) => {
         const rows = [];
         for (let i = 1; i <= 8; i++) {
-          const it = items.find(x => x.idx === i) || { idx: i, text: '', link: '', iconUrl: '', newWindow: false };
+          const it = items.find(x => x.idx === i) || { idx: i, text: '', link: '', iconUrl: '', newWindow: false, status: 'open' };
+          const status = (it && it.status === 'closed') ? 'closed' : 'open';
           rows.push(`
             <tr data-idx="${i}">
+              <td>
+                <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+                  <label class="switch">
+                    <input type="checkbox" class="btn-status-toggle" ${status === 'closed' ? 'checked' : ''}>
+                    <span class="slider round"></span>
+                  </label>
+                  <span class="btn-status-label">${status === 'closed' ? '關閉' : '開啟'}</span>
+                </div>
+              </td>
               <td>${i}</td>
               <td><input type="text" class="btn-text" value="${it.text || ''}" placeholder="按鈕名稱"></td>
               <td><input type="url" class="btn-link" value="${it.link || ''}" placeholder="https://..."></td>
@@ -5113,9 +5121,10 @@ if (sysNav.subContainer) {
           </div>
           <div class="table-wrap">
             <table class="table" id="a6-table">
-              <colgroup><col width="60"><col><col><col width="100"><col width="180"></colgroup>
+              <colgroup><col width="130"><col width="60"><col><col><col width="100"><col width="180"></colgroup>
               <thead>
                 <tr>
+                  <th>狀態</th>
                   <th>序號</th>
                   <th>名稱</th>
                   <th>連結</th>
@@ -5135,9 +5144,10 @@ if (sysNav.subContainer) {
           </div>
           <div class="table-wrap">
             <table class="table" id="a8-table">
-              <colgroup><col width="60"><col><col><col width="100"><col width="180"></colgroup>
+              <colgroup><col width="130"><col width="60"><col><col><col width="100"><col width="180"></colgroup>
               <thead>
                 <tr>
+                  <th>狀態</th>
                   <th>序號</th>
                   <th>名稱</th>
                   <th>連結</th>
@@ -5541,6 +5551,17 @@ if (sysNav.subContainer) {
       restartCarousel(adsConfig);
     }
     if (sub === '按鈕') {
+      const statusToggles = sysNav.content.querySelectorAll(".btn-status-toggle");
+      const syncStatusLabel = (input) => {
+        const tr = input && input.closest ? input.closest("tr") : null;
+        const label = tr ? tr.querySelector(".btn-status-label") : null;
+        if (label) label.textContent = input.checked ? "關閉" : "開啟";
+      };
+      statusToggles.forEach((input) => {
+        syncStatusLabel(input);
+        input.addEventListener("change", () => syncStatusLabel(input));
+      });
+
       const bindPreview = (scope) => {
         const inputs = sysNav.content.querySelectorAll(`.${scope}-icon-file`);
         inputs.forEach(input => {
@@ -5570,8 +5591,9 @@ if (sysNav.subContainer) {
               const text = tr.querySelector(".btn-text").value.trim();
               const link = tr.querySelector(".btn-link").value.trim();
               const newWindow = !!(tr.querySelector(".btn-new-window")?.checked);
+              const status = tr.querySelector(".btn-status-toggle")?.checked ? "closed" : "open";
               const fileInput = tr.querySelector(".icon-file");
-              items.push({ idx, text, link, newWindow, fileInput });
+              items.push({ idx, text, link, newWindow, status, fileInput });
             });
             return items;
           };
@@ -5609,8 +5631,8 @@ if (sysNav.subContainer) {
                 const prev = it.fileInput.closest("tr").querySelector(".icon-preview").getAttribute("src") || "";
                 iconUrl = prev || "";
               }
-              if (it.text || it.link || iconUrl) {
-                resultA6.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl });
+              if (it.text || it.link || iconUrl || it.status === "closed") {
+                resultA6.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl, status: it.status || "open" });
               }
             }
             for (let it of a8Items) {
@@ -5635,8 +5657,8 @@ if (sysNav.subContainer) {
                 const prev = it.fileInput.closest("tr").querySelector(".icon-preview").getAttribute("src") || "";
                 iconUrl = prev || "";
               }
-              if (it.text || it.link || iconUrl) {
-                resultA8.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl });
+              if (it.text || it.link || iconUrl || it.status === "closed") {
+                resultA8.push({ idx: it.idx, text: it.text, link: it.link, newWindow: !!it.newWindow, iconUrl, status: it.status || "open" });
               }
             }
             await setDoc(doc(db, `communities/${targetSlug}/app_modules/buttons`), { a6: resultA6, a8: resultA8 }, { merge: true });
@@ -12522,15 +12544,44 @@ async function loadFrontButtons(slug) {
   const a8Btns = document.querySelectorAll(".row.A8 .feature-btn");
   if (!a6Btns.length && !a8Btns.length) return;
   try {
-    let snap = await getDoc(doc(db, `communities/${slug}/app_modules/buttons`));
-    if (!snap.exists()) {
-      const def = await getDoc(doc(db, `communities/default/app_modules/buttons`));
-      if (!def.exists()) return;
-      snap = def;
-    }
-    const data = snap.data() || {};
-    const a6 = Array.isArray(data.a6) ? data.a6 : [];
-    const a8 = Array.isArray(data.a8) ? data.a8 : [];
+    let defData = {};
+    let specData = {};
+    try {
+      const defSnap = await getDoc(doc(db, `communities/default/app_modules/buttons`));
+      if (defSnap.exists()) defData = defSnap.data() || {};
+    } catch {}
+    try {
+      if (slug && slug !== "default") {
+        const specSnap = await getDoc(doc(db, `communities/${slug}/app_modules/buttons`));
+        if (specSnap.exists()) specData = specSnap.data() || {};
+      } else if (slug === "default") {
+        specData = defData;
+      }
+    } catch {}
+
+    const defA6 = Array.isArray(defData.a6) ? defData.a6 : [];
+    const defA8 = Array.isArray(defData.a8) ? defData.a8 : [];
+    const specA6 = Array.isArray(specData.a6) ? specData.a6 : [];
+    const specA8 = Array.isArray(specData.a8) ? specData.a8 : [];
+
+    const mergeByIdx = (baseItems, overrideItems) => {
+      const baseByIdx = {};
+      const overByIdx = {};
+      baseItems.forEach(it => { if (it && typeof it.idx === "number") baseByIdx[it.idx] = it; });
+      overrideItems.forEach(it => { if (it && typeof it.idx === "number") overByIdx[it.idx] = it; });
+      const out = [];
+      for (let i = 1; i <= 8; i++) {
+        const b = baseByIdx[i] || null;
+        const o = overByIdx[i] || null;
+        if (b && o) out.push({ ...b, ...o, idx: i });
+        else if (o) out.push({ ...o, idx: i });
+        else if (b) out.push({ ...b, idx: i });
+      }
+      return out;
+    };
+
+    const a6 = (slug && slug !== "default") ? mergeByIdx(defA6, specA6) : (defA6.length ? defA6 : specA6);
+    const a8 = (slug && slug !== "default") ? mergeByIdx(defA8, specA8) : (defA8.length ? defA8 : specA8);
     const applyToButtons = (items, nodeList) => {
       const byIdx = {};
       items.forEach(it => { if (typeof it.idx === "number") byIdx[it.idx] = it; });
@@ -12551,7 +12602,11 @@ async function loadFrontButtons(slug) {
           }
         }
         btn.onclick = null;
-        if (cfg && cfg.link) {
+        if (cfg && cfg.status === "closed") {
+          btn.addEventListener("click", () => {
+            showHint("該社區無開啟此功能", "error");
+          });
+        } else if (cfg && cfg.link) {
           btn.addEventListener("click", () => {
             const url = cfg.link;
             const title = (cfg.text || (textEl && textEl.textContent) || "連結");
@@ -12642,12 +12697,26 @@ function subscribeFrontButtons(slug) {
     try { unsubscribeFrontButtons(); } catch {}
     unsubscribeFrontButtons = null;
   }
+  const unsubscribers = [];
   const ref = doc(db, `communities/${slug}/app_modules/buttons`);
-  unsubscribeFrontButtons = onSnapshot(ref, () => {
+  unsubscribers.push(onSnapshot(ref, () => {
     loadFrontButtons(slug);
   }, (err) => {
     void 0;
-  });
+  }));
+  if (slug !== "default") {
+    const defRef = doc(db, `communities/default/app_modules/buttons`);
+    unsubscribers.push(onSnapshot(defRef, () => {
+      loadFrontButtons(slug);
+    }, (err) => {
+      void 0;
+    }));
+  }
+  unsubscribeFrontButtons = () => {
+    unsubscribers.forEach((fn) => {
+      try { fn(); } catch {}
+    });
+  };
 }
 
 let unsubscribeFrontAds = null;
