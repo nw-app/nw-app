@@ -390,7 +390,7 @@ function showAutoClosePopup(message, durationMs = 5000) {
     <div style="width:min(420px,92vw);background:#fff;border-radius:12px;border:1px solid rgba(0,0,0,0.06);box-shadow:0 12px 28px rgba(0,0,0,0.18);overflow:hidden;">
       <div style="padding:16px 18px;font-size:16px;line-height:1.5;color:#111827;display:flex;gap:12px;align-items:flex-start;">
         <div style="flex:1 1 auto;">
-          <div>${safeMessage}</div>
+          <div style="font-size:18px;font-weight:700;color:#dc2626;">${safeMessage}</div>
           <div id="auto-close-popup-countdown" style="margin-top:8px;font-size:13px;color:#6b7280;">倒數 ${totalSeconds} 秒</div>
         </div>
         <button type="button" id="auto-close-popup-x" class="btn" style="background:transparent;border:none;color:#6b7280;cursor:pointer;padding:0;line-height:1;font-size:22px;">×</button>
