@@ -906,6 +906,49 @@ select:focus {
   object-fit: cover;
   background: #e5e7eb;
 }
+.avatar-edit-wrap {
+  position: relative;
+  display: inline-block;
+}
+.avatar-edit-btn {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--border);
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.avatar-edit-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.avatar-edit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: transparent;
+}
+.avatar-edit-popover {
+  position: fixed;
+  z-index: 12001;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  min-width: 160px;
+}
 .qr-preview {
   width: 64px;
   height: 64px;

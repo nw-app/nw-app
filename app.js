@@ -456,6 +456,197 @@ function updateAvatarUrlsInDom(previousUrl, nextUrl) {
   if (personal && personal.tagName === "IMG") personal.src = next;
 }
 
+function closeAvatarEditPopover() {
+  const pop = document.getElementById("avatar-edit-popover");
+  if (pop && pop.parentElement) pop.parentElement.removeChild(pop);
+  const backdrop = document.getElementById("avatar-edit-backdrop");
+  if (backdrop && backdrop.parentElement) backdrop.parentElement.removeChild(backdrop);
+}
+
+async function startAvatarUploadFlow(previewImg) {
+  const u2 = auth.currentUser;
+  if (!u2) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg";
+  input.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const prevSrc = (previewImg && (previewImg.currentSrc || previewImg.src || previewImg.getAttribute("src"))) || "";
+    if (previewImg) previewImg.style.opacity = "0.65";
+    try {
+      const ext = file.type === "image/png" ? "png" : "jpg";
+      const path = `avatars/${u2.uid}.${ext}`;
+      const ref = storageRef(storage, path);
+      await uploadBytes(ref, file, { contentType: file.type });
+      const url = await getDownloadURL(ref);
+      await updateProfile(u2, { photoURL: url });
+      await setDoc(doc(db, "users", u2.uid), { photoURL: url }, { merge: true });
+      if (previewImg) previewImg.src = url;
+      updateAvatarUrlsInDom(prevSrc, url);
+      showAutoClosePopup("大頭照已更新", 2000);
+    } catch (err) {
+      console.error(err);
+      if (previewImg) previewImg.setAttribute("src", prevSrc);
+      showAutoClosePopup("更新失敗，請稍後再試", 5000);
+    } finally {
+      if (previewImg) previewImg.style.opacity = "";
+      input.value = "";
+    }
+  };
+  input.click();
+}
+
+function openChangePasswordModal() {
+  const curr = auth.currentUser;
+  if (!curr) {
+    showAutoClosePopup("尚未登入", 3000);
+    return;
+  }
+  const body = `
+    <div class="modal-dialog">
+      <div class="modal-head"><div class="modal-title">更換密碼</div></div>
+      <div class="modal-body">
+        <div class="modal-row">
+          <label>新密碼</label>
+          <input type="password" id="pwd-new" placeholder="至少 6 字元">
+        </div>
+        <div class="modal-row">
+          <label>確認新密碼</label>
+          <input type="password" id="pwd-confirm" placeholder="再次輸入新密碼">
+        </div>
+        <div class="modal-row">
+          <label>目前密碼（必要時）</label>
+          <input type="password" id="pwd-current" placeholder="需要重新驗證時使用">
+        </div>
+        <div id="pwd-hint" class="hint"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn danger" id="pwd-cancel">取消</button>
+        <button class="btn action-btn" id="pwd-update">更新</button>
+      </div>
+    </div>
+  `;
+  openModal(body);
+  const btnCancel = document.getElementById("pwd-cancel");
+  const btnUpdate = document.getElementById("pwd-update");
+  const hint = document.getElementById("pwd-hint");
+  const getVal = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : "";
+  };
+  if (btnCancel) btnCancel.addEventListener("click", () => closeModal());
+  if (btnUpdate) {
+    btnUpdate.addEventListener("click", async () => {
+      const newPass = getVal("pwd-new").trim();
+      const confirmPass = getVal("pwd-confirm").trim();
+      const currentPass = getVal("pwd-current").trim();
+      if (!newPass || newPass.length < 6) {
+        if (hint) hint.textContent = "新密碼至少 6 字元";
+        return;
+      }
+      if (newPass !== confirmPass) {
+        if (hint) hint.textContent = "兩次輸入不一致";
+        return;
+      }
+      btnUpdate.disabled = true;
+      btnUpdate.textContent = "更新中...";
+      try {
+        await updatePassword(curr, newPass);
+        closeModal();
+        showAutoClosePopup("密碼已更新", 2000);
+      } catch (e) {
+        if (e && e.code === "auth/requires-recent-login") {
+          if (!currentPass) {
+            if (hint) hint.textContent = "需要輸入目前密碼以完成更新";
+          } else if (curr.email) {
+            try {
+              const cred = EmailAuthProvider.credential(curr.email, currentPass);
+              await reauthenticateWithCredential(curr, cred);
+              await updatePassword(curr, newPass);
+              closeModal();
+              showAutoClosePopup("密碼已更新", 2000);
+            } catch (err2) {
+              if (hint) hint.textContent = "重新驗證失敗，請檢查目前密碼";
+            }
+          } else {
+            if (hint) hint.textContent = "帳號缺少 Email 無法重新驗證";
+          }
+        } else {
+          if (hint) hint.textContent = "更新失敗，請稍後再試";
+        }
+      } finally {
+        btnUpdate.disabled = false;
+        btnUpdate.textContent = "更新";
+      }
+    });
+  }
+}
+
+function openAvatarEditPopover(anchorEl, previewImg) {
+  if (!anchorEl) return;
+  closeAvatarEditPopover();
+  const backdrop = document.createElement("div");
+  backdrop.id = "avatar-edit-backdrop";
+  backdrop.className = "avatar-edit-backdrop";
+  backdrop.addEventListener("click", () => closeAvatarEditPopover());
+  document.body.appendChild(backdrop);
+
+  const pop = document.createElement("div");
+  pop.id = "avatar-edit-popover";
+  pop.className = "avatar-edit-popover";
+  pop.innerHTML = `
+    <button type="button" class="btn small action-btn" id="btn-avatar-edit-photo">更換大頭照</button>
+    <button type="button" class="btn small action-btn" id="btn-avatar-edit-pass">更換密碼</button>
+  `;
+  pop.addEventListener("click", (e) => e.stopPropagation());
+  document.body.appendChild(pop);
+
+  const rect = anchorEl.getBoundingClientRect();
+  const gap = 8;
+  const popRect = pop.getBoundingClientRect();
+  let left = rect.right - popRect.width;
+  let top = rect.bottom + gap;
+  left = Math.max(8, Math.min(left, window.innerWidth - popRect.width - 8));
+  top = Math.max(8, Math.min(top, window.innerHeight - popRect.height - 8));
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+
+  const btnPhoto = document.getElementById("btn-avatar-edit-photo");
+  const btnPass = document.getElementById("btn-avatar-edit-pass");
+  btnPhoto && btnPhoto.addEventListener("click", async () => {
+    closeAvatarEditPopover();
+    await startAvatarUploadFlow(previewImg);
+  });
+  btnPass && btnPass.addEventListener("click", async () => {
+    closeAvatarEditPopover();
+    openChangePasswordModal();
+  });
+}
+
+function attachAvatarEditButton(imgEl) {
+  if (!imgEl || imgEl.dataset.avatarEditAttached === "1") return;
+  imgEl.dataset.avatarEditAttached = "1";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "avatar-edit-wrap";
+  const parent = imgEl.parentElement;
+  if (!parent) return;
+  parent.insertBefore(wrapper, imgEl);
+  wrapper.appendChild(imgEl);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "avatar-edit-btn";
+  btn.setAttribute("aria-label", "編輯");
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path></svg>`;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openAvatarEditPopover(btn, imgEl);
+  });
+  wrapper.appendChild(btn);
+}
+
 async function openUserProfileModal() {
   const u = auth.currentUser;
   const email = (u && u.email) || "";
@@ -564,38 +755,9 @@ async function openUserProfileModal() {
   const avatarImg = document.getElementById("profile-avatar-preview");
   if (avatarImg) {
     avatarImg.addEventListener("click", async () => {
-      const u2 = auth.currentUser;
-      if (!u2) return;
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/png,image/jpeg";
-      input.onchange = async (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        const prevSrc = avatarImg.currentSrc || avatarImg.src || avatarImg.getAttribute("src") || "";
-        avatarImg.style.opacity = "0.65";
-        try {
-          const ext = file.type === "image/png" ? "png" : "jpg";
-          const path = `avatars/${u2.uid}.${ext}`;
-          const ref = storageRef(storage, path);
-          await uploadBytes(ref, file, { contentType: file.type });
-          const url = await getDownloadURL(ref);
-          await updateProfile(u2, { photoURL: url });
-          await setDoc(doc(db, "users", u2.uid), { photoURL: url }, { merge: true });
-          avatarImg.src = url;
-          updateAvatarUrlsInDom(prevSrc, url);
-          showAutoClosePopup("大頭照已更新", 2000);
-        } catch (err) {
-          console.error(err);
-          avatarImg.setAttribute("src", prevSrc);
-          showAutoClosePopup("更新失敗，請稍後再試", 5000);
-        } finally {
-          avatarImg.style.opacity = "";
-          input.value = "";
-        }
-      };
-      input.click();
+      await startAvatarUploadFlow(avatarImg);
     });
+    attachAvatarEditButton(avatarImg);
   }
 }
 
@@ -1486,6 +1648,7 @@ async function loadPersonalData(slug) {
   let currentPoints = 0;
   
   if(elAvatar) elAvatar.src = u.photoURL || "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y";
+  if (elAvatar) attachAvatarEditButton(elAvatar);
   
   // 1. Fetch User Details & Points
   try {
