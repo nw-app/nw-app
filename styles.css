@@ -239,6 +239,7 @@ select:focus {
 @media (max-width: 768px) and (orientation: landscape) {
   #orientation-tip { display: flex; }
   #front-stack { display: none; }
+  main.container { display: none; }
 }
 .stack {
   position: relative;
