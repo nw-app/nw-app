@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <title>社區意見反應</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="suppress-errors.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    body { background: #f3f4f6; }
+    .fb-shell { height: 100%; width: 100%; display: flex; flex-direction: column; }
+    .fb-head { height: 10%; min-height: 56px; display: flex; align-items: center; justify-content: center; background: #dc2626; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.08); flex-shrink: 0; padding: 0 16px; }
+    .fb-head-title { font-size: 18px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; }
+    .fb-main { height: 80%; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px; flex: 1; }
+    .fb-foot { height: 10%; min-height: 56px; display: flex; border-top: 1px solid #e5e7eb; background: #fff; flex-shrink: 0; }
+    .fb-tab { flex: 1; border: none; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; cursor: pointer; color: #9ca3af; font-weight: 800; }
+    .fb-tab.active { color: #dc2626; background: rgba(220, 38, 38, 0.06); }
+    .fb-tab-icon { width: 26px; height: 26px; }
+    .fb-tab-label { font-size: 13px; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+    .fb-wrap { max-width: 680px; margin: 0 auto; }
+    .fb-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .fb-title { font-size: 18px; font-weight: 700; margin: 0 0 8px; color: #111827; }
+    .fb-desc { font-size: 14px; color: #6b7280; margin: 0 0 16px; line-height: 1.5; }
+    .fb-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .fb-label { font-size: 13px; color: #374151; font-weight: 600; }
+    .fb-req { color: #ef4444; }
+    .fb-input, .fb-textarea { border: 1px solid #d1d5db; border-radius: 10px; padding: 12px; font-size: 16px; outline: none; background: #fff; }
+    .fb-input:focus, .fb-textarea:focus { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.15); }
+    .fb-textarea { min-height: 140px; resize: vertical; }
+    .fb-actions { display: flex; gap: 12px; }
+    .fb-btn { flex: 1; border: none; border-radius: 10px; padding: 12px; font-size: 16px; font-weight: 700; cursor: pointer; }
+    .fb-btn-primary { background: #ef4444; color: #fff; }
+    .fb-btn-primary:disabled { background: #fca5a5; cursor: not-allowed; }
+    .fb-success { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); align-items: center; justify-content: center; z-index: 9999; padding: 24px; }
+    .fb-success.active { display: flex; }
+    .fb-success-box { width: 100%; max-width: 360px; background: #fff; border-radius: 16px; padding: 20px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
+    .fb-success-title { margin: 0 0 8px; font-size: 18px; font-weight: 800; color: #111827; }
+    .fb-success-desc { margin: 0; font-size: 14px; color: #6b7280; }
+    .fb-pane { display: none; }
+    .fb-pane.active { display: block; }
+    .fb-phone-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 18px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); max-width: 420px; margin: 0 auto 16px; position: relative; }
+    .fb-phone-region { position: absolute; top: 12px; left: 12px; font-weight: 900; color: #111827; }
+    .fb-phone-badge { width: 56px; height: 56px; border-radius: 999px; background: rgba(220, 38, 38, 0.10); color: #dc2626; display: flex; align-items: center; justify-content: center; margin: 10px auto 12px; }
+    .fb-phone-h { margin: 0 0 6px; text-align: center; font-size: 18px; font-weight: 900; color: #111827; }
+    .fb-phone-p { margin: 0 0 14px; text-align: center; font-size: 13px; color: #6b7280; line-height: 1.45; }
+    .fb-phone-link { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; text-decoration: none; background: #22c55e; color: #fff; border-radius: 12px; padding: 12px; font-weight: 900; }
+  </style>
+</head>
+<body>
+  <div class="fb-shell">
+    <header class="fb-head">
+      <div class="fb-head-title" id="fb-header-title">社區意見反應</div>
+    </header>
+
+    <main class="fb-main">
+      <section class="fb-pane active" id="pane-online">
+        <div class="fb-wrap">
+          <div class="fb-card">
+            <h2 class="fb-title" id="community-title">西北保全&物業 線上意見反應</h2>
+            <p class="fb-desc">感謝您提供寶貴意見，請填寫以下資訊，我們會盡快由專人為您處理。</p>
+            <div class="fb-field">
+              <label class="fb-label" for="residentName">戶號 / 姓名 <span class="fb-req">*</span></label>
+              <input class="fb-input" id="residentName" autocomplete="name" inputmode="text" placeholder="例：1F-45 - 1 王先生">
+            </div>
+            <div class="fb-field">
+              <label class="fb-label" for="residentPhone">聯繫電話 / 手機 <span class="fb-req">*</span></label>
+              <input class="fb-input" id="residentPhone" autocomplete="tel" inputmode="tel" placeholder="例：0912-345-678">
+            </div>
+            <div class="fb-field">
+              <label class="fb-label" for="residentEmail">電子郵件 (選填)</label>
+              <input class="fb-input" id="residentEmail" autocomplete="email" inputmode="email" placeholder="例：example@email.com">
+            </div>
+            <div class="fb-field">
+              <label class="fb-label" for="residentFeedback">反應內容 <span class="fb-req">*</span></label>
+              <textarea class="fb-textarea" id="residentFeedback" placeholder="請詳細描述您的問題 或建議..."></textarea>
+            </div>
+            <div class="fb-actions">
+              <button class="fb-btn fb-btn-primary" id="btn-submit">送出意見</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="fb-pane" id="pane-phone">
+        <div class="fb-phone-card">
+          <div class="fb-phone-region">台北、新北</div>
+          <div class="fb-phone-badge">
+            <svg class="fb-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.58-1.14a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z"></path>
+            </svg>
+          </div>
+          <div class="fb-phone-h">客服專線</div>
+          <div class="fb-phone-p">如有緊急事項，歡迎於上班時間直接來電聯繫。</div>
+          <a class="fb-phone-link" href="tel:02-25555389">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.58-1.14a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z"></path>
+            </svg>
+            <span>撥打 02-2555-5389</span>
+          </a>
+        </div>
+
+        <div class="fb-phone-card">
+          <div class="fb-phone-region">桃園</div>
+          <div class="fb-phone-badge">
+            <svg class="fb-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.58-1.14a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z"></path>
+            </svg>
+          </div>
+          <div class="fb-phone-h">客服專線</div>
+          <div class="fb-phone-p">如有緊急事項，歡迎於上班時間直接來電聯繫。</div>
+          <a class="fb-phone-link" href="tel:03-3026868">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.58-1.14a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z"></path>
+            </svg>
+            <span>撥打 03-302-6868</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="fb-foot pb-safe">
+      <button type="button" class="fb-tab active" id="tab-btn-online">
+        <svg class="fb-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path>
+        </svg>
+        <div class="fb-tab-label">線上</div>
+      </button>
+      <button type="button" class="fb-tab" id="tab-btn-phone">
+        <svg class="fb-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.86.31 1.7.57 2.5a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.58-1.14a2 2 0 0 1 2.11-.45c.8.26 1.64.45 2.5.57A2 2 0 0 1 22 16.92z"></path>
+        </svg>
+        <div class="fb-tab-label">電話</div>
+      </button>
+    </footer>
+  </div>
+
+  <div class="fb-success" id="success-modal" role="status" aria-live="polite">
+    <div class="fb-success-box">
+      <div class="fb-success-title">資料已傳送</div>
+      <div class="fb-success-desc">感謝您的意見，我們會盡快回覆。</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+    import { getFirestore, collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+      authDomain: "nw-app-all.firebaseapp.com",
+      projectId: "nw-app-all",
+      storageBucket: "nw-app-all.firebasestorage.app",
+      messagingSenderId: "205108931232",
+      appId: "1:205108931232:web:ee7868f73ed883253577c5",
+      measurementId: "G-8F1WD772LP"
+    };
+
+    try {
+      const saved = localStorage.getItem("nw_firebase_config");
+      if (saved) Object.assign(firebaseConfig, JSON.parse(saved));
+    } catch {}
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const params = new URLSearchParams(window.location.search);
+    const communityId = params.get("id") || "";
+    const communityName = params.get("name") || "";
+    const rn = params.get("rn") || "";
+    const rp = params.get("rp") || "";
+
+    const titleText = communityName ? `${communityName} 意見反應` : "社區意見反應";
+    document.title = titleText;
+    const pageTitleEl = document.getElementById("fb-header-title");
+    if (pageTitleEl) pageTitleEl.textContent = communityName || "社區意見反應";
+    const commTitleEl = document.getElementById("community-title");
+    if (commTitleEl && communityName) commTitleEl.textContent = `${communityName} 線上意見反應`;
+
+    const elName = document.getElementById("residentName");
+    const elPhone = document.getElementById("residentPhone");
+    const elEmail = document.getElementById("residentEmail");
+    const elFeedback = document.getElementById("residentFeedback");
+    const btn = document.getElementById("btn-submit");
+    const success = document.getElementById("success-modal");
+
+    if (elName && rn) elName.value = rn;
+    if (elPhone && rp && !String(elPhone.value || "").trim()) elPhone.value = rp;
+
+    const paneOnline = document.getElementById("pane-online");
+    const panePhone = document.getElementById("pane-phone");
+    const btnTabOnline = document.getElementById("tab-btn-online");
+    const btnTabPhone = document.getElementById("tab-btn-phone");
+
+    const setTab = (tab) => {
+      const isPhone = tab === "phone";
+      if (paneOnline) paneOnline.classList.toggle("active", !isPhone);
+      if (panePhone) panePhone.classList.toggle("active", isPhone);
+      if (btnTabOnline) btnTabOnline.classList.toggle("active", !isPhone);
+      if (btnTabPhone) btnTabPhone.classList.toggle("active", isPhone);
+    };
+
+    if (btnTabOnline) btnTabOnline.addEventListener("click", () => setTab("online"));
+    if (btnTabPhone) btnTabPhone.addEventListener("click", () => setTab("phone"));
+
+    const openSuccess = () => {
+      if (!success) return;
+      success.classList.add("active");
+      setTimeout(() => {
+        success.classList.remove("active");
+      }, 2500);
+    };
+
+    const submit = async () => {
+      const residentName = (elName && elName.value || "").trim();
+      const residentPhone = (elPhone && elPhone.value || "").trim();
+      const residentEmail = (elEmail && elEmail.value || "").trim();
+      const residentFeedback = (elFeedback && elFeedback.value || "").trim();
+
+      if (!residentName || !residentPhone || !residentFeedback) {
+        alert("請填寫必填欄位：戶號/姓名、電話、反應內容");
+        return;
+      }
+
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "送出中...";
+      }
+
+      try {
+        await addDoc(collection(db, "feedbacks"), {
+          communityId,
+          communityName,
+          residentName,
+          residentPhone,
+          residentEmail,
+          residentFeedback,
+          status: false,
+          createdAt: serverTimestamp()
+        });
+
+        if (elFeedback) elFeedback.value = "";
+        openSuccess();
+      } catch (e) {
+        alert("送出失敗: " + (e && e.message ? e.message : "未知錯誤"));
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "送出意見";
+        }
+      }
+    };
+
+    if (btn) btn.addEventListener("click", submit);
+    if (success) success.addEventListener("click", () => success.classList.remove("active"));
+  </script>
+</body>
+</html>
