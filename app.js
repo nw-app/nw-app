@@ -13010,6 +13010,59 @@ function openLinkView(title, url) {
     url = url.replace("/preview-facility", "/preview-facility.html");
   }
 
+  const isFeedbackUrl = (s) => {
+    if (!s || typeof s !== "string") return false;
+    try {
+      const u = new URL(s, window.location.href);
+      if (u.pathname.endsWith("/feedback.html")) return true;
+      return u.hostname === "nw-com.github.io" && u.pathname.includes("/nw-checkin-all-2026/feedback.html");
+    } catch {
+      return false;
+    }
+  };
+
+  const rewriteFeedbackToLocal = (s) => {
+    try {
+      const u = new URL(s, window.location.href);
+      if (!(u.hostname === "nw-com.github.io" && u.pathname.includes("/nw-checkin-all-2026/feedback.html"))) return s;
+      const local = new URL("feedback.html", window.location.href);
+      local.search = u.search;
+      local.hash = u.hash;
+      return local.toString();
+    } catch {
+      return s;
+    }
+  };
+
+  const getResidentPrefill = async () => {
+    try {
+      const u = auth.currentUser;
+      if (!u) return { rn: "", rp: "" };
+      let name = u.displayName || "";
+      let houseNo = "";
+      let subNo = "";
+      let phone = "";
+      try {
+        const snap = await getDoc(doc(db, "users", u.uid));
+        if (snap.exists()) {
+          const d = snap.data();
+          name = name || d.displayName || d.realName || "";
+          houseNo = d.houseNo || "";
+          subNo = d.subNo !== undefined ? d.subNo : "";
+          phone = d.phone || "";
+        }
+      } catch {}
+      const house = (houseNo || subNo !== "") ? `${houseNo} - ${subNo}`.trim() : "";
+      const merged = [house, name].filter(Boolean).join(" ").trim();
+      return { rn: merged || name || "", rp: (phone || "").trim() };
+    } catch {
+      return { rn: "", rp: "" };
+    }
+  };
+
+  const isFeedback = isFeedbackUrl(url);
+  if (isFeedback) url = rewriteFeedbackToLocal(url);
+
   let root = document.getElementById("sys-modal");
   if (!root) {
     root = document.createElement("div");
@@ -13023,7 +13076,7 @@ function openLinkView(title, url) {
       <div class="modal-head link-view-head">
         <div class="modal-title link-view-title">${safeTitle}</div>
         <div style="display:flex;align-items:center;gap:16px;">
-          <a href="${url}" target="_blank" rel="noopener" class="link-view-external" title="在新視窗開啟" style="display:flex;color:#666;">
+          <a id="link-view-external" href="${url}" target="_blank" rel="noopener" class="link-view-external" title="在新視窗開啟" style="display:flex;color:#666;">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
               <polyline points="15 3 21 3 21 9"></polyline>
@@ -13039,7 +13092,7 @@ function openLinkView(title, url) {
         </div>
       </div>
       <div class="modal-body link-view-body">
-        <iframe class="link-view-iframe" src="${url}" frameborder="0" allow="autoplay; encrypted-media; clipboard-read; clipboard-write; geolocation"></iframe>
+        <iframe id="link-view-iframe" class="link-view-iframe" src="${url}" frameborder="0" allow="autoplay; encrypted-media; clipboard-read; clipboard-write; geolocation"></iframe>
       </div>
     </div>
   `;
@@ -13053,6 +13106,23 @@ function openLinkView(title, url) {
     }
   };
   document.addEventListener("keydown", escHandler, true);
+
+  if (isFeedback) {
+    void (async () => {
+      let finalUrl = url;
+      try {
+        const u = new URL(url, window.location.href);
+        const p = await getResidentPrefill();
+        if (p && p.rn) u.searchParams.set("rn", p.rn);
+        if (p && p.rp) u.searchParams.set("rp", p.rp);
+        finalUrl = u.toString();
+      } catch {}
+      const iframe = document.getElementById("link-view-iframe");
+      const external = document.getElementById("link-view-external");
+      if (iframe && iframe.getAttribute("src") !== finalUrl) iframe.setAttribute("src", finalUrl);
+      if (external && external.getAttribute("href") !== finalUrl) external.setAttribute("href", finalUrl);
+    })();
+  }
 }
 
 let unsubscribeFrontButtons = null;
