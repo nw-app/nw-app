@@ -612,13 +612,15 @@ function openAvatarEditPopover(anchorEl, previewImg) {
   pop.style.left = `${left}px`;
   pop.style.top = `${top}px`;
 
-  const btnPhoto = document.getElementById("btn-avatar-edit-photo");
-  const btnPass = document.getElementById("btn-avatar-edit-pass");
-  btnPhoto && btnPhoto.addEventListener("click", async () => {
+  const btnPhoto = pop.querySelector("#btn-avatar-edit-photo");
+  const btnPass = pop.querySelector("#btn-avatar-edit-pass");
+  btnPhoto && btnPhoto.addEventListener("click", async (e) => {
+    e.stopPropagation();
     closeAvatarEditPopover();
     await startAvatarUploadFlow(previewImg);
   });
-  btnPass && btnPass.addEventListener("click", async () => {
+  btnPass && btnPass.addEventListener("click", (e) => {
+    e.stopPropagation();
     closeAvatarEditPopover();
     openChangePasswordModal();
   });
@@ -1648,7 +1650,17 @@ async function loadPersonalData(slug) {
   let currentPoints = 0;
   
   if(elAvatar) elAvatar.src = u.photoURL || "https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y";
-  if (elAvatar) attachAvatarEditButton(elAvatar);
+  if (elAvatar) {
+    attachAvatarEditButton(elAvatar);
+    if (elAvatar.dataset.avatarClickAttached !== "1") {
+      elAvatar.dataset.avatarClickAttached = "1";
+      elAvatar.addEventListener("click", async () => {
+        await startAvatarUploadFlow(elAvatar);
+      });
+      elAvatar.style.cursor = "pointer";
+      elAvatar.title = "點擊更新大頭照";
+    }
+  }
   
   // 1. Fetch User Details & Points
   try {
@@ -5264,7 +5276,7 @@ if (sysNav.subContainer) {
         previewContent = `<div class="preview-placeholder">A3 輪播預覽區 (目前無內容)</div>`;
       } else {
         let renderItems = [...validItems];
-    if (renderItems.length === 2 && config.loop !== 'once') {
+    if (renderItems.length === 2 && adsConfig.loop !== 'once') {
         renderItems = [...renderItems, ...renderItems];
     }
     
