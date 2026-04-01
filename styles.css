@@ -510,6 +510,18 @@ select:focus {
   background-repeat: no-repeat;
   border: none;
 }
+input[type="radio"][name="apply-role"] {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  appearance: auto;
+  -webkit-appearance: auto;
+  -moz-appearance: auto;
+}
 .btn.corner {
   position: absolute;
   right: 8px;

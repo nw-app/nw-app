@@ -259,6 +259,7 @@ const el = {
   email: document.getElementById("email"),
   password: document.getElementById("password"),
   btnLogin: document.getElementById("btn-login"),
+  btnApplyAccount: document.getElementById("btn-apply-account"),
   btnRegister: document.getElementById("btn-register"),
   btnReset: document.getElementById("btn-reset"),
   btnSignout: document.getElementById("btn-signout"),
@@ -340,6 +341,16 @@ function showConfirmModal(title, message, confirmText, confirmClass, onConfirm) 
   }
 }
 
+function showDeleteConfirmModal(message, onConfirm) {
+  showConfirmModal(
+    "刪除確認",
+    message,
+    "確認刪除",
+    "danger",
+    onConfirm
+  );
+}
+
 function openModal(html) {
   let root = document.getElementById("sys-modal");
   if (!root) {
@@ -358,6 +369,635 @@ function closeModal() {
   root.innerHTML = "";
 }
 window.closeModal = closeModal;
+
+function escapeHtmlSafe(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[ch]));
+}
+
+function mapApplyRoleToTitle(roleLabel) {
+  const v = String(roleLabel || "").trim();
+  if (v === "區分權所有人") return "區權人";
+  if (v === "眷屬") return "親屬";
+  if (v === "承租人") return "承租人";
+  if (v === "其他") return "其他";
+  return "區權人";
+}
+
+function openApplyAccountModal() {
+  const state = {
+    step: 1,
+    community: "",
+    communityName: "",
+    communityValid: false,
+    photoDataUrl: "",
+    houseNo: "",
+    displayName: "",
+    email: "",
+    phone: "",
+    address: "",
+    password: "",
+    applyRole: "區分權所有人"
+  };
+
+  const iconShow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+  const iconHide = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+
+  let communityCheckTimer = null;
+  let communityCheckSeq = 0;
+  const checkCommunity = async (slugValue, opts = {}) => {
+    const seq = ++communityCheckSeq;
+    const slug = String(slugValue || "").trim();
+    const nameEl = document.getElementById("apply-community-name");
+    const hintEl = document.getElementById("apply-hint");
+
+    state.communityValid = false;
+    state.communityName = "";
+
+    if (!slug) {
+      if (nameEl) {
+        nameEl.textContent = "";
+        nameEl.style.color = "#6b7280";
+      }
+      if (opts.clearHint && hintEl) hintEl.textContent = "";
+      return false;
+    }
+
+    if (nameEl) {
+      nameEl.textContent = "查詢社區中...";
+      nameEl.style.color = "#6b7280";
+    }
+
+    try {
+      const snap = await getDoc(doc(db, "communities", slug));
+      if (seq !== communityCheckSeq) return false;
+      if (snap.exists()) {
+        const d = snap.data() || {};
+        const cname = String(d.name || slug).trim() || slug;
+        state.communityValid = true;
+        state.communityName = cname;
+        if (nameEl) {
+          nameEl.textContent = `社區名稱：${cname}`;
+          nameEl.style.color = "#b71c1c";
+        }
+        if (opts.clearHint && hintEl) hintEl.textContent = "";
+        return true;
+      }
+      state.communityValid = false;
+      state.communityName = "";
+      if (nameEl) {
+        nameEl.textContent = "該社區尚未申請西北e生活APP，請洽西北保全物業。";
+        nameEl.style.color = "#b71c1c";
+      }
+      return false;
+    } catch (e) {
+      console.error(e);
+      if (seq !== communityCheckSeq) return false;
+      state.communityValid = false;
+      state.communityName = "";
+      if (nameEl) {
+        nameEl.textContent = "查詢失敗，請稍後再試";
+        nameEl.style.color = "#b71c1c";
+      }
+      return false;
+    }
+  };
+  const scheduleCommunityCheck = (slugValue, immediate = false) => {
+    try {
+      if (communityCheckTimer) clearTimeout(communityCheckTimer);
+    } catch {}
+    communityCheckTimer = null;
+    if (immediate) {
+      checkCommunity(slugValue);
+      return;
+    }
+    communityCheckTimer = setTimeout(() => checkCommunity(slugValue), 450);
+  };
+
+  const render = () => {
+    if (state.step === 1) {
+      const body = `
+        <div class="modal-dialog" style="width:90vw;max-width:none;height:90vh;max-height:none;">
+          <div class="modal-head">
+            <div class="modal-title">申請帳號</div>
+            <button class="btn top" type="button" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
+          </div>
+          <div class="modal-body" style="overflow:auto;">
+            <div style="font-weight:700;font-size:16px;margin-bottom:12px;">第一步</div>
+            <label class="field">
+              <div class="field-head"><span>輸入社區編號</span></div>
+              <div class="input-wrap">
+                <input id="apply-community" type="text" inputmode="text" autocomplete="off" placeholder="例如：default">
+              </div>
+            </label>
+            <div id="apply-community-name" style="margin-top:-12px;font-size:15px;line-height:1.4;color:#b71c1c;font-weight:700;"></div>
+            <div class="hint" id="apply-hint" style="text-align:left;"></div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn primary" type="button" id="btn-apply-next-1">下一步</button>
+          </div>
+        </div>
+      `;
+      openModal(body);
+      const communityEl = document.getElementById("apply-community");
+      if (communityEl) communityEl.value = state.community;
+      const btnNext = document.getElementById("btn-apply-next-1");
+      if (communityEl && state.community) scheduleCommunityCheck(state.community, true);
+      btnNext && btnNext.addEventListener("click", async () => {
+        const v = (communityEl && communityEl.value || "").trim();
+        const hint = document.getElementById("apply-hint");
+        if (!v) {
+          if (hint) { hint.textContent = "請輸入社區編號"; hint.style.color = "#b71c1c"; }
+          return;
+        }
+        const ok = await checkCommunity(v, { clearHint: true });
+        if (!ok) return;
+        state.community = v;
+        state.step = 2;
+        render();
+      });
+      communityEl && communityEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          btnNext && btnNext.click();
+        }
+      });
+      communityEl && communityEl.addEventListener("input", () => scheduleCommunityCheck(communityEl.value, false));
+      communityEl && communityEl.addEventListener("blur", () => scheduleCommunityCheck(communityEl.value, true));
+      return;
+    }
+
+    if (state.step === 2) {
+      const body = `
+        <div class="modal-dialog" style="width:90vw;max-width:none;height:90vh;max-height:none;">
+          <div class="modal-head">
+            <div class="modal-title">申請帳號</div>
+            <button class="btn top" type="button" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
+          </div>
+          <div class="modal-body" style="overflow:auto;">
+            <div style="font-weight:700;font-size:16px;margin-bottom:12px;">第二步</div>
+            <div style="display:grid;grid-template-columns:1fr;gap:16px;">
+              <div class="field" style="margin:0;">
+                <div class="field-head"><span>大頭照</span></div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <img id="apply-photo-preview" class="avatar-preview" style="display:none;cursor:pointer;" alt="大頭照預覽">
+                  <div id="apply-photo-fallback" class="avatar-preview" style="display:flex;align-items:center;justify-content:center;font-weight:800;color:#4b5563;font-size:24px;cursor:pointer;"></div>
+                  <input id="apply-photo-file" type="file" accept="image/png,image/jpeg" style="display:none;">
+                  <button class="btn small action-btn" type="button" id="btn-apply-photo-pick">上傳</button>
+                </div>
+              </div>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>戶號</span></div>
+                <div class="input-wrap"><input id="apply-house-no" type="text" inputmode="text" autocomplete="off"></div>
+              </label>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>姓名</span></div>
+                <div class="input-wrap"><input id="apply-name" type="text" inputmode="text" autocomplete="name"></div>
+              </label>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>電子郵件</span></div>
+                <div class="input-wrap"><input id="apply-email" type="email" inputmode="email" autocomplete="email" placeholder="example@domain.com"></div>
+              </label>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>手機號碼</span></div>
+                <div class="input-wrap"><input id="apply-phone" type="tel" inputmode="tel" autocomplete="tel"></div>
+              </label>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>地址</span></div>
+                <div class="input-wrap"><input id="apply-address" type="text" inputmode="text" autocomplete="street-address"></div>
+              </label>
+              <label class="field" style="margin:0;">
+                <div class="field-head"><span>預設密碼</span></div>
+                <div class="input-wrap">
+                  <input id="apply-password" type="password" autocomplete="new-password" placeholder="6位數以上英數；留空則預設 123456">
+                  <button type="button" class="toggle-password" id="btn-apply-toggle-password" aria-label="顯示密碼"></button>
+                </div>
+              </label>
+              <div class="field" style="margin:0;">
+                <div class="field-head"><span>使用者角色</span></div>
+                <div style="display:grid;grid-template-columns:1fr;gap:8px;padding:8px 0;font-size:13px;">
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="apply-role" value="區分權所有人"> 區分權所有人</label>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="apply-role" value="承租人"> 承租人</label>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="apply-role" value="眷屬"> 眷屬</label>
+                  <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="apply-role" value="其他"> 其他</label>
+                </div>
+              </div>
+            </div>
+            <div class="hint" id="apply-hint" style="text-align:left;"></div>
+          </div>
+          <div class="modal-foot" style="display:flex;gap:10px;justify-content:flex-end;">
+            <button class="btn action-btn" type="button" id="btn-apply-back-2">上一步</button>
+            <button class="btn primary" type="button" id="btn-apply-next-2" style="width:auto;">下一步</button>
+          </div>
+        </div>
+      `;
+      openModal(body);
+
+      const hint = document.getElementById("apply-hint");
+      const photoFileEl = document.getElementById("apply-photo-file");
+      const photoPreviewEl = document.getElementById("apply-photo-preview");
+      const photoFallbackEl = document.getElementById("apply-photo-fallback");
+      const photoPickBtn = document.getElementById("btn-apply-photo-pick");
+      const houseEl = document.getElementById("apply-house-no");
+      const nameEl = document.getElementById("apply-name");
+      const emailEl = document.getElementById("apply-email");
+      const phoneEl = document.getElementById("apply-phone");
+      const addressEl = document.getElementById("apply-address");
+      const passEl = document.getElementById("apply-password");
+      const btnToggle = document.getElementById("btn-apply-toggle-password");
+
+      if (houseEl) houseEl.value = state.houseNo;
+      if (nameEl) nameEl.value = state.displayName;
+      if (emailEl) emailEl.value = state.email;
+      if (phoneEl) phoneEl.value = state.phone;
+      if (addressEl) addressEl.value = state.address;
+      if (passEl) passEl.value = state.password;
+
+      const updateApplyAvatarFallback = () => {
+        const nm = String((nameEl && nameEl.value) || state.displayName || "").trim();
+        const ch = nm ? nm[0] : "住";
+        if (photoFallbackEl) photoFallbackEl.textContent = ch;
+      };
+      updateApplyAvatarFallback();
+
+      const showPhotoPreview = (dataUrl) => {
+        if (!photoPreviewEl || !photoFallbackEl) return;
+        if (dataUrl) {
+          photoPreviewEl.src = dataUrl;
+          photoPreviewEl.style.display = "block";
+          photoFallbackEl.style.display = "none";
+        } else {
+          photoPreviewEl.src = "";
+          photoPreviewEl.style.display = "none";
+          photoFallbackEl.style.display = "flex";
+          updateApplyAvatarFallback();
+        }
+      };
+      showPhotoPreview(state.photoDataUrl);
+
+      if (photoPickBtn && photoFileEl) {
+        photoPickBtn.addEventListener("click", () => photoFileEl.click());
+      }
+      if (photoPreviewEl && photoFileEl) {
+        photoPreviewEl.addEventListener("click", () => photoFileEl.click());
+      }
+      if (photoFallbackEl && photoFileEl) {
+        photoFallbackEl.addEventListener("click", () => photoFileEl.click());
+      }
+      if (photoFileEl) {
+        photoFileEl.addEventListener("change", async () => {
+          const f = photoFileEl.files && photoFileEl.files[0];
+          if (!f) return;
+          try {
+            const dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(f);
+            });
+            state.photoDataUrl = typeof dataUrl === "string" ? dataUrl : "";
+            showPhotoPreview(state.photoDataUrl);
+          } catch (e) {
+            console.error(e);
+            state.photoDataUrl = "";
+            showPhotoPreview("");
+          }
+        });
+      }
+      nameEl && nameEl.addEventListener("input", () => {
+        state.displayName = (nameEl.value || "").trim();
+        if (!state.photoDataUrl) updateApplyAvatarFallback();
+      });
+
+      const roleEls = document.querySelectorAll('input[name="apply-role"]');
+      roleEls.forEach((r) => {
+        if (r && r.value === state.applyRole) r.checked = true;
+      });
+      if (!Array.from(roleEls).some(r => r.checked) && roleEls[0]) roleEls[0].checked = true;
+
+      if (btnToggle && passEl) {
+        btnToggle.innerHTML = iconShow;
+        btnToggle.addEventListener("click", () => {
+          const isPassword = passEl.getAttribute("type") === "password";
+          passEl.setAttribute("type", isPassword ? "text" : "password");
+          btnToggle.innerHTML = isPassword ? iconHide : iconShow;
+        });
+      }
+
+      const btnBack = document.getElementById("btn-apply-back-2");
+      btnBack && btnBack.addEventListener("click", () => {
+        state.step = 1;
+        state.photoDataUrl = state.photoDataUrl;
+        state.houseNo = (houseEl && houseEl.value || "").trim();
+        state.displayName = (nameEl && nameEl.value || "").trim();
+        state.email = (emailEl && emailEl.value || "").trim();
+        state.phone = (phoneEl && phoneEl.value || "").trim();
+        state.address = (addressEl && addressEl.value || "").trim();
+        state.password = (passEl && passEl.value || "");
+        const checked = document.querySelector('input[name="apply-role"]:checked');
+        state.applyRole = checked ? checked.value : state.applyRole;
+        render();
+      });
+
+      const btnNext = document.getElementById("btn-apply-next-2");
+      btnNext && btnNext.addEventListener("click", async () => {
+        try {
+          if (hint) hint.textContent = "";
+          const houseNo = (houseEl && houseEl.value || "").trim();
+          const displayName = (nameEl && nameEl.value || "").trim();
+          const email = (emailEl && emailEl.value || "").trim();
+          const phone = (phoneEl && phoneEl.value || "").trim();
+          const address = (addressEl && addressEl.value || "").trim();
+          const passInput = (passEl && passEl.value || "").trim();
+          const applyRole = (document.querySelector('input[name="apply-role"]:checked') || {}).value || state.applyRole;
+
+          if (!houseNo || !displayName || !email || !phone) {
+            if (hint) { hint.textContent = "請完整填寫：戶號、姓名、電子郵件、手機號碼"; hint.style.color = "#b71c1c"; }
+            return;
+          }
+          const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+          if (!isEmail) {
+            if (hint) { hint.textContent = "電子郵件格式不正確"; hint.style.color = "#b71c1c"; }
+            return;
+          }
+          const password = passInput ? passInput : "123456";
+          const isPassOk = /^[A-Za-z0-9]{6,}$/.test(password);
+          if (!isPassOk) {
+            if (hint) { hint.textContent = "預設密碼需為 6 位數以上英數"; hint.style.color = "#b71c1c"; }
+            return;
+          }
+
+          state.houseNo = houseNo;
+          state.displayName = displayName;
+          state.email = email;
+          state.phone = phone;
+          state.address = address;
+          state.password = password;
+          state.applyRole = applyRole;
+
+          btnNext.disabled = true;
+          btnNext.textContent = "送出中...";
+
+          await addDoc(collection(db, "communities", state.community, "pending_accounts"), {
+            status: "pending",
+            community: state.community,
+            photoDataUrl: state.photoDataUrl || "",
+            houseNo: state.houseNo,
+            displayName: state.displayName,
+            email: state.email,
+            phone: state.phone,
+            address: state.address || "",
+            password: state.password,
+            title: mapApplyRoleToTitle(state.applyRole),
+            applyRole: state.applyRole,
+            createdAt: Date.now()
+          });
+
+          state.step = 3;
+          render();
+        } catch (e) {
+          console.error(e);
+          if (hint) {
+            hint.textContent = "送出失敗，請稍後再試";
+            hint.style.color = "#b71c1c";
+          }
+        } finally {
+          const btnNext2 = document.getElementById("btn-apply-next-2");
+          if (btnNext2) {
+            btnNext2.disabled = false;
+            btnNext2.textContent = "下一步";
+          }
+        }
+      });
+
+      return;
+    }
+
+    if (state.step === 3) {
+      const body = `
+        <div class="modal-dialog" style="width:90vw;max-width:none;height:90vh;max-height:none;">
+          <div class="modal-head">
+            <div class="modal-title">申請帳號</div>
+            <button class="btn top" type="button" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
+          </div>
+          <div class="modal-body" style="overflow:auto;display:flex;align-items:center;justify-content:center;">
+            <div style="text-align:center;">
+              <div style="font-weight:800;font-size:18px;">請等待開通，謝謝！</div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn primary" type="button" id="btn-apply-finish">完成</button>
+          </div>
+        </div>
+      `;
+      openModal(body);
+      const btnFinish = document.getElementById("btn-apply-finish");
+      btnFinish && btnFinish.addEventListener("click", () => closeModal());
+    }
+  };
+
+  render();
+}
+
+async function openPendingAccountsModal(slug) {
+  const safeSlug = escapeHtmlSafe(slug);
+  const body = `
+    <div class="modal-dialog" style="width:90vw;max-width:none;height:90vh;max-height:none;">
+      <div class="modal-head">
+        <div class="modal-title">待開通帳號（${safeSlug}）</div>
+        <button class="btn top" type="button" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
+      </div>
+      <div class="modal-body" style="overflow:auto;">
+        <div id="pending-accounts-content" class="empty-hint">載入中...</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn" type="button" onclick="closeModal()">關閉</button>
+      </div>
+    </div>
+  `;
+  openModal(body);
+
+  const wrap = document.getElementById("pending-accounts-content");
+  if (!wrap) return;
+
+  let docsList = [];
+  try {
+    const snap = await getDocs(collection(db, "communities", slug, "pending_accounts"));
+    docsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (e) {
+    console.error(e);
+    wrap.innerHTML = `<div class="empty-hint" style="color:#b71c1c;">載入失敗</div>`;
+    return;
+  }
+
+  const pendings = docsList
+    .filter((d) => (d.status || "pending") === "pending")
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+
+  if (!pendings.length) {
+    wrap.innerHTML = `<div class="empty-hint">目前沒有待開通帳號</div>`;
+    return;
+  }
+
+  const formatTime = (ts) => {
+    const n = Number(ts || 0);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    try { return new Date(n).toLocaleString("zh-Hant"); } catch { return ""; }
+  };
+
+  const rows = pendings.map((p) => {
+    const name = escapeHtmlSafe(p.displayName || "");
+    const houseNo = escapeHtmlSafe(p.houseNo || "");
+    const email = escapeHtmlSafe(p.email || "");
+    const phone = escapeHtmlSafe(p.phone || "");
+    const role = escapeHtmlSafe(p.applyRole || "");
+    const created = escapeHtmlSafe(formatTime(p.createdAt));
+    return `
+      <tr data-id="${escapeHtmlSafe(p.id)}">
+        <td>${created}</td>
+        <td>${houseNo}</td>
+        <td>${name}</td>
+        <td>${email}</td>
+        <td>${phone}</td>
+        <td>${role}</td>
+        <td class="actions">
+          <button class="btn small action-btn" type="button" data-action="approve">加入</button>
+          <button class="btn small action-btn danger" type="button" data-action="reject">駁回</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  wrap.innerHTML = `
+    <div class="table-wrap">
+      <table class="table">
+        <colgroup>
+          <col width="160"><col width="100"><col width="120"><col><col width="130"><col width="120"><col width="160">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>申請時間</th>
+            <th>戶號</th>
+            <th>姓名</th>
+            <th>電子郵件</th>
+            <th>手機號碼</th>
+            <th>使用者角色</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+
+  const tbody = wrap.querySelector("tbody");
+  tbody && tbody.addEventListener("click", async (e) => {
+    const btn = e.target && e.target.closest && e.target.closest("button[data-action]");
+    if (!btn) return;
+    const tr = btn.closest("tr");
+    const reqId = tr && tr.getAttribute("data-id");
+    if (!reqId) return;
+
+    const action = btn.getAttribute("data-action");
+    const req = pendings.find((x) => x.id === reqId);
+    if (!req) return;
+
+    const btns = tr.querySelectorAll("button");
+    btns.forEach(b => b.disabled = true);
+
+    try {
+      if (action === "reject") {
+        await updateDoc(doc(db, "communities", slug, "pending_accounts", reqId), {
+          status: "rejected",
+          processedAt: Date.now(),
+          processedBy: auth.currentUser ? auth.currentUser.uid : ""
+        });
+        tr.remove();
+        if (!tbody.querySelector("tr")) wrap.innerHTML = `<div class="empty-hint">目前沒有待開通帳號</div>`;
+        return;
+      }
+
+      const email = String(req.email || "").trim();
+      const password = String(req.password || "123456").trim() || "123456";
+      const displayName = String(req.displayName || "").trim();
+      const phone = String(req.phone || "").trim();
+      const address = String(req.address || "").trim();
+      const houseNo = String(req.houseNo || "").trim();
+      const title = String(req.title || mapApplyRoleToTitle(req.applyRole || "")).trim();
+      const photoURL = String(req.photoDataUrl || "").trim();
+
+      if (!email) throw new Error("缺少 Email");
+      if (!/^[A-Za-z0-9]{6,}$/.test(password)) throw new Error("密碼格式不符合");
+
+      let uid = null;
+      try {
+        const cred = await createUserWithEmailAndPassword(createAuth, email, password);
+        uid = cred.user.uid;
+        try { await updateProfile(cred.user, photoURL ? { displayName, photoURL } : { displayName }); } catch {}
+        await signOut(createAuth);
+      } catch (authErr) {
+        if (authErr && authErr.code === "auth/email-already-in-use") {
+          const qUser = query(collection(db, "users"), where("email", "==", email));
+          const snapUser = await getDocs(qUser);
+          if (!snapUser.empty) uid = snapUser.docs[0].id;
+        }
+        if (!uid) throw authErr;
+      }
+
+      const userRef = doc(db, "users", uid);
+      let existing = null;
+      try {
+        const snap = await getDoc(userRef);
+        existing = snap.exists() ? snap.data() : null;
+      } catch {}
+      const existingCommunity = existing && existing.community ? String(existing.community) : "";
+      if (existingCommunity && existingCommunity !== slug) {
+        throw new Error("此 Email 已存在於其他社區，無法加入");
+      }
+
+      await setDoc(userRef, {
+        email,
+        role: "住戶",
+        status: "啟用",
+        displayName,
+        phone,
+        address,
+        houseNo,
+        title,
+        photoURL: photoURL || "",
+        community: slug,
+        createdAt: existing && existing.createdAt ? existing.createdAt : Date.now()
+      }, { merge: true });
+      await syncUserLookup(existing && existing.phone ? existing.phone : null, phone, email);
+
+      await updateDoc(doc(db, "communities", slug, "pending_accounts", reqId), {
+        status: "approved",
+        processedAt: Date.now(),
+        processedBy: auth.currentUser ? auth.currentUser.uid : "",
+        approvedUid: uid
+      });
+
+      tr.remove();
+      if (!tbody.querySelector("tr")) wrap.innerHTML = `<div class="empty-hint">目前沒有待開通帳號</div>`;
+      try {
+        window.currentAdminCommunitySlug = slug;
+        localStorage.setItem("adminCurrentCommunity", slug);
+      } catch {}
+      try {
+        if (typeof renderAdminContent === "function") renderAdminContent("residents", "住戶");
+      } catch {}
+    } catch (err) {
+      console.error(err);
+      alert("操作失敗: " + (err && err.message ? err.message : String(err)));
+      btns.forEach(b => b.disabled = false);
+    }
+  });
+}
 
 function showAutoClosePopup(message, durationMs = 5000) {
   const escapeHtml = (s) => (s || "").replace(/[&<>"']/g, (ch) => ({
@@ -910,6 +1550,10 @@ if (loginForm) {
   });
 }
 
+if (el.btnApplyAccount) {
+  el.btnApplyAccount.addEventListener("click", () => openApplyAccountModal());
+}
+
 async function handleRoleRedirect(role) {
   if (role === "停用") {
     showHint("帳號已停用，請聯繫管理員", "error");
@@ -1232,46 +1876,50 @@ async function handleRoleRedirect(role) {
       btnDeleteSelected.addEventListener("click", async () => {
          const checked = sysNav.content.querySelectorAll(".check-resident:checked");
          if (checked.length === 0) return;
-         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
-         btnDeleteSelected.disabled = true;
-         btnDeleteSelected.textContent = "刪除中...";
-         let successCount = 0;
-         let failCount = 0;
-         const allIds = Array.from(checked).map(cb => cb.value);
-         try {
-            const limit = 10;
-            const processItem = async (uid) => {
-               try {
+         showDeleteConfirmModal(
+           `確定要刪除選取的 ${checked.length} 位住戶嗎？<br>此操作將永久刪除資料，且無法復原。`,
+           async () => {
+             const checkedNow = sysNav.content.querySelectorAll(".check-resident:checked");
+             if (checkedNow.length === 0) return;
+             btnDeleteSelected.disabled = true;
+             btnDeleteSelected.textContent = "刪除中...";
+             let successCount = 0;
+             let failCount = 0;
+             const allIds = Array.from(checkedNow).map(cb => cb.value);
+             try {
+               const limit = 10;
+               const processItem = async (uid) => {
                  try {
-                    const snap = await getDoc(doc(db, "users", uid));
-                    if (snap.exists()) {
-                        const d = snap.data();
-                        if (d.phone) await syncUserLookup(d.phone, null, null);
-                    }
-                 } catch(err) { console.warn("Fetch user for delete failed", err); }
-                 
-                 await deleteDoc(doc(db, "users", uid));
-                 successCount++;
-               } catch (e) {
-                 console.error(e);
-                 failCount++;
+                   try {
+                     const snap = await getDoc(doc(db, "users", uid));
+                     if (snap.exists()) {
+                       const d = snap.data();
+                       if (d.phone) await syncUserLookup(d.phone, null, null);
+                     }
+                   } catch (err) { console.warn("Fetch user for delete failed", err); }
+
+                   await deleteDoc(doc(db, "users", uid));
+                   successCount++;
+                 } catch (e) {
+                   console.error(e);
+                   failCount++;
+                 }
+               };
+               for (let i = 0; i < allIds.length; i += limit) {
+                 const batchIds = allIds.slice(i, i + limit);
+                 await Promise.all(batchIds.map(uid => processItem(uid)));
                }
-            };
-            for (let i = 0; i < allIds.length; i += limit) {
-               const batchIds = allIds.slice(i, i + limit);
-               await Promise.all(batchIds.map(uid => processItem(uid)));
-            }
-            showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
-            await renderSettingsResidents();
-         } catch (err) {
-           console.error(err);
-           showHint("批次刪除發生錯誤", "error");
-         } finally {
-           if (btnDeleteSelected) {
-             btnDeleteSelected.disabled = false;
-             btnDeleteSelected.textContent = "刪除選取項目";
+               showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+               await renderSettingsResidents();
+             } catch (err) {
+               console.error(err);
+               showHint("批次刪除發生錯誤", "error");
+             } finally {
+               btnDeleteSelected.disabled = false;
+               btnDeleteSelected.textContent = "刪除選取項目";
+             }
            }
-         }
+         );
       });
     }
 
@@ -1524,45 +2172,51 @@ async function handleRoleRedirect(role) {
       btnDeleteSelectedLegacy2.addEventListener("click", async () => {
          const checked = sysNav.content.querySelectorAll(".check-resident:checked");
          if (checked.length === 0) return;
-         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
-         btnDeleteSelectedLegacy2.disabled = true;
-         btnDeleteSelectedLegacy2.textContent = "刪除中...";
-         let successCount = 0;
-         let failCount = 0;
-         const allIds = Array.from(checked).map(cb => cb.value);
-         try {
-            const limit = 10;
-            const processItem = async (uid) => {
-               try {
+         showDeleteConfirmModal(
+           `確定要刪除選取的 ${checked.length} 位住戶嗎？<br>此操作將永久刪除資料，且無法復原。`,
+           async () => {
+             const checkedNow = sysNav.content.querySelectorAll(".check-resident:checked");
+             if (checkedNow.length === 0) return;
+             btnDeleteSelectedLegacy2.disabled = true;
+             btnDeleteSelectedLegacy2.textContent = "刪除中...";
+             let successCount = 0;
+             let failCount = 0;
+             const allIds = Array.from(checkedNow).map(cb => cb.value);
+             try {
+               const limit = 10;
+               const processItem = async (uid) => {
                  try {
-                    const snap = await getDoc(doc(db, "users", uid));
-                    if (snap.exists()) {
-                        const d = snap.data();
-                        if (d.phone) await syncUserLookup(d.phone, null, null);
-                    }
-                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+                   try {
+                     const snap = await getDoc(doc(db, "users", uid));
+                     if (snap.exists()) {
+                       const d = snap.data();
+                       if (d.phone) await syncUserLookup(d.phone, null, null);
+                     }
+                   } catch(err) { console.warn("Fetch user for delete failed", err); }
 
-                 await deleteDoc(doc(db, "users", uid));
-                 successCount++;
-               } catch (e) {
-                 console.error(e);
-                 failCount++;
+                   await deleteDoc(doc(db, "users", uid));
+                   successCount++;
+                 } catch (e) {
+                   console.error(e);
+                   failCount++;
+                 }
+               };
+               for (let i=0; i<allIds.length; i+=limit) {
+                 const chunk = allIds.slice(i, i+limit);
+                 await Promise.all(chunk.map(processItem));
                }
-            };
-            for (let i=0; i<allIds.length; i+=limit) {
-                const chunk = allIds.slice(i, i+limit);
-                await Promise.all(chunk.map(processItem));
-            }
-            alert(`刪除完成\n成功：${successCount}\n失敗：${failCount}`);
-            await renderSettingsResidents();
-         } catch(e) {
-            console.error(e);
-            alert("刪除過程發生錯誤");
-         } finally {
-            btnDeleteSelectedLegacy2.disabled = false;
-            btnDeleteSelectedLegacy2.textContent = "刪除選取項目";
-            btnDeleteSelectedLegacy2.style.display = "none";
-         }
+               showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+               await renderSettingsResidents();
+             } catch(e) {
+               console.error(e);
+               showHint("刪除過程發生錯誤", "error");
+             } finally {
+               btnDeleteSelectedLegacy2.disabled = false;
+               btnDeleteSelectedLegacy2.textContent = "刪除選取項目";
+               btnDeleteSelectedLegacy2.style.display = "none";
+             }
+           }
+         );
       });
     }
   }
@@ -3351,21 +4005,16 @@ if (sysNav.subContainer) {
                     showHint("無法刪除自己的帳號", "error");
                     return;
                 }
-
-                const ok = window.confirm(`確定要刪除帳號 ${target.displayName || target.email} 嗎？`);
-                if (!ok) return;
-
-                try {
+                showDeleteConfirmModal(
+                  `確定要刪除帳號 ${escapeHtmlSafe(target.displayName || target.email)} 嗎？<br>此操作不可復原。`,
+                  async () => {
                     if (target && target.phone) await syncUserLookup(target.phone, null, null);
                     await deleteDoc(doc(db, "users", targetUid));
                     showHint("已刪除帳號", "success");
-                    // Remove from local list and re-render
                     admins = admins.filter(a => a.id !== targetUid);
                     renderTable();
-                } catch (e) {
-                    console.error(e);
-                    showHint("刪除失敗", "error");
-                }
+                  }
+                );
             });
         });
     };
@@ -3552,20 +4201,18 @@ if (sysNav.subContainer) {
     }));
     const btnDeletes = sysNav.content.querySelectorAll(".btn-delete-community");
     btnDeletes.forEach(b => b.addEventListener("click", async () => {
-      const ok = window.confirm("確定要刪除此社區設定嗎？此操作不可恢復。");
-      if (!ok) return;
       const tr = b.closest("tr");
       const slug = tr && tr.getAttribute("data-slug");
       if (!slug) return;
-      try {
-        await deleteDoc(doc(db, "communities", slug));
-        delete communityConfigs[slug];
-        showHint("已刪除該社區設定", "success");
-        await renderSettingsCommunity();
-      } catch (e) {
-        console.error(e);
-        showHint("刪除社區失敗，請稍後再試", "error");
-      }
+      showDeleteConfirmModal(
+        "確定要刪除此社區設定嗎？<br>此操作不可復原。",
+        async () => {
+          await deleteDoc(doc(db, "communities", slug));
+          delete communityConfigs[slug];
+          showHint("已刪除該社區設定", "success");
+          await renderSettingsCommunity();
+        }
+      );
     }));
     const btnGos = sysNav.content.querySelectorAll(".btn-go-community");
     btnGos.forEach(b => b.addEventListener("click", (e) => {
@@ -3630,14 +4277,16 @@ if (sysNav.subContainer) {
   
   function openCommunityModal(comm) {
     const data = comm || {};
-    const title = data.id ? "編輯社區" : "新增社區";
+    const isEdit = !!data.id;
+    const originalSlug = data.id || "";
+    const title = isEdit ? "編輯社區" : "新增社區";
     const body = `
       <div class="modal-dialog">
         <div class="modal-head"><div class="modal-title">${title}</div></div>
         <div class="modal-body">
           <div class="modal-row">
             <label>社區代碼</label>
-            <input type="text" id="c-slug" value="${data.id || ""}" placeholder="如：north">
+            <input type="text" id="c-slug" value="${data.id || ""}" placeholder="如：north" ${isEdit ? "disabled" : ""} ${isEdit ? 'style="background:#f3f4f6;color:#6b7280;"' : ""}>
           </div>
           <div class="modal-row">
             <label>名稱</label>
@@ -3668,7 +4317,8 @@ if (sysNav.subContainer) {
     const btnSave = document.getElementById("c-save");
     btnCancel && btnCancel.addEventListener("click", () => closeModal());
     btnSave && btnSave.addEventListener("click", async () => {
-      const slug = document.getElementById("c-slug").value.trim();
+      const slugInput = document.getElementById("c-slug").value.trim();
+      const slug = originalSlug || slugInput;
       const name = document.getElementById("c-name").value.trim();
       const apiKey = document.getElementById("c-apiKey").value.trim();
       const authDomain = document.getElementById("c-authDomain").value.trim();
@@ -3678,6 +4328,10 @@ if (sysNav.subContainer) {
       const appId = document.getElementById("c-appId").value.trim();
       const measurementId = document.getElementById("c-measurementId").value.trim();
       const status = document.getElementById("c-status").value;
+      if (isEdit && slugInput !== originalSlug) {
+        showHint("編輯社區時不可修改社區代碼", "error");
+        return;
+      }
       if (!slug || !apiKey || !authDomain || !projectId || !appId) {
         showHint("請填入必要欄位（slug/apiKey/authDomain/projectId/appId）", "error");
         return;
@@ -3848,7 +4502,7 @@ if (sysNav.subContainer) {
       <div class="modal-dialog">
         <div class="modal-head">
           <div class="modal-title">${title}</div>
-          <button class="btn top" onclick="closeModal()">關閉</button>
+          <button class="btn top" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
         </div>
         <div class="modal-body">
           <div class="modal-row">
@@ -4115,7 +4769,7 @@ if (sysNav.subContainer) {
       <div class="modal-dialog">
         <div class="modal-head">
           <div class="modal-title">新增帳號</div>
-          <button class="btn top" onclick="closeModal()">關閉</button>
+          <button class="btn top" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
         </div>
         <div class="modal-body">
           <div class="modal-row">
@@ -4938,45 +5592,51 @@ if (sysNav.subContainer) {
       btnDeleteSelected.addEventListener("click", async () => {
          const checked = sysNav.content.querySelectorAll(".check-resident:checked");
          if (checked.length === 0) return;
-         if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
-         btnDeleteSelected.disabled = true;
-        btnDeleteSelected.textContent = "刪除中...";
-         let successCount = 0;
-         let failCount = 0;
-         const allIds = Array.from(checked).map(cb => cb.value);
-         try {
-            const limit = 10;
-            const processItem = async (uid) => {
-               try {
+         showDeleteConfirmModal(
+           `確定要刪除選取的 ${checked.length} 位住戶嗎？<br>此操作將永久刪除資料，且無法復原。`,
+           async () => {
+             const checkedNow = sysNav.content.querySelectorAll(".check-resident:checked");
+             if (checkedNow.length === 0) return;
+             btnDeleteSelected.disabled = true;
+             btnDeleteSelected.textContent = "刪除中...";
+             let successCount = 0;
+             let failCount = 0;
+             const allIds = Array.from(checkedNow).map(cb => cb.value);
+             try {
+               const limit = 10;
+               const processItem = async (uid) => {
                  try {
-                    const snap = await getDoc(doc(db, "users", uid));
-                    if (snap.exists()) {
-                        const d = snap.data();
-                        if (d.phone) await syncUserLookup(d.phone, null, null);
-                    }
-                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+                   try {
+                     const snap = await getDoc(doc(db, "users", uid));
+                     if (snap.exists()) {
+                       const d = snap.data();
+                       if (d.phone) await syncUserLookup(d.phone, null, null);
+                     }
+                   } catch(err) { console.warn("Fetch user for delete failed", err); }
 
-                 await deleteDoc(doc(db, "users", uid));
-                 successCount++;
-               } catch (e) {
-                 console.error(e);
-                 failCount++;
+                   await deleteDoc(doc(db, "users", uid));
+                   successCount++;
+                 } catch (e) {
+                   console.error(e);
+                   failCount++;
+                 }
+               };
+               for (let i=0; i<allIds.length; i+=limit) {
+                 const chunk = allIds.slice(i, i+limit);
+                 await Promise.all(chunk.map(processItem));
                }
-            };
-            for (let i=0; i<allIds.length; i+=limit) {
-                const chunk = allIds.slice(i, i+limit);
-                await Promise.all(chunk.map(processItem));
-            }
-            alert(`刪除完成\n成功：${successCount}\n失敗：${failCount}`);
-            await renderSettingsResidents();
-         } catch(e) {
-            console.error(e);
-            alert("刪除過程發生錯誤");
-         } finally {
-            btnDeleteSelected.disabled = false;
-            btnDeleteSelected.textContent = "刪除選取項目";
-            btnDeleteSelected.style.display = "none";
-         }
+               showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+               await renderSettingsResidents();
+             } catch(e) {
+               console.error(e);
+               showHint("刪除過程發生錯誤", "error");
+             } finally {
+               btnDeleteSelected.disabled = false;
+               btnDeleteSelected.textContent = "刪除選取項目";
+               btnDeleteSelected.style.display = "none";
+             }
+           }
+         );
       });
     }
     const btnCreate = document.getElementById("btn-create-resident");
@@ -5014,25 +5674,23 @@ if (sysNav.subContainer) {
     });
     btnDeletes.forEach(btn => {
       btn.addEventListener("click", async () => {
-        const ok = window.confirm("確定要刪除此住戶帳號嗎？此操作不可恢復。");
-        if (!ok) return;
-        try {
-          const tr = btn.closest("tr");
-          const targetUid = tr && tr.getAttribute("data-uid");
-          const curr = auth.currentUser;
-          if (curr && curr.uid === targetUid) {
-            await curr.delete();
-            showHint("已刪除目前帳號", "success");
-            redirectAfterSignOut();
-          } else {
-            await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
-            showHint("已標記該帳號為停用", "success");
-            await renderSettingsResidents();
+        showDeleteConfirmModal(
+          "確定要刪除此住戶帳號嗎？<br>此操作不可復原。",
+          async () => {
+            const tr = btn.closest("tr");
+            const targetUid = tr && tr.getAttribute("data-uid");
+            const curr = auth.currentUser;
+            if (curr && curr.uid === targetUid) {
+              await curr.delete();
+              showHint("已刪除目前帳號", "success");
+              redirectAfterSignOut();
+            } else {
+              await setDoc(doc(db, "users", targetUid), { status: "停用" }, { merge: true });
+              showHint("已標記該帳號為停用", "success");
+              await renderSettingsResidents();
+            }
           }
-        } catch (err) {
-          console.error(err);
-          showHint("刪除失敗，可能需要重新登入驗證", "error");
-        }
+        );
       });
     });
   }
@@ -6156,14 +6814,14 @@ async function renderAdminCommunities() {
 
       document.querySelectorAll(".btn-delete-community").forEach(btn => {
           btn.addEventListener("click", async () => {
-             if(!confirm("確定要刪除嗎？")) return;
              const id = btn.getAttribute("data-id");
-             try {
+             showDeleteConfirmModal(
+               "確定要刪除該社區嗎？<br>此操作不可復原。",
+               async () => {
                  await deleteDoc(doc(db, "communities", id));
                  renderAdminCommunities();
-             } catch(e) {
-                 alert("刪除失敗: " + e.message);
-             }
+               }
+             );
           });
       });
 
@@ -6377,16 +7035,15 @@ async function renderAdminAnnounceList(displayTitle, dbCategoryOverride = null) 
 
         tbody.querySelectorAll(".btn-delete-announce").forEach(btn => {
             btn.addEventListener("click", async (e) => {
-                if(!confirm("確定要刪除嗎？")) return;
                 const tr = btn.closest("tr");
                 const id = tr.getAttribute("data-id");
-                try {
+                showDeleteConfirmModal(
+                  "確定要刪除此公告嗎？<br>此操作不可復原。",
+                  async () => {
                     await deleteDoc(doc(db, "communities", slug, "announcements", id));
                     renderAdminAnnounceList(displayTitle, category);
-                } catch(err) {
-                    console.error(err);
-                    alert("刪除失敗");
-                }
+                  }
+                );
             });
         });
     };
@@ -8065,11 +8722,11 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
 
         document.querySelectorAll(".btn-delete-res").forEach(btn => {
             btn.addEventListener("click", async () => {
-                if(!confirm("確定要刪除此預約嗎？")) return;
                 const id = btn.closest("tr").getAttribute("data-id");
-                try {
+                showDeleteConfirmModal(
+                  "確定要刪除此預約嗎？<br>此操作不可復原。",
+                  async () => {
                     await deleteDoc(doc(db, "communities", slug, "reservations", id));
-                    // Reload data and render
                     const ref = collection(db, "communities", slug, "reservations");
                     const q = query(ref, where("facility", "==", facilityKey));
                     const snap = await getDocs(q);
@@ -8080,10 +8737,8 @@ async function renderAdminFacilityList(displayTitle, facilityKey) {
                         return dateA.localeCompare(dateB);
                     });
                     renderUI();
-                } catch(err) {
-                    console.error(err);
-                    alert("刪除失敗");
-                }
+                  }
+                );
             });
         });
     };
@@ -8926,14 +9581,13 @@ window.pickupMail = async (id) => {
 };
 
 window.deleteMail = async (id) => {
-    if(!confirm("確定刪除此記錄？")) return;
-    try {
+    showDeleteConfirmModal(
+      "確定刪除此記錄？<br>此操作不可復原。",
+      async () => {
         const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
         await deleteDoc(doc(db, "communities", slug, "mails", id));
-    } catch(e) { 
-        console.error(e);
-        alert("刪除失敗"); 
-    }
+      }
+    );
 };
 
 window.openMailModal = (item = null) => {
@@ -9438,9 +10092,9 @@ window.openCarrierModal = () => {
 };
 
 window.deleteCarrier = async (index) => {
-    if(!confirm("確定要刪除此業者嗎?")) return;
-    
-    try {
+    showDeleteConfirmModal(
+      "確定要刪除此業者嗎？<br>此操作不可復原。",
+      async () => {
         const slug = window.currentAdminCommunitySlug || new URLSearchParams(window.location.search).get("c") || localStorage.getItem("adminCurrentCommunity") || "default";
         const newList = [...window.currentCarriers];
         newList.splice(index, 1);
@@ -9449,10 +10103,8 @@ window.deleteCarrier = async (index) => {
         
         window.currentCarriers = newList;
         renderCarrierTable(newList);
-    } catch(e) {
-        console.error(e);
-        alert("刪除失敗: " + e.message);
-    }
+      }
+    );
 };
 
 function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
@@ -9688,6 +10340,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
               <h1 class="card-title">住戶帳號列表（${cname}） · 總數：${residents.length}</h1>
               <div style="display:flex;gap:8px;">
                 <button id="btn-delete-selected" class="btn small action-btn danger" style="display:none;">刪除選取項目</button>
+                <button id="btn-pending-accounts" class="btn small action-btn" style="position:relative;padding-right:18px;">待開通帳號<span id="pending-accounts-badge" style="position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ef4444;color:#fff;font-size:11px;display:none;align-items:center;justify-content:center;line-height:1;">0</span></button>
                 <button id="btn-import-resident" class="btn small action-btn">匯入 Excel</button>
                 <button id="btn-export-resident" class="btn small action-btn">匯出 Excel</button>
                 <button id="btn-create-resident" class="btn small action-btn">新增</button>
@@ -9741,6 +10394,35 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             }
           });
         });
+
+        const btnPending = document.getElementById("btn-pending-accounts");
+        const badge = document.getElementById("pending-accounts-badge");
+        try {
+          if (window._pendingAccountsBadgeUnsub) window._pendingAccountsBadgeUnsub();
+        } catch {}
+        window._pendingAccountsBadgeUnsub = null;
+        if (btnPending && badge) {
+          btnPending.addEventListener("click", () => openPendingAccountsModal(slug));
+          try {
+            window._pendingAccountsBadgeUnsub = onSnapshot(
+              collection(db, "communities", slug, "pending_accounts"),
+              (snap) => {
+                let cnt = 0;
+                snap.forEach((d) => {
+                  const data = d.data() || {};
+                  if ((data.status || "pending") === "pending") cnt += 1;
+                });
+                badge.textContent = String(cnt);
+                badge.style.display = cnt > 0 ? "inline-flex" : "none";
+              },
+              () => {
+                badge.style.display = "none";
+              }
+            );
+          } catch {
+            badge.style.display = "none";
+          }
+        }
 
         const btnCreate = document.getElementById("btn-create-resident");
         btnCreate && btnCreate.addEventListener("click", () => window.openCreateResidentModal && window.openCreateResidentModal(slug));
@@ -10003,59 +10685,56 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
           btnDeleteSelected.addEventListener("click", async () => {
              const checked = adminNav.content.querySelectorAll(".check-resident:checked");
              if (checked.length === 0) return;
-             if (!confirm(`確定要刪除選取的 ${checked.length} 位住戶嗎？此操作將永久刪除資料，且無法復原。`)) return;
-             
-             btnDeleteSelected.disabled = true;
-             btnDeleteSelected.textContent = "刪除中...";
-             
-             let successCount = 0;
-             let failCount = 0;
-             
-             // Use writeBatch for atomic updates (max 500 operations per batch)
-             const chunks = [];
-             const allIds = Array.from(checked).map(cb => cb.value);
-             for (let i = 0; i < allIds.length; i += 500) {
-               chunks.push(allIds.slice(i, i + 500));
-             }
-             
-             try {
-                const limit = 10;
-                
-                const processItem = async (uid) => {
-               try {
+             showDeleteConfirmModal(
+               `確定要刪除選取的 ${checked.length} 位住戶嗎？<br>此操作將永久刪除資料，且無法復原。`,
+               async () => {
+                 const checkedNow = adminNav.content.querySelectorAll(".check-resident:checked");
+                 if (checkedNow.length === 0) return;
+
+                 btnDeleteSelected.disabled = true;
+                 btnDeleteSelected.textContent = "刪除中...";
+
+                 let successCount = 0;
+                 let failCount = 0;
+                 const allIds = Array.from(checkedNow).map(cb => cb.value);
+
                  try {
-                    const snap = await getDoc(doc(db, "users", uid));
-                    if (snap.exists()) {
-                        const d = snap.data();
-                        if (d.phone) await syncUserLookup(d.phone, null, null);
-                    }
-                 } catch(err) { console.warn("Fetch user for delete failed", err); }
+                   const limit = 10;
 
-                 await deleteDoc(doc(db, "users", uid));
-                 successCount++;
-               } catch (e) {
-                     console.error(e);
-                     failCount++;
+                   const processItem = async (uid) => {
+                     try {
+                       try {
+                         const snap = await getDoc(doc(db, "users", uid));
+                         if (snap.exists()) {
+                           const d = snap.data();
+                           if (d.phone) await syncUserLookup(d.phone, null, null);
+                         }
+                       } catch(err) { console.warn("Fetch user for delete failed", err); }
+
+                       await deleteDoc(doc(db, "users", uid));
+                       successCount++;
+                     } catch (e) {
+                       console.error(e);
+                       failCount++;
+                     }
+                   };
+
+                   for (let i = 0; i < allIds.length; i += limit) {
+                     const batchIds = allIds.slice(i, i + limit);
+                     await Promise.all(batchIds.map(uid => processItem(uid)));
                    }
-                };
-                
-                // Simple batch processing
-                for (let i = 0; i < allIds.length; i += limit) {
-                   const batchIds = allIds.slice(i, i + limit);
-                   await Promise.all(batchIds.map(uid => processItem(uid)));
-                }
 
-                showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
-                setActiveAdminNav("residents"); // Reload
-             } catch (err) {
-               console.error(err);
-               showHint("批次刪除發生錯誤", "error");
-             } finally {
-               if (btnDeleteSelected) {
-                 btnDeleteSelected.disabled = false;
-                 btnDeleteSelected.textContent = "刪除選取項目";
+                   showHint(`已刪除 ${successCount} 筆，失敗 ${failCount} 筆`, "success");
+                   setActiveAdminNav("residents");
+                 } catch (err) {
+                   console.error(err);
+                   showHint("批次刪除發生錯誤", "error");
+                 } finally {
+                   btnDeleteSelected.disabled = false;
+                   btnDeleteSelected.textContent = "刪除選取項目";
+                 }
                }
-             }
+             );
           });
         }
 

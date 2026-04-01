@@ -106,6 +106,25 @@ service cloud.firestore {
         );
         allow create: if request.auth != null;
       }
+
+      match /pending_accounts/{reqId} {
+        allow create: if request.resource.data.community == slug
+          && request.resource.data.status == "pending"
+          && request.resource.data.createdAt is int
+          && request.resource.data.get('photoDataUrl', '') is string
+          && request.resource.data.houseNo is string
+          && request.resource.data.displayName is string
+          && request.resource.data.phone is string
+          && request.resource.data.get('address', '') is string
+          && request.resource.data.email is string
+          && request.resource.data.email.matches('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$')
+          && request.resource.data.password is string
+          && request.resource.data.password.matches('^[A-Za-z0-9]{6,}$');
+
+        allow read, list, update, delete: if request.auth != null && (
+          isAdmin() || (isCommunityStaff() && slug == getUserData().community)
+        );
+      }
     }
 
     // --- SOS 警報規則 (關鍵修復) ---
