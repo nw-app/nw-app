@@ -125,6 +125,15 @@ service cloud.firestore {
           isAdmin() || (isCommunityStaff() && slug == getUserData().community)
         );
       }
+
+      match /house_nos/{houseNoId} {
+        allow read, list: if request.auth != null && (
+          isAdmin() || (isCommunityStaff() && slug == getUserData().community)
+        );
+        allow create, update, delete: if request.auth != null && (
+          isAdmin() || (isCommunityStaff() && slug == getUserData().community)
+        );
+      }
     }
 
     // --- SOS 警報規則 (關鍵修復) ---

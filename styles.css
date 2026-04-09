@@ -123,6 +123,12 @@ input {
   background: #fff;
   transition: all 0.2s;
 }
+#apply-password {
+  font-size: 14px;
+}
+#apply-password::placeholder {
+  font-size: 13px;
+}
 input:focus {
   outline: none;
   border-color: var(--primary);

@@ -572,9 +572,9 @@ function openApplyAccountModal() {
                 <div class="input-wrap"><input id="apply-address" type="text" inputmode="text" autocomplete="street-address"></div>
               </label>
               <label class="field" style="margin:0;">
-                <div class="field-head"><span>預設密碼</span></div>
+                <div class="field-head"><span>預設密碼（留空則預設為手機號碼）</span></div>
                 <div class="input-wrap">
-                  <input id="apply-password" type="password" autocomplete="new-password" placeholder="6位數以上英數；留空則預設 123456">
+                  <input id="apply-password" type="password" autocomplete="new-password" placeholder="6位數以上英數；留空則預設為手機號碼">
                   <button type="button" class="toggle-password" id="btn-apply-toggle-password" aria-label="顯示密碼"></button>
                 </div>
               </label>
@@ -725,10 +725,10 @@ function openApplyAccountModal() {
             if (hint) { hint.textContent = "電子郵件格式不正確"; hint.style.color = "#b71c1c"; }
             return;
           }
-          const password = passInput ? passInput : "123456";
+          const password = passInput ? passInput : phone;
           const isPassOk = /^[A-Za-z0-9]{6,}$/.test(password);
           if (!isPassOk) {
-            if (hint) { hint.textContent = "預設密碼需為 6 位數以上英數"; hint.style.color = "#b71c1c"; }
+            if (hint) { hint.textContent = "預設密碼需為 6 位數以上英數（或留空使用手機號碼）"; hint.style.color = "#b71c1c"; }
             return;
           }
 
@@ -802,6 +802,297 @@ function openApplyAccountModal() {
   };
 
   render();
+}
+
+async function getCommunityHouseNos(slug) {
+  try {
+    const ref = doc(db, "communities", slug, "app_modules", "house_nos");
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return [];
+    const data = snap.data() || {};
+    const arr = Array.isArray(data.houseNos)
+      ? data.houseNos
+      : (Array.isArray(data.houseNosList) ? data.houseNosList : []);
+    return arr.map(x => String(x || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function openHouseNosModal(slug) {
+  const safeSlug = escapeHtmlSafe(slug);
+  const body = `
+    <div class="modal-dialog" style="width:90vw;max-width:none;height:90vh;max-height:none;">
+      <div class="modal-head">
+        <div class="modal-title">新增戶號（${safeSlug}）</div>
+        <button class="btn top" type="button" onclick="closeModal()" aria-label="關閉" style="width:36px;padding:0;justify-content:center;color:#b71c1c;font-size:22px;line-height:1;">×</button>
+      </div>
+      <div class="modal-body" style="overflow:auto;">
+        <div class="modal-row">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div style="font-weight:800;">目前戶號列表</div>
+            <div id="house-nos-count" class="hint" style="margin:0;"></div>
+            <button class="btn small action-btn" type="button" id="btn-house-nos-refresh">重新載入</button>
+          </div>
+          <div class="table-wrap" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:12px;">
+            <table class="table" style="min-width:680px;">
+              <colgroup><col width="70"><col><col width="90"><col width="90"><col width="160"></colgroup>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>戶號</th>
+                  <th>主戶號</th>
+                  <th>子戶號</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="house-nos-tbody">
+                <tr><td colspan="5" style="text-align:center;color:#6b7280;">載入中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-row">
+          <label style="font-weight:700;">戶號（可一次新增多筆，一行一個）</label>
+          <textarea id="house-nos-input" style="width:100%;min-height:180px;resize:vertical;border:1px solid var(--border);border-radius:10px;padding:10px;font-size:14px;line-height:1.5;" placeholder="例：A-101&#10;例：A-102"></textarea>
+        </div>
+        <div id="house-nos-hint" class="hint"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn action-btn" type="button" id="btn-house-nos-cancel">取消</button>
+        <button class="btn primary" type="button" id="btn-house-nos-add">新增</button>
+      </div>
+    </div>
+  `;
+  openModal(body);
+
+  const inputEl = document.getElementById("house-nos-input");
+  const hintEl = document.getElementById("house-nos-hint");
+  const countEl = document.getElementById("house-nos-count");
+  const tbodyEl = document.getElementById("house-nos-tbody");
+  const btnRefresh = document.getElementById("btn-house-nos-refresh");
+  const btnCancel = document.getElementById("btn-house-nos-cancel");
+  const btnAdd = document.getElementById("btn-house-nos-add");
+
+  const showHintLocal = (msg, type = "error") => {
+    if (!hintEl) return;
+    hintEl.textContent = msg;
+    hintEl.style.color = type === "success" ? "#059669" : "#b71c1c";
+  };
+
+  const moduleRef = doc(db, "communities", slug, "app_modules", "house_nos");
+
+  let lastCounts = {};
+
+  const fetchHouseNoCounts = async (houseNos) => {
+    const map = {};
+    const list = (houseNos || []).map(x => String(x || "").trim()).filter(Boolean);
+    list.forEach(hn => { map[hn] = { main: 0, sub: 0 }; });
+    if (!list.length) return map;
+    try {
+      const chunks = [];
+      for (let i = 0; i < list.length; i += 10) chunks.push(list.slice(i, i + 10));
+      for (const chunk of chunks) {
+        try {
+          const qUsers = query(
+            collection(db, "users"),
+            where("community", "==", slug),
+            where("role", "==", "住戶"),
+            where("houseNo", "in", chunk)
+          );
+          const snap = await getDocs(qUsers);
+          snap.forEach((d) => {
+            const u = d.data() || {};
+            const hn = String(u.houseNo || "").trim();
+            if (!hn || !map[hn]) return;
+            const subNo = Number(u.subNo);
+            if (subNo === 1) map[hn].main += 1;
+            else if (Number.isFinite(subNo) && subNo >= 2) map[hn].sub += 1;
+          });
+        } catch {}
+      }
+    } catch {}
+    return map;
+  };
+
+  const renderHouseNos = (houseNos, countsMap = {}) => {
+    const list = (houseNos || [])
+      .map(x => String(x || "").trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "zh-Hant"));
+
+    if (countEl) countEl.textContent = `共 ${list.length} 筆`;
+    if (!tbodyEl) return;
+    if (!list.length) {
+      tbodyEl.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#6b7280;">尚未新增戶號</td></tr>`;
+      return;
+    }
+    tbodyEl.innerHTML = list.map((hn, idx) => `
+      <tr data-hn="${escapeHtmlSafe(encodeURIComponent(hn))}">
+        <td>${idx + 1}</td>
+        <td>${escapeHtmlSafe(hn)}</td>
+        <td>${countsMap[hn] ? countsMap[hn].main : 0}</td>
+        <td>${countsMap[hn] ? countsMap[hn].sub : 0}</td>
+        <td class="actions">
+          <button class="btn small action-btn" type="button" data-action="edit">編輯</button>
+          <button class="btn small action-btn danger" type="button" data-action="delete">刪除</button>
+        </td>
+      </tr>
+    `).join("");
+  };
+
+  const loadAndRender = async () => {
+    if (tbodyEl) tbodyEl.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#6b7280;">載入中...</td></tr>`;
+    const list = await getCommunityHouseNos(slug);
+    lastCounts = await fetchHouseNoCounts(list);
+    renderHouseNos(list, lastCounts);
+  };
+
+  btnRefresh && btnRefresh.addEventListener("click", () => loadAndRender());
+  tbodyEl && tbodyEl.addEventListener("click", async (e) => {
+    const btn = e.target && e.target.closest && e.target.closest("button[data-action]");
+    if (!btn) return;
+    const tr = btn.closest("tr");
+    const enc = tr && tr.getAttribute("data-hn");
+    if (!enc) return;
+    let houseNo = "";
+    try { houseNo = decodeURIComponent(enc); } catch { houseNo = enc; }
+    houseNo = String(houseNo || "").trim();
+    if (!houseNo) return;
+
+    const action = btn.getAttribute("data-action");
+    const btns = tr.querySelectorAll("button");
+    btns.forEach(b => b.disabled = true);
+
+    try {
+      if (!auth.currentUser) {
+        await new Promise(resolve => {
+          const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
+        });
+      }
+      const operatorId = auth.currentUser ? auth.currentUser.uid : "";
+      const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "";
+      const now = Date.now();
+
+      if (action === "delete") {
+        if (!confirm(`確定要刪除戶號：${houseNo}？\n(不會修改既有住戶資料)`)) return;
+        const existing = await getCommunityHouseNos(slug);
+        const next = existing.filter(x => String(x || "").trim() !== houseNo);
+        await setDoc(moduleRef, {
+          houseNos: next,
+          updatedAt: now,
+          updatedBy: operator,
+          updatedById: operatorId
+        }, { merge: true });
+        showHintLocal(`已刪除：${houseNo}`, "success");
+        await loadAndRender();
+        return;
+      }
+
+      if (action === "edit") {
+        const nextHouseNo = String(window.prompt("請輸入新的戶號", houseNo) || "").trim();
+        if (!nextHouseNo) return;
+        if (nextHouseNo === houseNo) return;
+        const existing = await getCommunityHouseNos(slug);
+        if (existing.some(x => String(x || "").trim() === nextHouseNo)) {
+          showHintLocal("戶號已存在，請換一個", "error");
+          return;
+        }
+        const next = existing.map(x => {
+          const v = String(x || "").trim();
+          return v === houseNo ? nextHouseNo : v;
+        });
+        await setDoc(moduleRef, {
+          houseNos: next,
+          updatedAt: now,
+          updatedBy: operator,
+          updatedById: operatorId
+        }, { merge: true });
+        showHintLocal(`已更新：${houseNo} → ${nextHouseNo}\n(不會修改既有住戶資料)`, "success");
+        await loadAndRender();
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+      showHintLocal("操作失敗：" + (err && err.message ? err.message : "未知錯誤"), "error");
+    } finally {
+      btns.forEach(b => b.disabled = false);
+    }
+  });
+  btnCancel && btnCancel.addEventListener("click", () => closeModal());
+  btnAdd && btnAdd.addEventListener("click", async () => {
+    const raw = String((inputEl && inputEl.value) || "");
+    const list = Array.from(new Set(
+      raw
+        .split(/\r?\n|,|，|;/g)
+        .map(s => String(s || "").trim())
+        .filter(Boolean)
+    ));
+
+    if (!list.length) {
+      showHintLocal("請輸入至少一個戶號", "error");
+      return;
+    }
+    if (list.length > 450) {
+      showHintLocal("一次最多新增 450 筆，請分批新增", "error");
+      return;
+    }
+
+    if (btnAdd) {
+      btnAdd.disabled = true;
+      btnAdd.textContent = "新增中...";
+    }
+    if (btnCancel) btnCancel.disabled = true;
+
+    try {
+      if (!auth.currentUser) {
+        await new Promise(resolve => {
+          const unsub = onAuthStateChanged(auth, u => { unsub(); resolve(u); });
+        });
+      }
+      const operatorId = auth.currentUser ? auth.currentUser.uid : "";
+      const operator = auth.currentUser ? (auth.currentUser.email || auth.currentUser.uid) : "";
+      const now = Date.now();
+
+      let existing = [];
+      try { existing = await getCommunityHouseNos(slug); } catch {}
+      const merged = Array.from(new Set(existing.concat(list)));
+      if (merged.length > 5000) {
+        throw new Error("戶號總數過多（超過 5000），請分社區或改用匯入機制");
+      }
+      await setDoc(moduleRef, {
+        houseNos: merged,
+        updatedAt: now,
+        updatedBy: operator,
+        updatedById: operatorId,
+        createdAt: now,
+        createdBy: operator,
+        createdById: operatorId
+      }, { merge: true });
+
+      if (inputEl) inputEl.value = "";
+      showHintLocal(`已新增 ${list.length} 筆戶號（目前共 ${merged.length} 筆）`, "success");
+      const mergedCounts = { ...lastCounts };
+      merged.forEach((hn) => {
+        const key = String(hn || "").trim();
+        if (!key) return;
+        if (!mergedCounts[key]) mergedCounts[key] = { main: 0, sub: 0 };
+      });
+      lastCounts = mergedCounts;
+      renderHouseNos(merged, mergedCounts);
+    } catch (e) {
+      console.error(e);
+      showHintLocal("新增失敗：" + (e && e.message ? e.message : "未知錯誤"), "error");
+    } finally {
+      if (btnAdd) {
+        btnAdd.disabled = false;
+        btnAdd.textContent = "新增";
+      }
+      if (btnCancel) btnCancel.disabled = false;
+    }
+  });
+
+  await loadAndRender();
 }
 
 async function openPendingAccountsModal(slug) {
@@ -923,9 +1214,9 @@ async function openPendingAccountsModal(slug) {
       }
 
       const email = String(req.email || "").trim();
-      const password = String(req.password || "123456").trim() || "123456";
       const displayName = String(req.displayName || "").trim();
       const phone = String(req.phone || "").trim();
+      const password = String(req.password || "").trim() || phone;
       const address = String(req.address || "").trim();
       const houseNo = String(req.houseNo || "").trim();
       const title = String(req.title || mapApplyRoleToTitle(req.applyRole || "")).trim();
@@ -5028,7 +5319,7 @@ if (sysNav.subContainer) {
           </div>
           <div class="modal-row">
             <label>戶號</label>
-            <input type="text" id="create-r-house-no" placeholder="例如 A-1201">
+            <select id="create-r-house-no"></select>
           </div>
           <div class="modal-row">
             <label>子戶號</label>
@@ -5100,6 +5391,27 @@ if (sysNav.subContainer) {
             hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
         }
     };
+
+    const houseSel = document.getElementById("create-r-house-no");
+    (async () => {
+      if (!houseSel) return;
+      houseSel.disabled = true;
+      houseSel.innerHTML = `<option value="">載入中...</option>`;
+      try {
+        const list = await getCommunityHouseNos(slug);
+        const sorted = list.slice().sort((a, b) => String(a).localeCompare(String(b), "zh-Hant"));
+        if (!sorted.length) {
+          houseSel.innerHTML = `<option value="">（尚未新增戶號）</option>`;
+        } else {
+          const opts = sorted.map(hn => `<option value="${escapeHtmlSafe(hn)}">${escapeHtmlSafe(hn)}</option>`).join("");
+          houseSel.innerHTML = `<option value="">選擇戶號</option>${opts}`;
+        }
+      } catch {
+        houseSel.innerHTML = `<option value="">（載入失敗）</option>`;
+      } finally {
+        houseSel.disabled = false;
+      }
+    })();
 
     createFile && createFile.addEventListener("change", () => {
       const f = createFile.files[0];
@@ -10340,6 +10652,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
               <h1 class="card-title">住戶帳號列表（${cname}） · 總數：${residents.length}</h1>
               <div style="display:flex;gap:8px;">
                 <button id="btn-delete-selected" class="btn small action-btn danger" style="display:none;">刪除選取項目</button>
+                <button id="btn-house-nos" class="btn small action-btn">戶號</button>
                 <button id="btn-pending-accounts" class="btn small action-btn" style="position:relative;padding-right:18px;">待開通帳號<span id="pending-accounts-badge" style="position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#ef4444;color:#fff;font-size:11px;display:none;align-items:center;justify-content:center;line-height:1;">0</span></button>
                 <button id="btn-import-resident" class="btn small action-btn">匯入 Excel</button>
                 <button id="btn-export-resident" class="btn small action-btn">匯出 Excel</button>
@@ -10423,6 +10736,9 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             badge.style.display = "none";
           }
         }
+
+        const btnHouseNos = document.getElementById("btn-house-nos");
+        btnHouseNos && btnHouseNos.addEventListener("click", () => openHouseNosModal(slug));
 
         const btnCreate = document.getElementById("btn-create-resident");
         btnCreate && btnCreate.addEventListener("click", () => window.openCreateResidentModal && window.openCreateResidentModal(slug));
@@ -11873,7 +12189,7 @@ if (!window.openCreateResidentModal) {
           </div>
           <div class="modal-row">
             <label>戶號</label>
-            <input type="text" id="create-r-house-no" placeholder="例如 A-1201">
+        <select id="create-r-house-no"></select>
           </div>
           <div class="modal-row">
             <label>子戶號</label>
@@ -11945,6 +12261,26 @@ if (!window.openCreateResidentModal) {
         hintEl.style.color = type === "error" ? "#b71c1c" : "#0ea5e9";
       }
     };
+    const houseSel = document.getElementById("create-r-house-no");
+    (async () => {
+      if (!houseSel) return;
+      houseSel.disabled = true;
+      houseSel.innerHTML = `<option value="">載入中...</option>`;
+      try {
+        const list = await getCommunityHouseNos(slug);
+        const sorted = list.slice().sort((a, b) => String(a).localeCompare(String(b), "zh-Hant"));
+        if (!sorted.length) {
+          houseSel.innerHTML = `<option value="">（尚未新增戶號）</option>`;
+        } else {
+          const opts = sorted.map(hn => `<option value="${escapeHtmlSafe(hn)}">${escapeHtmlSafe(hn)}</option>`).join("");
+          houseSel.innerHTML = `<option value="">選擇戶號</option>${opts}`;
+        }
+      } catch {
+        houseSel.innerHTML = `<option value="">（載入失敗）</option>`;
+      } finally {
+        houseSel.disabled = false;
+      }
+    })();
     createFile && createFile.addEventListener("change", () => {
       const f = createFile.files[0];
       if (f) createPreview.src = URL.createObjectURL(f);
