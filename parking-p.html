@@ -1174,10 +1174,16 @@
         const btnClose = document.getElementById("pwa-install-close");
         const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || "");
         const isStandalone = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
-        const canShowInstall = () => !isStandalone();
+        const canShowInstall = () => !isStandalone() && (isIos() || !!deferredPrompt);
         const showBanner = () => {
             if (banner) banner.classList.toggle("hidden", !canShowInstall());
-            if (btnInstall) btnInstall.textContent = (isIos() && !deferredPrompt) ? "加入主畫面" : "安裝";
+            if (btnInstall) {
+                btnInstall.textContent = (isIos() && !deferredPrompt) ? "加入主畫面" : "安裝";
+                btnInstall.disabled = !deferredPrompt && !isIos();
+                btnInstall.className = btnInstall.disabled
+                    ? "ml-auto px-3 py-2 rounded-xl bg-slate-200 text-slate-400 font-bold text-sm cursor-not-allowed"
+                    : "ml-auto px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition";
+            }
             if (logo) logo.style.cursor = (!isStandalone() && deferredPrompt) ? "pointer" : "default";
         };
         const hideBanner = () => {
@@ -1213,7 +1219,19 @@
         if (logo) logo.addEventListener("click", () => promptInstall());
         showBanner();
         if ("serviceWorker" in navigator) {
-            try { navigator.serviceWorker.register("./sw.js"); } catch {}
+            navigator.serviceWorker.register("./sw.js")
+                .then(() => navigator.serviceWorker.ready)
+                .then(() => {
+                    if (!navigator.serviceWorker.controller) {
+                        try {
+                            if (sessionStorage.getItem("pwa_sw_reload") !== "1") {
+                                sessionStorage.setItem("pwa_sw_reload", "1");
+                                window.location.reload();
+                            }
+                        } catch {}
+                    }
+                })
+                .catch(() => {});
         }
     </script>
 </body>
