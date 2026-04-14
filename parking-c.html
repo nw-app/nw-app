@@ -1,0 +1,2798 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>綠色停車後台管理系統</title>
+    <link rel="manifest" href="parking-manifest.json">
+    <meta name="theme-color" content="#059669">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .sidebar-item.active { background-color: #ecfdf5; color: #047857; border-right: 4px solid #10b981; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+        .parking-sidebar { width: 16rem; }
+        .nav-label { white-space: nowrap; }
+
+        @media (orientation: landscape) and (max-width: 932px) {
+            .parking-sidebar { width: 64px !important; }
+            .parking-brand { padding: 12px !important; justify-content: center !important; }
+            .parking-brand-text { display: none !important; }
+            .parking-community { display: none !important; }
+            .parking-sidebar nav { padding-left: 8px !important; padding-right: 8px !important; }
+            .parking-sidebar .sidebar-item { justify-content: center !important; gap: 0 !important; padding: 12px !important; }
+            .parking-sidebar .sidebar-item .nav-label { display: none !important; }
+            .parking-sidebar #parking-logout { justify-content: center !important; gap: 0 !important; padding: 12px !important; }
+            .parking-sidebar #parking-logout .nav-label { display: none !important; }
+            .sidebar-item.active { border-right: 0 !important; }
+
+            .parking-header { height: 56px !important; padding-left: 16px !important; padding-right: 16px !important; }
+            .parking-search { display: none !important; }
+            .parking-user-text { display: none !important; }
+            #page-title { font-size: 16px !important; line-height: 1.2 !important; }
+            .tab-content { padding: 16px !important; }
+        }
+
+        @media (orientation: landscape) and (min-width: 933px) and (max-width: 1280px) {
+            .parking-sidebar { width: 12rem !important; }
+            .parking-brand { padding: 16px !important; }
+            .parking-header { padding-left: 20px !important; padding-right: 20px !important; }
+            #page-title { font-size: 20px !important; }
+            .tab-content { padding: 24px !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 flex h-screen overflow-hidden text-slate-900">
+
+    <!-- Sidebar -->
+    <aside class="parking-sidebar bg-white border-r border-slate-200 flex flex-col shrink-0">
+        <div class="parking-brand p-6 flex items-center gap-3">
+            <div id="parking-app-logo" class="bg-emerald-500 p-2 rounded-lg text-white">
+                <i data-lucide="leaf" class="w-6 h-6"></i>
+            </div>
+            <div class="parking-brand-text min-w-0">
+                <span class="font-bold text-xl tracking-tight text-emerald-700 whitespace-nowrap">綠色停車系統</span>
+                <div id="parking-community-name" class="parking-community text-xs text-slate-500 font-bold truncate"></div>
+            </div>
+        </div>
+
+        <nav class="flex-1 px-4 mt-4 space-y-1">
+            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="sidebar-item active flex items-center gap-3 w-full p-3 rounded-xl transition-all font-semibold">
+                <i data-lucide="layout-dashboard" class="w-5 h-5"></i><span class="nav-label">儀表板</span>
+            </button>
+            <button onclick="switchTab('spaces')" id="nav-spaces" class="sidebar-item flex items-center gap-3 w-full p-3 rounded-xl transition-all font-semibold text-slate-500 hover:bg-slate-50">
+                <i data-lucide="car" class="w-5 h-5"></i><span class="nav-label">即時車位</span>
+            </button>
+            <button onclick="switchTab('users')" id="nav-users" class="sidebar-item flex items-center gap-3 w-full p-3 rounded-xl transition-all font-semibold text-slate-500 hover:bg-slate-50">
+                <i data-lucide="users" class="w-5 h-5"></i><span class="nav-label">車位管理</span>
+            </button>
+            <button onclick="switchTab('finance')" id="nav-finance" class="sidebar-item flex items-center gap-3 w-full p-3 rounded-xl transition-all font-semibold text-slate-500 hover:bg-slate-50">
+                <i data-lucide="bar-chart-3" class="w-5 h-5"></i><span class="nav-label">營收報告</span>
+            </button>
+            <div class="my-4 border-t border-slate-100"></div>
+            <button onclick="switchTab('settings')" id="nav-settings" class="sidebar-item flex items-center gap-3 w-full p-3 rounded-xl transition-all font-semibold text-slate-500 hover:bg-slate-50">
+                <i data-lucide="settings" class="w-5 h-5"></i><span class="nav-label">系統設定</span>
+            </button>
+        </nav>
+
+        <div class="p-4 mt-auto">
+            <button id="parking-logout" class="flex items-center gap-3 w-full p-3 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all font-semibold">
+                <i data-lucide="log-out" class="w-5 h-5"></i><span class="nav-label">登出系統</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col min-w-0">
+        <!-- Header -->
+        <header class="parking-header h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-10 shrink-0">
+            <div>
+                <h2 id="page-title" class="text-2xl font-bold text-slate-800">社區概況總覽</h2>
+                <p class="text-slate-400 text-xs mt-0.5">系統最後更新：<span id="update-time">10:30:45</span></p>
+            </div>
+            
+            <div class="flex items-center gap-6">
+                <div class="parking-search relative hidden md:block">
+                    <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4"></i>
+                    <input type="text" placeholder="搜尋車位、車牌..." class="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-full text-sm w-64 focus:ring-2 focus:ring-emerald-500 transition-all outline-none">
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="parking-user-text text-right hidden sm:block">
+                        <p id="parking-user-name" class="text-sm font-bold text-slate-700">—</p>
+                        <p id="parking-user-role" class="text-[10px] text-emerald-600 font-bold uppercase">—</p>
+                    </div>
+                    <div id="parking-user-avatar" class="w-10 h-10 bg-emerald-100 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-emerald-700 overflow-hidden">
+                        <i data-lucide="user" class="w-6 h-6"></i>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- View: Dashboard -->
+        <div id="view-dashboard" class="tab-content active overflow-y-auto p-8 space-y-8 fade-in">
+            <!-- Stats Grid -->
+            <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="bg-blue-100 text-blue-600 p-3 rounded-xl"><i data-lucide="trending-up" class="w-6 h-6"></i></div>
+                        <span class="text-xs font-bold text-green-500 bg-green-50 px-2 py-1 rounded">+12%</span>
+                    </div>
+                    <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">今日總收入</h3>
+                    <p id="dashboard-revenue" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                </div>
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="bg-emerald-100 text-emerald-600 p-3 rounded-xl"><i data-lucide="car" class="w-6 h-6"></i></div>
+                        <span id="dashboard-share-badge" class="text-xs font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">0 / 0</span>
+                    </div>
+                    <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">當前共享中</h3>
+                    <p id="dashboard-share-percent" class="text-2xl font-bold mt-1 text-slate-800">0.0%</p>
+                </div>
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="bg-teal-100 text-teal-600 p-3 rounded-xl"><i data-lucide="leaf" class="w-6 h-6"></i></div>
+                        <span id="dashboard-fee-badge" class="text-xs font-bold text-teal-500 bg-teal-50 px-2 py-1 rounded">0 組</span>
+                    </div>
+                    <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">收費時段</h3>
+                    <p id="dashboard-fee-count" class="text-2xl font-bold mt-1 text-slate-800">0</p>
+                </div>
+                <div class="bg-white p-6 rounded-2xl border border-red-100 shadow-sm animate-pulse-slow">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="bg-red-100 text-red-600 p-3 rounded-xl"><i data-lucide="alert-circle" class="w-6 h-6"></i></div>
+                        <span class="text-xs font-bold text-red-500 bg-red-50 px-2 py-1 rounded">Urgent</span>
+                    </div>
+                    <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">異常警報</h3>
+                    <p id="dashboard-alert-count" class="text-2xl font-bold mt-1 text-red-600">0 件</p>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- Mini Parking Grid -->
+                <div class="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="font-bold flex items-center gap-2"><i data-lucide="map-pin" class="text-emerald-600 w-5 h-5"></i> 車位分布概況</h3>
+                        <button onclick="switchTab('spaces')" class="text-xs font-bold text-emerald-600 hover:underline">查看詳細地圖</button>
+                    </div>
+                    <div class="p-6 grid grid-cols-5 md:grid-cols-8 gap-3" id="mini-parking-grid">
+                        <!-- JS injected -->
+                    </div>
+                </div>
+
+                <!-- Recent Alerts -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                    <div class="p-6 border-b border-slate-100">
+                        <h3 class="font-bold text-red-600 flex items-center gap-2"><i data-lucide="bell-ring" class="w-5 h-5"></i> 即時警報</h3>
+                    </div>
+                    <div id="dashboard-alert-list" class="divide-y divide-slate-50 flex-1 overflow-y-auto"></div>
+                    <div id="dashboard-alert-empty" class="p-6 text-center text-slate-400 font-bold hidden">尚無警報</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Parking Monitor -->
+        <div id="view-spaces" class="tab-content overflow-y-auto p-8 space-y-6 fade-in">
+            <div class="flex items-center justify-between mb-2">
+                <div id="parking-space-floor-filters" class="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm"></div>
+                <div class="flex items-center gap-4">
+                    <div id="parking-space-open-status" class="text-xs font-bold text-slate-500"></div>
+                    <div class="flex gap-4 text-xs font-bold">
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-emerald-500"></span> 待租中</div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-blue-500"></span> 使用中</div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-slate-300"></span> 自用中</div>
+                    <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></span> 異常</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="font-bold text-slate-800">今日停車費率</div>
+                    <div id="parking-today-fees-badge" class="text-xs font-bold text-slate-500">—</div>
+                </div>
+                <div id="parking-today-fees" class="space-y-2"></div>
+            </div>
+
+            <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
+                <div id="parking-space-closed-hint" class="hidden mb-4 px-4 py-3 rounded-2xl bg-red-50 text-red-700 font-bold text-sm">
+                    目前時段未設定收費，車位不開放
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4" id="full-parking-grid">
+                    <!-- JS injected -->
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Users -->
+        <div id="view-users" class="tab-content overflow-y-auto p-8 space-y-6 fade-in">
+            <div class="flex items-center justify-between">
+                <div class="text-sm text-slate-500 font-bold">車位與住戶</div>
+                <div class="flex items-center gap-3">
+                    <input id="parking-user-search" type="text" placeholder="搜尋車位 / 車牌 / 姓名" class="w-64 bg-white border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    <button id="parking-add-resident" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition">新增車位</button>
+                </div>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <button id="parking-tab-spots" type="button" class="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-sm">車位</button>
+                        <button id="parking-tab-residents" type="button" class="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm">住戶</button>
+                    </div>
+                    <div id="parking-resident-count" class="text-xs text-slate-500 font-bold"></div>
+                </div>
+                <div class="p-6">
+                    <div id="parking-spots-list" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                    <div id="parking-spots-empty" class="text-center text-slate-400 font-bold py-16 hidden">尚未建立內容</div>
+                    <div id="parking-community-residents-list" class="grid grid-cols-1 md:grid-cols-2 gap-4 hidden"></div>
+                    <div id="parking-community-residents-empty" class="text-center text-slate-400 font-bold py-16 hidden">尚未建立內容</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Finance -->
+        <div id="view-finance" class="tab-content overflow-y-auto p-8 space-y-6 fade-in">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div class="flex gap-2 bg-white p-1 rounded-xl border border-slate-200 shadow-sm w-fit">
+                    <button id="finance-subtab-daily" type="button" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm">每日收入</button>
+                    <button id="finance-subtab-stats" type="button" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm">報表統計</button>
+                </div>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <input id="finance-date-start" type="date" class="bg-white border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <span class="text-slate-400 font-bold text-sm">—</span>
+                        <input id="finance-date-end" type="date" class="bg-white border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                    <button id="finance-date-apply" type="button" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition w-fit">套用</button>
+                </div>
+            </div>
+
+            <div id="finance-hint" class="text-xs font-bold text-slate-500"></div>
+
+            <div id="finance-view-daily" class="space-y-6">
+                <section class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">區間總收入</h3>
+                        <p id="finance-daily-total" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">天數</h3>
+                        <p id="finance-daily-days" class="text-2xl font-bold mt-1 text-slate-800">0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">日均收入</h3>
+                        <p id="finance-daily-avg" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                    </div>
+                </section>
+
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                        <h3 class="font-bold text-slate-800">每日收入</h3>
+                        <div id="finance-daily-count" class="text-xs font-bold text-slate-500"></div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50">
+                                <tr class="text-left text-slate-500">
+                                    <th class="px-6 py-3 font-bold">日期</th>
+                                    <th class="px-6 py-3 font-bold">星期</th>
+                                    <th class="px-6 py-3 font-bold text-right">收入</th>
+                                </tr>
+                            </thead>
+                            <tbody id="finance-daily-tbody" class="divide-y divide-slate-50"></tbody>
+                        </table>
+                    </div>
+                    <div id="finance-daily-empty" class="p-10 text-center text-slate-400 font-bold hidden">尚無資料</div>
+                </div>
+            </div>
+
+            <div id="finance-view-stats" class="space-y-6 hidden">
+                <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">區間總收入</h3>
+                        <p id="finance-stats-total" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">最高日</h3>
+                        <p id="finance-stats-max" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                        <div id="finance-stats-max-date" class="text-xs font-bold text-slate-400 mt-1"></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">最低日</h3>
+                        <p id="finance-stats-min" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                        <div id="finance-stats-min-date" class="text-xs font-bold text-slate-400 mt-1"></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">日均收入</h3>
+                        <p id="finance-stats-avg" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
+                    </div>
+                </section>
+
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                        <h3 class="font-bold text-slate-800">近 14 天趨勢</h3>
+                        <div id="finance-chart-range" class="text-xs font-bold text-slate-500"></div>
+                    </div>
+                    <div class="p-6">
+                        <div id="finance-chart" class="h-56 flex items-end gap-2"></div>
+                        <div id="finance-chart-empty" class="p-10 text-center text-slate-400 font-bold hidden">尚無資料</div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                        <h3 class="font-bold text-slate-800">月統計</h3>
+                        <div id="finance-monthly-count" class="text-xs font-bold text-slate-500"></div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm">
+                            <thead class="bg-slate-50">
+                                <tr class="text-left text-slate-500">
+                                    <th class="px-6 py-3 font-bold">月份</th>
+                                    <th class="px-6 py-3 font-bold text-right">收入</th>
+                                </tr>
+                            </thead>
+                            <tbody id="finance-monthly-tbody" class="divide-y divide-slate-50"></tbody>
+                        </table>
+                    </div>
+                    <div id="finance-monthly-empty" class="p-10 text-center text-slate-400 font-bold hidden">尚無資料</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-settings" class="tab-content overflow-y-auto p-8 space-y-6 fade-in">
+            <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-3xl">
+                <h3 class="text-xl font-bold text-slate-800 mb-2">系統設定</h3>
+                <div class="text-slate-500 text-sm">社區切換與基本資訊</div>
+                <div class="mt-6 space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                        <div class="text-sm font-bold text-slate-700">目前社區</div>
+                        <div id="parking-settings-community" class="md:col-span-2 text-sm text-slate-600 font-semibold">—</div>
+                    </div>
+                    <div id="parking-switcher" class="hidden">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                            <div class="text-sm font-bold text-slate-700">切換社區</div>
+                            <div class="md:col-span-2 flex gap-3">
+                                <select id="parking-community-select" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
+                                <button id="parking-community-apply" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">套用</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                        <div class="text-sm font-bold text-slate-700">登入角色</div>
+                        <div id="parking-settings-role" class="md:col-span-2 text-sm text-slate-600 font-semibold">—</div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100"></div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                        <div class="text-sm font-bold text-slate-700 pt-2">停車場樓層</div>
+                        <div class="md:col-span-2">
+                            <div class="flex gap-3">
+                                <input id="parking-floor-input" type="text" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 B1、B2、1F">
+                                <button id="parking-floor-add" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">新增</button>
+                            </div>
+                            <div id="parking-floor-list" class="mt-3 flex flex-wrap gap-2"></div>
+                            <div id="parking-floor-empty" class="mt-3 text-xs text-slate-400 font-bold hidden">尚未建立樓層</div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100"></div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                        <div class="text-sm font-bold text-slate-700 pt-2">收費費率</div>
+                        <div class="md:col-span-2">
+                            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <select id="parking-fee-daytype" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                    <option value="weekday">平日</option>
+                                    <option value="holiday">假日</option>
+                                    <option value="all">每天</option>
+                                </select>
+                                <input id="parking-fee-start" type="time" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                <input id="parking-fee-end" type="time" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                <input id="parking-fee-price" type="number" min="0" step="1" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="金額">
+                            </div>
+                            <div class="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
+                                <div class="md:col-span-2 flex items-center gap-4 px-1">
+                                    <label class="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
+                                        <input type="radio" name="parking-fee-calc" value="per_entry" class="accent-emerald-600">
+                                        每次
+                                    </label>
+                                    <label class="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
+                                        <input type="radio" name="parking-fee-calc" value="per_time" class="accent-emerald-600" checked>
+                                        按時
+                                    </label>
+                                </div>
+                                <div class="md:col-span-2">
+                                    <select id="parking-fee-unit" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                        <option value="60">一小時計費（不足一小時以一小時計）</option>
+                                        <option value="30">半小時計費（不足半小時以半小時計）</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-3 flex items-center gap-3">
+                                <button id="parking-fee-save" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">新增</button>
+                                <button id="parking-fee-cancel" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition hidden">取消編輯</button>
+                                <div id="parking-fee-hint" class="text-xs font-bold text-slate-500"></div>
+                            </div>
+                            <div id="parking-fee-list" class="mt-4 space-y-2"></div>
+                            <div id="parking-fee-empty" class="mt-3 text-xs text-slate-400 font-bold hidden">尚未建立費率</div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100"></div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                        <div class="text-sm font-bold text-slate-700 pt-2">收費方式</div>
+                        <div class="md:col-span-2">
+                            <div class="flex gap-3">
+                                <input id="parking-paymethod-input" type="text" class="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 現金、信用卡、行動支付">
+                                <button id="parking-paymethod-add" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">新增</button>
+                            </div>
+                            <div id="parking-paymethod-list" class="mt-3 flex flex-wrap gap-2"></div>
+                            <div id="parking-paymethod-empty" class="mt-3 text-xs text-slate-400 font-bold hidden">尚未建立收費方式</div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-slate-100"></div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                        <div class="text-sm font-bold text-slate-700 pt-2">臨停免計費</div>
+                        <div class="md:col-span-2">
+                            <div class="flex flex-col gap-3">
+                                <label class="inline-flex items-center gap-2 text-sm font-bold text-slate-700">
+                                    <input id="parking-grace-enabled" type="checkbox" class="accent-emerald-600">
+                                    啟動前 N 分鐘臨停不予計費
+                                </label>
+                                <div class="flex items-center gap-3">
+                                    <input id="parking-grace-minutes" type="number" min="0" step="1" class="w-40 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="分鐘">
+                                    <button id="parking-grace-save" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">儲存</button>
+                                    <div id="parking-grace-hint" class="text-xs font-bold text-slate-500"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const spots = [];
+
+        // --- 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            renderMiniGrid();
+            startTime();
+        });
+
+        // --- 時鐘功能 ---
+        function startTime() {
+            const update = () => {
+                document.getElementById('update-time').innerText = new Date().toLocaleTimeString();
+            };
+            setInterval(update, 1000);
+            update();
+        }
+
+        // --- 分頁功能 ---
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(view => view.classList.remove('active'));
+            document.getElementById(`view-${tabId}`).classList.add('active');
+            
+            // 更新 Sidebar 樣式
+            document.querySelectorAll('.sidebar-item').forEach(item => {
+                item.classList.remove('active', 'bg-emerald-50', 'text-emerald-700', 'border-right');
+                item.classList.add('text-slate-500');
+            });
+            const activeItem = document.getElementById(`nav-${tabId}`);
+            activeItem.classList.add('active');
+            activeItem.classList.remove('text-slate-500');
+
+            // 更新標題
+            const titles = { dashboard: '儀表板', spaces: '即時車位', users: '車位管理', finance: '營收報告', settings: '系統設定' };
+            document.getElementById('page-title').innerText = titles[tabId];
+
+            lucide.createIcons();
+            try {
+                if (window.parkingOnTabChange) window.parkingOnTabChange(tabId);
+            } catch {}
+        }
+
+        // --- 渲染迷你網格 (Dashboard) ---
+        function renderMiniGrid() {
+            const grid = document.getElementById('mini-parking-grid');
+            if (!spots.length) {
+                grid.innerHTML = `<div class="col-span-full text-center text-slate-400 font-bold py-10">尚未建立內容</div>`;
+                return;
+            }
+            grid.innerHTML = spots.slice(0, 24).map(spot => `
+                <div class="h-8 rounded-md ${getStatusClass(spot.status, true)} border shadow-sm transition-all hover:scale-110 cursor-help" title="${spot.id}"></div>
+            `).join('');
+        }
+
+        // --- 渲染完整網格 (Monitor) ---
+        function renderFullGrid() {
+            const grid = document.getElementById('full-parking-grid');
+            grid.innerHTML = spots.map(spot => `
+                <div class="p-3 rounded-xl border-2 bg-white flex flex-col items-center justify-center gap-1 transition-all hover:border-emerald-200 cursor-pointer ${spot.status === 'alert' ? 'border-red-200 bg-red-50' : 'border-slate-50'}">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase">${spot.id}</span>
+                    <div class="w-full h-1 my-1 rounded-full ${getStatusClass(spot.status, false)}"></div>
+                    <span class="text-xs font-mono font-bold ${spot.status === 'occupied' ? 'text-blue-600' : 'text-slate-300'}">${spot.status === 'occupied' ? 'ABC-1234' : '---'}</span>
+                </div>
+            `).join('');
+        }
+
+        function getStatusClass(status, isMini) {
+            const colors = {
+                shared: 'bg-emerald-500 border-emerald-600',
+                occupied: 'bg-blue-500 border-blue-600',
+                private: 'bg-slate-300 border-slate-400',
+                alert: 'bg-red-500 border-red-600 animate-pulse'
+            };
+            return colors[status] || 'bg-slate-100 border-slate-200';
+        }
+    </script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+        import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, onSnapshot, query, where, updateDoc } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+        const defaultFirebaseConfig = {
+            apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+            authDomain: "nw-app-all.firebaseapp.com",
+            projectId: "nw-app-all",
+            storageBucket: "nw-app-all.firebasestorage.app",
+            messagingSenderId: "205108931232",
+            appId: "1:205108931232:web:ee7868f73ed883253577c5",
+            measurementId: "G-8F1WD772LP"
+        };
+
+        let firebaseConfig = defaultFirebaseConfig;
+        try {
+            const savedConfig = localStorage.getItem("nw_firebase_config");
+            if (savedConfig) firebaseConfig = { ...defaultFirebaseConfig, ...JSON.parse(savedConfig) };
+        } catch {}
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: false });
+
+        let currentSlug = "";
+        let currentRole = "";
+        let spotsUnsub = null;
+        let residentsUnsub = null;
+        let communityResidentsUnsub = null;
+        let floorsUnsub = null;
+        let activeFloor = "all";
+        let activeUsersTab = "spots";
+        let residentsCache = [];
+        let communityResidentsCache = [];
+        let spotCache = [];
+        let floorsCache = ["B1", "B2"];
+        let feesCache = [];
+        let paymentMethodsCache = ["現金"];
+        let graceEnabledCache = false;
+        let graceMinutesCache = 0;
+        let feeEditId = "";
+        let currentUserUid = "";
+
+        function getQueryParam(name) {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                return params.get(name);
+            } catch {
+                return null;
+            }
+        }
+
+        async function getOrCreateUserRole(uid, email) {
+            const ref = doc(db, "users", uid);
+            try {
+                const snap = await getDoc(ref);
+                if (snap.exists()) {
+                    const data = snap.data() || {};
+                    if (email === "nwapp.eason@gmail.com") {
+                        if (data.role !== "系統管理員" && data.role !== "系統管理者") {
+                            try { await setDoc(ref, { role: "系統管理員", status: "啟用" }, { merge: true }); } catch {}
+                        }
+                        return "系統管理員";
+                    }
+                    if (data.status === "停用") return "停用";
+                    const role = data.role || "住戶";
+                    return role === "系統管理者" ? "系統管理員" : role;
+                }
+                try {
+                    const base = { email, role: email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶", status: "啟用", createdAt: Date.now() };
+                    await setDoc(ref, base, { merge: true });
+                } catch {}
+                return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
+            } catch {
+                return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
+            }
+        }
+
+        // --- 台灣法定假日 (2026範例) ---
+        const TAIWAN_HOLIDAYS_2026 = [
+            '2026-01-01', // 元旦
+            '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', // 春節
+            '2026-02-28', // 228
+            '2026-04-03', '2026-04-04', '2026-04-05', // 清明
+            '2026-05-01', // 勞動節
+            '2026-06-19', // 端午
+            '2026-09-25', // 中秋
+            '2026-10-10', // 國慶
+        ];
+
+        function isTaiwanHoliday(date = new Date()) {
+            const day = date.getDay();
+            const dateStr = date.toISOString().split('T')[0];
+            return day === 0 || day === 6 || TAIWAN_HOLIDAYS_2026.includes(dateStr);
+        }
+
+        function normalizeRole(role) {
+            return role === "系統管理者" ? "系統管理員" : role;
+        }
+
+        async function getUserProfile(uid) {
+            try {
+                const snap = await getDoc(doc(db, "users", uid));
+                return snap.exists() ? (snap.data() || {}) : {};
+            } catch {
+                return {};
+            }
+        }
+
+        async function getCommunityName(slug) {
+            if (!slug) return "";
+            try {
+                const snap = await getDoc(doc(db, "communities", slug));
+                if (snap.exists()) {
+                    const d = snap.data() || {};
+                    return d.name || slug;
+                }
+            } catch {}
+            return slug;
+        }
+
+        async function listCommunities() {
+            try {
+                const snap = await getDocs(collection(db, "communities"));
+                return snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+            } catch {
+                return [];
+            }
+        }
+
+        function setCommunityInUrl(slug) {
+            try {
+                const url = new URL(window.location.href);
+                if (slug) url.searchParams.set("c", slug);
+                window.history.replaceState({}, "", url);
+            } catch {}
+        }
+
+        function setCommunityLabel(text) {
+            const elName = document.getElementById("parking-community-name");
+            if (elName) elName.textContent = text || "";
+            const elSettings = document.getElementById("parking-settings-community");
+            if (elSettings) elSettings.textContent = text || "";
+        }
+
+        function setUserUi({ displayName, email, role, photoURL }) {
+            const nameEl = document.getElementById("parking-user-name");
+            if (nameEl) nameEl.textContent = displayName || (email ? String(email).split("@")[0] : "—");
+            const roleEl = document.getElementById("parking-user-role");
+            if (roleEl) roleEl.textContent = role || "—";
+            const settingsRole = document.getElementById("parking-settings-role");
+            if (settingsRole) settingsRole.textContent = role || "—";
+
+            const avatar = document.getElementById("parking-user-avatar");
+            if (!avatar) return;
+            if (photoURL) {
+                avatar.innerHTML = `<img src="${photoURL}" alt="avatar" style="width:100%;height:100%;object-fit:cover;">`;
+            } else {
+                avatar.innerHTML = `<i data-lucide="user" class="w-6 h-6"></i>`;
+            }
+            try { lucide.createIcons(); } catch {}
+        }
+
+        function escapeHtml(s) {
+            return String(s || "")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function openOverlay(html) {
+            let root = document.getElementById("parking-modal");
+            if (!root) {
+                root = document.createElement("div");
+                root.id = "parking-modal";
+                document.body.appendChild(root);
+            }
+            root.innerHTML = `
+                <div class="fixed inset-0 z-[999999] flex items-end md:items-center justify-center p-4">
+                    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" data-close="1"></div>
+                    <div class="relative w-full max-w-lg max-h-[90vh] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col overflow-hidden">
+                        <div class="overflow-y-auto flex-1">
+                            ${html}
+                        </div>
+                    </div>
+                </div>
+            `;
+            root.querySelectorAll("[data-close='1']").forEach((el) => {
+                el.addEventListener("click", () => closeOverlay());
+            });
+        }
+
+        function closeOverlay() {
+            const root = document.getElementById("parking-modal");
+            if (root) root.innerHTML = "";
+        }
+
+        function spotTone(status) {
+            if (status === "occupied") return { border: "border-blue-200", bg: "bg-white", bar: "bg-blue-500", text: "text-blue-600", chip: "bg-blue-50 text-blue-700" };
+            if (status === "private") return { border: "border-slate-100", bg: "bg-white", bar: "bg-slate-300", text: "text-slate-400", chip: "bg-slate-50 text-slate-700" };
+            if (status === "alert") return { border: "border-red-200", bg: "bg-red-50", bar: "bg-red-500 animate-pulse", text: "text-red-700", chip: "bg-red-50 text-red-700" };
+            return { border: "border-emerald-200", bg: "bg-white", bar: "bg-emerald-500", text: "text-emerald-700", chip: "bg-emerald-50 text-emerald-700" };
+        }
+
+        function normalizeFloor(spotId) {
+            const id = String(spotId || "").toUpperCase();
+            const m = id.match(/^([A-Z0-9]+)\s*[-_ ]/);
+            if (m && m[1]) return m[1];
+            const m2 = id.match(/^([A-Z0-9]+)$/);
+            if (m2 && m2[1]) return m2[1];
+            return "";
+        }
+
+        function normalizeFloorLabel(v) {
+            return String(v || "").trim().toUpperCase().replace(/\s+/g, "");
+        }
+
+        function renderFloorsSettings() {
+            const listEl = document.getElementById("parking-floor-list");
+            const emptyEl = document.getElementById("parking-floor-empty");
+            if (!listEl || !emptyEl) return;
+            const list = (floorsCache || []).filter(Boolean);
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+            listEl.innerHTML = list.map(f => `
+                <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-bold text-xs">
+                    ${escapeHtml(f)}
+                    <button type="button" class="text-slate-400 hover:text-red-600 transition" data-floor-del="${escapeHtml(f)}">✕</button>
+                </span>
+            `).join("");
+            listEl.querySelectorAll("[data-floor-del]").forEach(btn => {
+                btn.addEventListener("click", async () => {
+                    const f = btn.getAttribute("data-floor-del") || "";
+                    if (!f) return;
+                    const next = (floorsCache || []).filter(x => x !== f);
+                    try {
+                        await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { floors: next, updatedAt: Date.now() }, { merge: true });
+                    } catch {}
+                });
+            });
+        }
+
+        function bindFloorsUi() {
+            const input = document.getElementById("parking-floor-input");
+            const btnAdd = document.getElementById("parking-floor-add");
+            if (!input || !btnAdd) return;
+            const add = async () => {
+                const raw = String(input.value || "");
+                const floor = normalizeFloorLabel(raw);
+                if (!floor) return;
+                const cur = (floorsCache || []).map(normalizeFloorLabel).filter(Boolean);
+                if (cur.includes(floor)) {
+                    input.value = "";
+                    return;
+                }
+                const next = [...cur, floor];
+                try {
+                    await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { floors: next, updatedAt: Date.now() }, { merge: true });
+                    input.value = "";
+                } catch {}
+            };
+            btnAdd.onclick = add;
+            input.addEventListener("keyup", (e) => {
+                if (e.key === "Enter") add();
+            });
+        }
+
+        function renderPaymentMethodsSettings() {
+            const listEl = document.getElementById("parking-paymethod-list");
+            const emptyEl = document.getElementById("parking-paymethod-empty");
+            if (!listEl || !emptyEl) return;
+
+            const uniq = Array.from(new Set((paymentMethodsCache || []).map(v => String(v || "").trim()).filter(Boolean)));
+            const list = uniq.length ? uniq : ["現金"];
+            paymentMethodsCache = list;
+
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            listEl.innerHTML = list.map(v => `
+                <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 text-slate-700 font-bold text-xs">
+                    ${escapeHtml(v)}
+                    <button type="button" class="text-slate-400 hover:text-red-600 transition" data-paymethod-del="${escapeHtml(v)}">✕</button>
+                </span>
+            `).join("");
+
+            listEl.querySelectorAll("[data-paymethod-del]").forEach(btn => {
+                btn.addEventListener("click", async () => {
+                    const v = String(btn.getAttribute("data-paymethod-del") || "").trim();
+                    if (!v) return;
+                    const next = (paymentMethodsCache || []).filter(x => String(x || "").trim() !== v);
+                    const ensured = next.length ? next : ["現金"];
+                    try {
+                        await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { paymentMethods: ensured, updatedAt: Date.now() }, { merge: true });
+                    } catch {}
+                });
+            });
+        }
+
+        function bindPaymentMethodsUi() {
+            const input = document.getElementById("parking-paymethod-input");
+            const btnAdd = document.getElementById("parking-paymethod-add");
+            if (!input || !btnAdd) return;
+
+            const add = async () => {
+                const raw = String(input.value || "").trim();
+                if (!raw) return;
+                const cur = (paymentMethodsCache || []).map(v => String(v || "").trim()).filter(Boolean);
+                const exists = cur.some(v => v === raw);
+                const next = exists ? cur : [...cur, raw];
+                const ensured = next.length ? next : ["現金"];
+                try {
+                    await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { paymentMethods: ensured, updatedAt: Date.now() }, { merge: true });
+                    input.value = "";
+                } catch {}
+            };
+
+            btnAdd.onclick = add;
+            input.addEventListener("keyup", (e) => {
+                if (e.key === "Enter") add();
+            });
+        }
+
+        function subscribeFloors() {
+            if (!currentSlug) return;
+            if (floorsUnsub) { floorsUnsub(); floorsUnsub = null; }
+            floorsUnsub = onSnapshot(doc(db, "communities", currentSlug, "settings", "parking"), (snap) => {
+                const data = snap.exists() ? (snap.data() || {}) : {};
+                const floors = Array.isArray(data.floors) ? data.floors : [];
+                const next = floors.map(normalizeFloorLabel).filter(Boolean);
+                floorsCache = next.length ? next : ["B1", "B2"];
+                feesCache = Array.isArray(data.fees) ? data.fees : [];
+                paymentMethodsCache = Array.isArray(data.paymentMethods) ? data.paymentMethods.filter(Boolean).map(v => String(v).trim()).filter(Boolean) : ["現金"];
+                if (!paymentMethodsCache.length) paymentMethodsCache = ["現金"];
+                graceEnabledCache = !!data.graceEnabled;
+                graceMinutesCache = Number.isFinite(Number(data.graceMinutes)) ? Math.max(0, Math.floor(Number(data.graceMinutes))) : 0;
+                renderFloorsSettings();
+                renderFeesSettings();
+                renderPaymentMethodsSettings();
+                renderGraceSettings();
+                renderSpaceFloorFilters();
+                updateSpaceOpenStatus();
+                renderTodayFees();
+                renderDashboard();
+            }, () => {
+                floorsCache = ["B1", "B2"];
+                feesCache = [];
+                paymentMethodsCache = ["現金"];
+                graceEnabledCache = false;
+                graceMinutesCache = 0;
+                renderFloorsSettings();
+                renderFeesSettings();
+                renderPaymentMethodsSettings();
+                renderGraceSettings();
+                renderSpaceFloorFilters();
+                updateSpaceOpenStatus();
+                renderTodayFees();
+                renderDashboard();
+            });
+        }
+
+        function parseTimeToMinutes(v) {
+            const m = String(v || "").match(/^(\d{1,2}):(\d{2})$/);
+            if (!m) return null;
+            const hh = Number(m[1]);
+            const mm = Number(m[2]);
+            if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+            if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+            return hh * 60 + mm;
+        }
+
+        function getTodayDayType(d = new Date()) {
+            return isTaiwanHoliday(d) ? "holiday" : "weekday";
+        }
+
+        function isOpenByFeesAt(date) {
+            const list = (feesCache || []).filter(x => x && x.start && x.end);
+            if (!list.length) return false;
+            const dayType = getTodayDayType(date);
+            const minutes = date.getHours() * 60 + date.getMinutes();
+            return list.some(f => {
+                const dt = f.dayType || "all";
+                const applies = (dt === "all") || (dt === dayType);
+                if (!applies) return false;
+                const s = parseTimeToMinutes(f.start);
+                const e = parseTimeToMinutes(f.end);
+                if (s === null || e === null) return false;
+                return s <= minutes && minutes < e;
+            });
+        }
+
+        function updateSpaceOpenStatus() {
+            const open = isOpenByFeesAt(new Date());
+            const statusEl = document.getElementById("parking-space-open-status");
+            const hintEl = document.getElementById("parking-space-closed-hint");
+            const gridEl = document.getElementById("full-parking-grid");
+            if (statusEl) {
+                statusEl.textContent = open ? "開放中" : "未開放";
+                statusEl.className = open ? "text-xs font-bold text-emerald-600" : "text-xs font-bold text-red-600";
+            }
+            if (hintEl) hintEl.classList.toggle("hidden", open);
+            if (gridEl) {
+                gridEl.style.opacity = open ? "1" : "0.55";
+            }
+        }
+        
+        function renderTodayFees() {
+            const listEl = document.getElementById("parking-today-fees");
+            const badgeEl = document.getElementById("parking-today-fees-badge");
+            if (!listEl) return;
+
+            const dayType = getTodayDayType(new Date());
+            const dayLabel = dayType === "holiday" ? "假日" : "平日";
+
+            const list = (feesCache || [])
+                .filter(f => f && f.start && f.end && Number.isFinite(Number(f.price)))
+                .filter(f => {
+                    const dt = String(f.dayType || "all");
+                    return dt === "all" || dt === dayType;
+                })
+                .map(f => {
+                    const s = parseTimeToMinutes(f.start);
+                    const e = parseTimeToMinutes(f.end);
+                    return { ...f, _s: s, _e: e };
+                })
+                .filter(f => f._s !== null && f._e !== null && f._s < f._e)
+                .sort((a, b) => a._s - b._s);
+
+            if (badgeEl) badgeEl.textContent = `${dayLabel}｜${list.length} 組`;
+
+            if (!list.length) {
+                listEl.innerHTML = `<div class="text-sm font-bold text-slate-400 py-2">今日無開放時段</div>`;
+                return;
+            }
+
+            listEl.innerHTML = list.map(f => {
+                const start = escapeHtml(f.start);
+                const end = escapeHtml(f.end);
+                const price = Math.round(Number(f.price));
+                const calc = escapeHtml(feeCalcLabel(f));
+                return `
+                    <div class="flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 border border-slate-100">
+                        <div class="text-sm font-bold text-slate-800">${start} - ${end}</div>
+                        <div class="text-sm font-bold text-emerald-700">NT$ ${price} / ${calc}</div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function statusTone(status) {
+            if (status === "occupied") return { bg: "bg-blue-500", border: "border-blue-600", pulse: "" };
+            if (status === "private") return { bg: "bg-slate-300", border: "border-slate-400", pulse: "" };
+            if (status === "alert") return { bg: "bg-red-500", border: "border-red-600", pulse: "animate-pulse" };
+            return { bg: "bg-emerald-500", border: "border-emerald-600", pulse: "" };
+        }
+
+        function renderDashboard() {
+            const total = Array.isArray(spotCache) ? spotCache.length : 0;
+            const shared = (spotCache || []).filter(s => (s.status || "") === "shared").length;
+            const alerts = (spotCache || []).filter(s => (s.status || "") === "alert");
+            const percent = total ? (shared / total) * 100 : 0;
+
+            const shareBadge = document.getElementById("dashboard-share-badge");
+            if (shareBadge) shareBadge.textContent = `${shared} / ${total}`;
+
+            const sharePercent = document.getElementById("dashboard-share-percent");
+            if (sharePercent) sharePercent.textContent = `${percent.toFixed(1)}%`;
+
+            const feeList = (feesCache || []).filter(f => f && f.start && f.end);
+            const feeCount = feeList.length;
+            const feeBadge = document.getElementById("dashboard-fee-badge");
+            if (feeBadge) feeBadge.textContent = `${feeCount} 組`;
+            const feeCountEl = document.getElementById("dashboard-fee-count");
+            if (feeCountEl) feeCountEl.textContent = String(feeCount);
+
+            const alertCountEl = document.getElementById("dashboard-alert-count");
+            if (alertCountEl) alertCountEl.textContent = `${alerts.length} 件`;
+
+            const miniGrid = document.getElementById("mini-parking-grid");
+            if (miniGrid) {
+                const list = (spotCache || []).slice().sort((a, b) => String(a.id || "").localeCompare(String(b.id || ""), "en")).slice(0, 24);
+                if (!list.length) {
+                    miniGrid.innerHTML = `<div class="col-span-full text-center text-slate-400 font-bold py-10">尚未建立內容</div>`;
+                } else {
+                    miniGrid.innerHTML = list.map(spot => {
+                        const t = statusTone(spot.status);
+                        return `<div class="h-8 rounded-md ${t.bg} ${t.border} ${t.pulse} border shadow-sm transition-all hover:scale-110 cursor-help" title="${escapeHtml(spot.id)}"></div>`;
+                    }).join("");
+                }
+            }
+
+            const alertList = document.getElementById("dashboard-alert-list");
+            const alertEmpty = document.getElementById("dashboard-alert-empty");
+            if (alertList && alertEmpty) {
+                const list = alerts.slice().sort((a, b) => String(a.id || "").localeCompare(String(b.id || ""), "en")).slice(0, 8);
+                if (!list.length) {
+                    alertList.innerHTML = "";
+                    alertEmpty.classList.remove("hidden");
+                } else {
+                    alertEmpty.classList.add("hidden");
+                    alertList.innerHTML = list.map(a => {
+                        const id = escapeHtml(a.id || "");
+                        const plate = escapeHtml(a.plate || "—");
+                        return `
+                            <div class="p-4 bg-red-50 flex gap-4">
+                                <div class="shrink-0 w-10 h-10 bg-red-200 rounded-full flex items-center justify-center text-red-700"><i data-lucide="alert-circle" class="w-5 h-5"></i></div>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-bold text-red-900 truncate">${id} 異常</p>
+                                    <p class="text-[10px] text-red-700 mt-0.5 truncate">車牌：${plate}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join("");
+                    try { lucide.createIcons(); } catch {}
+                }
+            }
+        }
+
+        function ymdKey(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, "0");
+            const d = String(date.getDate()).padStart(2, "0");
+            return `${y}-${m}-${d}`;
+        }
+
+        async function updateDashboardRevenue() {
+            const el = document.getElementById("dashboard-revenue");
+            if (!el || !currentSlug) return;
+            try {
+                const key = ymdKey(new Date());
+                const snap = await getDoc(doc(db, "communities", currentSlug, "parking_income_daily", key));
+                const total = snap.exists() ? Number((snap.data() || {}).total || 0) : 0;
+                const v = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
+                el.textContent = `NT$ ${v.toLocaleString("zh-Hant-TW")}`;
+            } catch {
+                el.textContent = "NT$ 0";
+            }
+        }
+
+        function dayTypeLabel(v) {
+            if (v === "weekday") return "平日";
+            if (v === "holiday") return "假日";
+            return "每天";
+        }
+
+        function feeConflicts(a, b) {
+            const aType = a.dayType || "all";
+            const bType = b.dayType || "all";
+            const sameDay = (aType === bType) || (aType === "all") || (bType === "all");
+            if (!sameDay) return false;
+            const aStart = parseTimeToMinutes(a.start);
+            const aEnd = parseTimeToMinutes(a.end);
+            const bStart = parseTimeToMinutes(b.start);
+            const bEnd = parseTimeToMinutes(b.end);
+            if (aStart === null || aEnd === null || bStart === null || bEnd === null) return false;
+            return aStart < bEnd && bStart < aEnd;
+        }
+
+        function setFeeHint(text, type = "info") {
+            const el = document.getElementById("parking-fee-hint");
+            if (!el) return;
+            el.textContent = text || "";
+            el.className = type === "error"
+                ? "text-xs font-bold text-red-600"
+                : type === "success"
+                ? "text-xs font-bold text-emerald-600"
+                : "text-xs font-bold text-slate-500";
+        }
+
+        function setGraceHint(text, type = "info") {
+            const el = document.getElementById("parking-grace-hint");
+            if (!el) return;
+            el.textContent = text || "";
+            el.className = type === "error"
+                ? "text-xs font-bold text-red-600"
+                : type === "success"
+                ? "text-xs font-bold text-emerald-600"
+                : "text-xs font-bold text-slate-500";
+        }
+
+        function feeCalcLabel(item) {
+            const mode = String(item?.calcMode || "per_time");
+            if (mode === "per_entry") return "每次";
+            const unit = Number(item?.unitMinutes || 60);
+            if (unit === 30) return "半小時";
+            return "一小時";
+        }
+
+        function renderFeesSettings() {
+            const listEl = document.getElementById("parking-fee-list");
+            const emptyEl = document.getElementById("parking-fee-empty");
+            if (!listEl || !emptyEl) return;
+
+            const list = (feesCache || [])
+                .filter(x => x && x.start && x.end)
+                .map(x => ({ ...x, dayType: x.dayType || "all" }));
+
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            const sortKey = (x) => {
+                const d = x.dayType === "weekday" ? 0 : x.dayType === "holiday" ? 1 : 2;
+                const s = parseTimeToMinutes(x.start) ?? 0;
+                const e = parseTimeToMinutes(x.end) ?? 0;
+                return [d, s, e];
+            };
+            list.sort((a, b) => {
+                const ak = sortKey(a);
+                const bk = sortKey(b);
+                if (ak[0] !== bk[0]) return ak[0] - bk[0];
+                if (ak[1] !== bk[1]) return ak[1] - bk[1];
+                return ak[2] - bk[2];
+            });
+
+            listEl.innerHTML = list.map(item => {
+                const id = escapeHtml(item.id || "");
+                const label = escapeHtml(dayTypeLabel(item.dayType));
+                const start = escapeHtml(item.start);
+                const end = escapeHtml(item.end);
+                const price = escapeHtml(item.price ?? "");
+                const calc = escapeHtml(feeCalcLabel(item));
+                return `
+                    <div class="flex items-center justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3">
+                        <div class="min-w-0">
+                            <div class="font-bold text-slate-900">${label}　${start}–${end}</div>
+                            <div class="text-xs text-slate-500 font-semibold">費率：${price}（${calc}）</div>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm hover:bg-slate-200 transition" data-fee-edit="${id}">編輯</button>
+                            <button type="button" class="px-3 py-2 rounded-xl bg-red-50 text-red-700 font-bold text-sm hover:bg-red-100 transition" data-fee-del="${id}">刪除</button>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+
+            listEl.querySelectorAll("[data-fee-del]").forEach(btn => {
+                btn.addEventListener("click", async () => {
+                    const id = btn.getAttribute("data-fee-del") || "";
+                    if (!id) return;
+                    const next = (feesCache || []).filter(x => String(x?.id || "") !== id);
+                    try {
+                        await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { fees: next, updatedAt: Date.now() }, { merge: true });
+                        if (feeEditId === id) {
+                            feeEditId = "";
+                            resetFeeForm();
+                        }
+                    } catch {}
+                });
+            });
+
+            listEl.querySelectorAll("[data-fee-edit]").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const id = btn.getAttribute("data-fee-edit") || "";
+                    const item = (feesCache || []).find(x => String(x?.id || "") === id);
+                    if (!item) return;
+                    feeEditId = String(item.id || "");
+                    const dayTypeEl = document.getElementById("parking-fee-daytype");
+                    const startEl = document.getElementById("parking-fee-start");
+                    const endEl = document.getElementById("parking-fee-end");
+                    const priceEl = document.getElementById("parking-fee-price");
+                    if (dayTypeEl) dayTypeEl.value = item.dayType || "all";
+                    if (startEl) startEl.value = item.start || "";
+                    if (endEl) endEl.value = item.end || "";
+                    if (priceEl) priceEl.value = String(item.price ?? "");
+                    const calcMode = String(item.calcMode || "per_time");
+                    document.querySelectorAll("input[name='parking-fee-calc']").forEach(r => {
+                        if (!(r instanceof HTMLInputElement)) return;
+                        r.checked = (r.value === calcMode);
+                    });
+                    const unitEl = document.getElementById("parking-fee-unit");
+                    if (unitEl) unitEl.value = String(item.unitMinutes || 60);
+                    if (unitEl) unitEl.classList.toggle("hidden", calcMode !== "per_time");
+                    const btnSave = document.getElementById("parking-fee-save");
+                    const btnCancel = document.getElementById("parking-fee-cancel");
+                    if (btnSave) btnSave.textContent = "更新";
+                    if (btnCancel) btnCancel.classList.remove("hidden");
+                    setFeeHint("編輯模式", "info");
+                });
+            });
+        }
+
+        function resetFeeForm() {
+            const dayTypeEl = document.getElementById("parking-fee-daytype");
+            const startEl = document.getElementById("parking-fee-start");
+            const endEl = document.getElementById("parking-fee-end");
+            const priceEl = document.getElementById("parking-fee-price");
+            if (dayTypeEl) dayTypeEl.value = "weekday";
+            if (startEl) startEl.value = "";
+            if (endEl) endEl.value = "";
+            if (priceEl) priceEl.value = "";
+            document.querySelectorAll("input[name='parking-fee-calc']").forEach(r => {
+                if (!(r instanceof HTMLInputElement)) return;
+                r.checked = (r.value === "per_time");
+            });
+            const unitEl = document.getElementById("parking-fee-unit");
+            if (unitEl) unitEl.value = "60";
+            if (unitEl) unitEl.classList.remove("hidden");
+            const btnSave = document.getElementById("parking-fee-save");
+            const btnCancel = document.getElementById("parking-fee-cancel");
+            if (btnSave) btnSave.textContent = "新增";
+            if (btnCancel) btnCancel.classList.add("hidden");
+            setFeeHint("");
+        }
+
+        function bindFeesUi() {
+            const btnSave = document.getElementById("parking-fee-save");
+            const btnCancel = document.getElementById("parking-fee-cancel");
+            const unitEl = document.getElementById("parking-fee-unit");
+            document.querySelectorAll("input[name='parking-fee-calc']").forEach(r => {
+                r.addEventListener("change", () => {
+                    const mode = (document.querySelector("input[name='parking-fee-calc']:checked")?.value || "per_time");
+                    if (unitEl) unitEl.classList.toggle("hidden", mode !== "per_time");
+                });
+            });
+            if (btnCancel) {
+                btnCancel.onclick = () => {
+                    feeEditId = "";
+                    resetFeeForm();
+                };
+            }
+            if (!btnSave) return;
+
+            btnSave.onclick = async () => {
+                const dayType = String(document.getElementById("parking-fee-daytype")?.value || "all");
+                const start = String(document.getElementById("parking-fee-start")?.value || "");
+                const end = String(document.getElementById("parking-fee-end")?.value || "");
+                const calcMode = String(document.querySelector("input[name='parking-fee-calc']:checked")?.value || "per_time");
+                const unitMinutesRaw = Number(document.getElementById("parking-fee-unit")?.value || 60);
+                const unitMinutes = unitMinutesRaw === 30 ? 30 : 60;
+                const priceRaw = String(document.getElementById("parking-fee-price")?.value || "").trim();
+                const price = priceRaw === "" ? "" : Number(priceRaw);
+
+                const s = parseTimeToMinutes(start);
+                const e = parseTimeToMinutes(end);
+                if (s === null || e === null) return setFeeHint("請選擇時段", "error");
+                if (s >= e) return setFeeHint("結束時間需大於開始時間", "error");
+                if (priceRaw === "" || !Number.isFinite(price) || price < 0) return setFeeHint("請輸入正確金額", "error");
+
+                const nextItem = {
+                    id: feeEditId || `fee_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+                    dayType,
+                    start,
+                    end,
+                    price: Math.round(price),
+                    calcMode,
+                    unitMinutes: calcMode === "per_time" ? unitMinutes : 0,
+                    updatedAt: Date.now(),
+                    updatedBy: currentUserUid || ""
+                };
+
+                const others = (feesCache || []).filter(x => String(x?.id || "") !== String(nextItem.id || ""));
+                const hasConflict = others.some(x => feeConflicts(nextItem, x));
+                if (hasConflict) return setFeeHint("費率時段重疊，請調整後再儲存", "error");
+
+                const merged = [...others, nextItem];
+                try {
+                    await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), { fees: merged, updatedAt: Date.now() }, { merge: true });
+                    feeEditId = "";
+                    resetFeeForm();
+                    setFeeHint("已儲存", "success");
+                    setTimeout(() => setFeeHint(""), 1200);
+                } catch {
+                    setFeeHint("儲存失敗", "error");
+                }
+            };
+        }
+
+        function renderGraceSettings() {
+            const enabledEl = document.getElementById("parking-grace-enabled");
+            const minutesEl = document.getElementById("parking-grace-minutes");
+            if (enabledEl) enabledEl.checked = !!graceEnabledCache;
+            if (minutesEl) minutesEl.value = String(Number.isFinite(Number(graceMinutesCache)) ? Math.max(0, Math.floor(Number(graceMinutesCache))) : 0);
+        }
+
+        function bindGraceUi() {
+            const btnSave = document.getElementById("parking-grace-save");
+            if (!btnSave) return;
+            btnSave.onclick = async () => {
+                if (!currentSlug) return;
+                const enabled = !!document.getElementById("parking-grace-enabled")?.checked;
+                const minutesRaw = Number(document.getElementById("parking-grace-minutes")?.value || 0);
+                const minutes = Number.isFinite(minutesRaw) ? Math.max(0, Math.floor(minutesRaw)) : 0;
+                try {
+                    await setDoc(doc(db, "communities", currentSlug, "settings", "parking"), {
+                        graceEnabled: enabled,
+                        graceMinutes: minutes,
+                        updatedAt: Date.now()
+                    }, { merge: true });
+                    setGraceHint("已儲存", "success");
+                    setTimeout(() => setGraceHint(""), 1200);
+                } catch {
+                    setGraceHint("儲存失敗", "error");
+                }
+            };
+        }
+
+        function renderSpotGrid() {
+            const grid = document.getElementById("full-parking-grid");
+            if (!grid) return;
+            updateSpaceOpenStatus();
+
+            const list = spotCache
+                .filter(s => activeFloor === "all" ? true : s.floor === activeFloor)
+                .sort((a, b) => String(a.id || "").localeCompare(String(b.id || ""), "en"));
+
+            if (!list.length) {
+                grid.innerHTML = `<div class="col-span-full text-center text-slate-400 font-bold py-16">尚未建立內容</div>`;
+                return;
+            }
+
+            grid.innerHTML = list.map(s => {
+                const tone = spotTone(s.status);
+                const interactive = (s.status === "shared" || s.status === "occupied");
+                let plate = "---";
+                if (s.status === "occupied" && s.currentVisitorPlate) {
+                    plate = escapeHtml(s.currentVisitorPlate);
+                } else if (s.status === "shared") {
+                    plate = "&nbsp;";
+                } else if (s.status === "private" && s.plate) {
+                    plate = escapeHtml(s.plate);
+                }
+                
+                return `
+                    <button type="button" ${interactive ? "" : "disabled"} class="p-3 rounded-xl border-2 ${tone.border} ${tone.bg} flex flex-col items-center justify-center gap-1 transition-all ${interactive ? "hover:border-emerald-200 cursor-pointer" : "opacity-60 cursor-not-allowed"}" data-spot-id="${escapeHtml(s.id)}">
+                        <span class="text-[10px] font-bold text-slate-400 uppercase">${escapeHtml(s.id)}</span>
+                        <div class="w-full h-1 my-1 rounded-full ${tone.bar}"></div>
+                        <span class="text-xs font-mono font-bold ${tone.text}">${plate}</span>
+                    </button>
+                `;
+            }).join("");
+
+            grid.querySelectorAll("[data-spot-id]").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const id = btn.getAttribute("data-spot-id") || "";
+                    const item = spotCache.find(s => s.id === id);
+                    if (!item) return;
+                    if (item.status === "shared" || item.status === "occupied") return openBookingModal(item);
+                });
+            });
+        }
+
+        function renderSpaceFloorFilters() {
+            const wrap = document.getElementById("parking-space-floor-filters");
+            if (!wrap) return;
+
+            const floors = (floorsCache || []).map(normalizeFloorLabel).filter(Boolean);
+            const uniq = Array.from(new Set(floors.length ? floors : ["B1", "B2"]));
+            if (activeFloor !== "all" && !uniq.includes(activeFloor)) activeFloor = "all";
+
+            const btnHtml = (label, value) => {
+                const isActive = activeFloor === value;
+                const base = "px-4 py-2 rounded-lg text-sm font-bold";
+                const cls = isActive ? "bg-emerald-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-50";
+                return `<button type="button" class="${base} ${cls}" data-floor="${escapeHtml(value)}">${escapeHtml(label)}</button>`;
+            };
+
+            wrap.innerHTML = [
+                btnHtml("全部區域", "all"),
+                ...uniq.map(f => btnHtml(`${f} 樓層`, f))
+            ].join("");
+        }
+
+        function bindSpacesUi() {
+            const wrap = document.getElementById("parking-space-floor-filters");
+            const btnAdd = document.getElementById("parking-add-spot");
+            if (wrap) {
+                wrap.addEventListener("click", (e) => {
+                    const t = e.target;
+                    if (!(t instanceof HTMLElement)) return;
+                    const btn = t.closest("[data-floor]");
+                    if (!btn) return;
+                    const floor = String(btn.getAttribute("data-floor") || "");
+                    activeFloor = floor || "all";
+                    renderSpaceFloorFilters();
+                    renderSpotGrid();
+                });
+            }
+            if (btnAdd) btnAdd.onclick = () => openSpotModal({ id: "", status: "shared", plate: "", floor: "" });
+            renderSpaceFloorFilters();
+            updateSpaceOpenStatus();
+        }
+
+        function openSpotModal(spot) {
+            const isNew = !spot || !spot.id;
+            const idVal = spot?.id || "";
+            const statusVal = spot?.status || "shared";
+            const plateVal = spot?.plate || "";
+            const title = isNew ? "新增車位" : "編輯車位";
+
+            openOverlay(`
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div class="text-lg font-bold text-slate-900">${title}</div>
+                    <button type="button" class="text-slate-400 hover:text-slate-700 transition" data-close="1">✕</button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車位代碼</div>
+                        <input id="spot-id" ${isNew ? "" : "readonly"} value="${escapeHtml(idVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 B1-001" />
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">狀態</div>
+                        <select id="spot-status" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="shared" ${statusVal === "shared" ? "selected" : ""}>待租中</option>
+                            <option value="occupied" ${statusVal === "occupied" ? "selected" : ""}>使用中</option>
+                            <option value="private" ${statusVal === "private" ? "selected" : ""}>自用中</option>
+                            <option value="alert" ${statusVal === "alert" ? "selected" : ""}>異常</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車牌</div>
+                        <input id="spot-plate" value="${escapeHtml(plateVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 ABC-1234（可留空）" />
+                    </div>
+                    <div id="spot-hint" class="text-xs font-bold text-slate-500"></div>
+                </div>
+                <div class="p-6 border-t border-slate-100 flex items-center justify-between gap-3">
+                    <div>
+                        ${isNew ? "" : `<button id="spot-delete" type="button" class="px-4 py-2 rounded-xl bg-red-50 text-red-700 font-bold hover:bg-red-100 transition">刪除</button>`}
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition" data-close="1">取消</button>
+                        <button id="spot-save" type="button" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">儲存</button>
+                    </div>
+                </div>
+            `);
+
+            const root = document.getElementById("parking-modal");
+
+            const btnSave = root?.querySelector("#spot-save");
+            const btnDelete = root?.querySelector("#spot-delete");
+            if (btnSave) {
+                btnSave.addEventListener("click", async () => {
+                    const hintEl = root.querySelector("#spot-hint");
+                    const setHint = (text, type = "info") => {
+                        if (!hintEl) return;
+                        hintEl.textContent = text || "";
+                        hintEl.className = type === "error"
+                            ? "text-xs font-bold text-red-600"
+                            : type === "success"
+                            ? "text-xs font-bold text-emerald-600"
+                            : "text-xs font-bold text-slate-500";
+                    };
+
+                    if (!currentSlug) return setHint("尚未選擇社區", "error");
+                    const rawSpotId = String(root.querySelector("#spot-id")?.value || "").trim().toUpperCase();
+                    const status = String(root.querySelector("#spot-status")?.value || "shared");
+                    const plate = String(root.querySelector("#spot-plate")?.value || "").trim().toUpperCase();
+                    if (!rawSpotId) return setHint("請輸入車位代碼", "error");
+                    const m = rawSpotId.match(/^([A-Z0-9]+)[-_ ]?(\d{1,4})$/);
+                    if (!m) return setHint("車位代碼格式錯誤（例如 B1-001）", "error");
+                    const floor = normalizeFloorLabel(m[1]);
+                    const num = String(m[2]).replace(/[^\d]/g, "");
+                    const spotId = `${floor}-${num.padStart(3, "0")}`;
+                    const validFloors = (floorsCache || []).map(normalizeFloorLabel).filter(Boolean);
+                    if (validFloors.length && (!floor || !validFloors.includes(floor))) {
+                        return setHint("樓層未建立，請先到「系統設定 → 停車場樓層」新增", "error");
+                    }
+                    try {
+                        btnSave.disabled = true;
+                        setHint("儲存中...");
+                        await setDoc(doc(db, "communities", currentSlug, "parking_spots", spotId), {
+                            id: spotId,
+                            floor,
+                            status,
+                            plate,
+                            updatedAt: Date.now(),
+                            updatedBy: currentUserUid || ""
+                        }, { merge: true });
+                        closeOverlay();
+                    } catch (err) {
+                        btnSave.disabled = false;
+                        const code = typeof err?.code === "string" ? err.code : "";
+                        const msg = typeof err?.message === "string" ? err.message : "";
+                        const detail = code || msg || "請檢查網路或權限";
+                        setHint(`儲存失敗：${detail}`, "error");
+                    }
+                });
+            }
+            if (btnDelete && !isNew) {
+                btnDelete.addEventListener("click", async () => {
+                    const spotId = String(idVal || "").trim().toUpperCase();
+                    if (!spotId) return;
+                    try {
+                        await deleteDoc(doc(db, "communities", currentSlug, "parking_spots", spotId));
+                        closeOverlay();
+                    } catch {}
+                });
+            }
+        }
+
+        function toDatetimeLocalValue(ms) {
+            const d = new Date(ms);
+            const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+            return local.toISOString().slice(0, 16);
+        }
+
+        function parseDatetimeLocalValue(v) {
+            const s = String(v || "").trim();
+            if (!s) return null;
+            const ms = new Date(s).getTime();
+            return Number.isFinite(ms) ? ms : null;
+        }
+
+        function normalizePlate(v) {
+            return String(v || "").trim().toUpperCase();
+        }
+
+        function getApplicableFeesForDate(date) {
+            const dayType = getTodayDayType(date);
+            return (feesCache || [])
+                .filter(f => f && f.start && f.end && Number.isFinite(Number(f.price)))
+                .filter(f => {
+                    const dt = String(f.dayType || "all");
+                    return dt === "all" || dt === dayType;
+                })
+                .map(f => {
+                    const s = parseTimeToMinutes(f.start);
+                    const e = parseTimeToMinutes(f.end);
+                    const calcMode = String(f.calcMode || "per_time");
+                    const unitMinutesRaw = Number(f.unitMinutes || 60);
+                    const unitMinutes = unitMinutesRaw === 30 ? 30 : 60;
+                    return {
+                        ...f,
+                        _s: s,
+                        _e: e,
+                        calcMode: (calcMode === "per_entry") ? "per_entry" : "per_time",
+                        unitMinutes: calcMode === "per_time" ? unitMinutes : 0,
+                        price: Math.max(0, Math.floor(Number(f.price)))
+                    };
+                })
+                .filter(f => f._s !== null && f._e !== null && f._s < f._e)
+                .sort((a, b) => a._s - b._s);
+        }
+
+        function calcParkingFeeTotal(startMs, endMs) {
+            if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return { totalAmount: 0, uncoveredMinutes: 0 };
+            if (endMs <= startMs) return { totalAmount: 0, uncoveredMinutes: 0 };
+
+            let billStart = startMs;
+            if (graceEnabledCache && graceMinutesCache > 0) {
+                billStart = startMs + graceMinutesCache * 60000;
+                if (billStart >= endMs) return { totalAmount: 0, uncoveredMinutes: 0 };
+            }
+
+            let totalAmount = 0;
+            let uncoveredMinutes = 0;
+            let t = billStart;
+
+            while (t < endMs) {
+                const d = new Date(t);
+                const dayStartMs = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+                const dayEndMs = dayStartMs + 24 * 60 * 60000;
+                const minuteOfDay = Math.floor((t - dayStartMs) / 60000);
+                const fees = getApplicableFeesForDate(d);
+
+                let band = null;
+                for (const f of fees) {
+                    if (f._s <= minuteOfDay && minuteOfDay < f._e) {
+                        band = f;
+                        break;
+                    }
+                }
+
+                if (band) {
+                    const bandEndMs = dayStartMs + band._e * 60000;
+                    const segmentEnd = Math.min(endMs, bandEndMs, dayEndMs);
+                    const segmentMinutes = Math.max(0, (segmentEnd - t) / 60000);
+                    if (band.calcMode === "per_entry") {
+                        totalAmount += band.price;
+                    } else {
+                        const unit = band.unitMinutes === 30 ? 30 : 60;
+                        totalAmount += Math.ceil(segmentMinutes / unit) * band.price;
+                    }
+                    t = segmentEnd;
+                } else {
+                    let nextStart = null;
+                    for (const f of fees) {
+                        if (f._s > minuteOfDay) {
+                            nextStart = f._s;
+                            break;
+                        }
+                    }
+                    const segmentEnd = nextStart === null
+                        ? Math.min(endMs, dayEndMs)
+                        : Math.min(endMs, dayStartMs + nextStart * 60000);
+                    uncoveredMinutes += Math.max(0, (segmentEnd - t) / 60000);
+                    t = segmentEnd;
+                }
+            }
+
+            return {
+                totalAmount: Math.max(0, Math.floor(totalAmount)),
+                uncoveredMinutes: Math.max(0, Math.floor(uncoveredMinutes))
+            };
+        }
+
+        async function openBookingModal(spot) {
+            const spotId = String(spot?.id || "").trim().toUpperCase();
+            if (!currentSlug) return;
+            if (!spotId) return;
+
+            const isOccupied = String(spot?.status || "") === "occupied";
+            const title = isOccupied ? `臨停離場：${escapeHtml(spotId)}` : `臨停進場：${escapeHtml(spotId)}`;
+
+            const now = Date.now();
+            const defaultStart = toDatetimeLocalValue(now);
+            const defaultEnd = toDatetimeLocalValue(now);
+
+            const currentBookingId = String(spot?.currentBookingId || "");
+            let bookingData = null;
+            if (isOccupied && currentBookingId) {
+                try {
+                    const snap = await getDoc(doc(db, "communities", currentSlug, "parking_bookings", currentBookingId));
+                    if (snap.exists()) bookingData = { id: snap.id, ...(snap.data() || {}) };
+                } catch {}
+            }
+
+            const visitTypeVal = String(bookingData?.visitType || "拜訪");
+            const visitHouseNoVal = String(bookingData?.visitHouseNo || "");
+            const visitNoteVal = String(bookingData?.visitNote || "");
+            const plateVal = normalizePlate(bookingData?.visitorPlate || (isOccupied ? (spot?.currentVisitorPlate || "") : ""));
+            const nicknameVal = String(bookingData?.visitorNickname || (isOccupied ? (spot?.currentVisitorNickname || "") : ""));
+            const phoneVal = String(bookingData?.visitorPhone || (isOccupied ? (spot?.currentVisitorPhone || "") : ""));
+            const entryMs = Number.isFinite(Number(bookingData?.startTime)) ? Number(bookingData.startTime) : Number(spot?.currentBookingStartTime || 0);
+            const entryVal = entryMs ? toDatetimeLocalValue(entryMs) : "";
+            const startVal = bookingData?.startTime ? toDatetimeLocalValue(Number(bookingData.startTime)) : defaultStart;
+            const plannedMinutesVal = Number.isFinite(Number(bookingData?.plannedMinutes)) ? String(Number(bookingData.plannedMinutes)) : "60";
+            const endVal = bookingData?.endTime ? toDatetimeLocalValue(Number(bookingData.endTime)) : defaultEnd;
+            const paymentMethodVal = String(bookingData?.paymentMethod || "現金");
+
+            openOverlay(`
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div class="text-lg font-bold text-slate-900">${title}</div>
+                    <button type="button" class="text-slate-400 hover:text-slate-700 transition" data-close="1">✕</button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <button type="button" class="px-4 py-3 rounded-2xl font-bold text-sm border-2 transition ${visitTypeVal === "拜訪" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}" data-visit-type="拜訪">拜訪</button>
+                        <button type="button" class="px-4 py-3 rounded-2xl font-bold text-sm border-2 transition ${visitTypeVal === "洽公" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}" data-visit-type="洽公">洽公</button>
+                    </div>
+                    <div id="booking-visit-house-wrap" class="${visitTypeVal === "拜訪" ? "" : "hidden"}">
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">拜訪戶號</div>
+                        <input id="booking-visit-house" value="${escapeHtml(visitHouseNoVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 A棟12樓之3" />
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">備註（選填）</div>
+                        <input id="booking-visit-note" value="${escapeHtml(visitNoteVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 洽公/送貨/維修/訪客姓名" />
+                    </div>
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">臨停車牌</div>
+                        <input id="booking-plate" value="${escapeHtml(plateVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 ABC-1234" ${(isOccupied && plateVal) ? "readonly" : ""} />
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車主暱稱</div>
+                            <input id="booking-nickname" value="${escapeHtml(nicknameVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 王先生/小美" />
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車主手機</div>
+                            <input id="booking-phone" value="${escapeHtml(phoneVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 09xxxxxxxx" />
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4 ${isOccupied ? "hidden" : ""}">
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">開始停車</div>
+                            <input id="booking-start" type="datetime-local" value="${escapeHtml(startVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">預計停放（分鐘）</div>
+                            <input id="booking-planned-minutes" type="number" min="1" step="1" value="${escapeHtml(plannedMinutesVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                        </div>
+                    </div>
+                    <div class="${isOccupied ? "" : "hidden"}">
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">進場時間</div>
+                        <input id="booking-entry" type="datetime-local" value="${escapeHtml(entryVal)}" readonly class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4" />
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">離開時間</div>
+                        <input id="booking-end" type="datetime-local" value="${escapeHtml(endVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                    </div>
+                    <div class="${isOccupied ? "" : "hidden"}">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                <div class="text-[11px] font-bold text-slate-500">停留時間</div>
+                                <div id="booking-duration" class="text-xl font-extrabold text-slate-800">0 分鐘</div>
+                            </div>
+                            <div class="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-100">
+                                <div class="text-[11px] font-bold text-slate-500">收費總計</div>
+                                <div id="booking-total" class="text-xl font-extrabold text-emerald-700">NT$ 0</div>
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">收費方式</div>
+                            <select id="booking-paymethod" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                ${(paymentMethodsCache || ["現金"]).map(v => {
+                                    const m = String(v || "").trim();
+                                    if (!m) return "";
+                                    const sel = (m === paymentMethodVal) ? "selected" : "";
+                                    return `<option value="${escapeHtml(m)}" ${sel}>${escapeHtml(m)}</option>`;
+                                }).join("")}
+                            </select>
+                        </div>
+                    </div>
+                    <div id="booking-hint" class="text-xs font-bold text-slate-500"></div>
+                </div>
+                <div class="p-6 border-t border-slate-100 flex items-center justify-between gap-3">
+                    <button type="button" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition" data-close="1">取消</button>
+                    <button id="booking-save" type="button" class="px-4 py-2 rounded-xl ${isOccupied ? "bg-blue-600 hover:bg-blue-700" : "bg-emerald-600 hover:bg-emerald-700"} text-white font-bold transition">${isOccupied ? "確認離場" : "建立臨停"}</button>
+                </div>
+            `);
+
+            const root = document.getElementById("parking-modal");
+            const hintEl = root?.querySelector("#booking-hint");
+            const setHint = (text, type = "info") => {
+                if (!hintEl) return;
+                hintEl.textContent = text || "";
+                hintEl.className = type === "error"
+                    ? "text-xs font-bold text-red-600"
+                    : type === "success"
+                    ? "text-xs font-bold text-emerald-600"
+                    : "text-xs font-bold text-slate-500";
+            };
+
+            const startMsForCalc = entryMs;
+            const totalEl = root?.querySelector("#booking-total");
+            const durationEl = root?.querySelector("#booking-duration");
+            const endInput = root?.querySelector("#booking-end");
+            const paySel = root?.querySelector("#booking-paymethod");
+            const calcAndRenderTotal = () => {
+                if (!isOccupied || !endInput) return;
+                const endMs = parseDatetimeLocalValue(endInput.value);
+                if (!Number.isFinite(startMsForCalc) || !Number.isFinite(endMs) || endMs <= startMsForCalc) {
+                    if (totalEl) totalEl.textContent = "NT$ 0";
+                    if (durationEl) durationEl.textContent = "0 分鐘";
+                    return;
+                }
+                const { totalAmount } = calcParkingFeeTotal(startMsForCalc, endMs);
+                if (totalEl) totalEl.textContent = `NT$ ${Math.max(0, Math.floor(totalAmount))}`;
+                
+                const stayMinutes = Math.max(0, Math.floor((endMs - startMsForCalc) / 60000));
+                if (durationEl) {
+                    const hh = Math.floor(stayMinutes / 60);
+                    const mm = stayMinutes % 60;
+                    durationEl.textContent = hh > 0 ? `${hh} 小時 ${mm} 分鐘` : `${mm} 分鐘`;
+                }
+            };
+            if (isOccupied && endInput) {
+                endInput.addEventListener("change", calcAndRenderTotal);
+                endInput.addEventListener("input", calcAndRenderTotal);
+                calcAndRenderTotal();
+            }
+
+            const visitHouseWrap = root?.querySelector("#booking-visit-house-wrap");
+            let selectedVisitType = visitTypeVal;
+            root?.querySelectorAll("[data-visit-type]").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const next = String(btn.getAttribute("data-visit-type") || "");
+                    if (!next) return;
+                    selectedVisitType = next;
+                    root.querySelectorAll("[data-visit-type]").forEach(b => {
+                        const v = String(b.getAttribute("data-visit-type") || "");
+                        if (v === selectedVisitType) {
+                            b.className = "px-4 py-3 rounded-2xl font-bold text-sm border-2 transition border-emerald-500 bg-emerald-50 text-emerald-700";
+                        } else {
+                            b.className = "px-4 py-3 rounded-2xl font-bold text-sm border-2 transition border-slate-200 text-slate-600 hover:bg-slate-50";
+                        }
+                    });
+                    if (visitHouseWrap) {
+                        if (selectedVisitType === "拜訪") visitHouseWrap.classList.remove("hidden");
+                        else visitHouseWrap.classList.add("hidden");
+                    }
+                });
+            });
+
+            const btnSave = root?.querySelector("#booking-save");
+            if (!btnSave) return;
+            btnSave.addEventListener("click", async () => {
+                if (!currentSlug) return setHint("尚未選擇社區", "error");
+
+                const plate = normalizePlate(root.querySelector("#booking-plate")?.value || "");
+                const nickname = String(root.querySelector("#booking-nickname")?.value || "").trim();
+                const phone = String(root.querySelector("#booking-phone")?.value || "").trim();
+                const visitHouseNo = String(root.querySelector("#booking-visit-house")?.value || "").trim();
+                const visitNote = String(root.querySelector("#booking-visit-note")?.value || "").trim();
+                const paymethod = String(paySel?.value || "現金").trim() || "現金";
+
+                if (!plate) return setHint("請輸入臨停車牌", "error");
+                if (!phone) return setHint("請輸入車主手機", "error");
+                if (selectedVisitType === "拜訪" && !visitHouseNo) return setHint("請輸入拜訪戶號", "error");
+
+                const spotRef = doc(db, "communities", currentSlug, "parking_spots", spotId);
+
+                try {
+                    btnSave.disabled = true;
+                    setHint("處理中...");
+
+                    if (!isOccupied) {
+                        const startMs = parseDatetimeLocalValue(root.querySelector("#booking-start")?.value || "");
+                        const plannedMinutesRaw = Number(root.querySelector("#booking-planned-minutes")?.value || 0);
+                        const plannedMinutes = Number.isFinite(plannedMinutesRaw) ? Math.max(1, Math.floor(plannedMinutesRaw)) : 60;
+                        if (!startMs) {
+                            btnSave.disabled = false;
+                            return setHint("請選擇開始停車時間", "error");
+                        }
+                        const plannedEndTime = startMs + plannedMinutes * 60000;
+
+                        const bookingsCol = collection(db, "communities", currentSlug, "parking_bookings");
+                        const bookingRef = await addDoc(bookingsCol, {
+                            spotId,
+                            visitorPlate: plate,
+                            visitorNickname: nickname,
+                            visitorPhone: phone,
+                            visitType: selectedVisitType,
+                            visitHouseNo: selectedVisitType === "拜訪" ? visitHouseNo : "",
+                            visitNote,
+                            startTime: startMs,
+                            plannedMinutes,
+                            plannedEndTime,
+                            status: "active",
+                            createdAt: Date.now(),
+                            createdBy: currentUserUid || ""
+                        });
+
+                        await setDoc(spotRef, {
+                            status: "occupied",
+                            currentBookingId: bookingRef.id,
+                            currentVisitorPlate: plate,
+                            currentVisitorNickname: nickname,
+                            currentVisitorPhone: phone,
+                            currentBookingStartTime: startMs,
+                            currentBookingPlannedEndTime: plannedEndTime,
+                            updatedAt: Date.now(),
+                            updatedBy: currentUserUid || ""
+                        }, { merge: true });
+
+                        try {
+                            await addDoc(collection(db, "communities", currentSlug, "parking_notifications"), {
+                                spotId,
+                                type: "occupied",
+                                bookingId: bookingRef.id,
+                                visitorPlate: plate,
+                                startTime: startMs,
+                                plannedEndTime,
+                                createdAt: Date.now()
+                            });
+                        } catch {}
+
+                        setHint("已建立臨停紀錄", "success");
+                        setTimeout(() => closeOverlay(), 350);
+                        return;
+                    }
+
+                    const endMs = parseDatetimeLocalValue(root.querySelector("#booking-end")?.value || "");
+                    if (!endMs) {
+                        btnSave.disabled = false;
+                        return setHint("請選擇離開時間", "error");
+                    }
+                    if (!Number.isFinite(startMsForCalc) || endMs <= startMsForCalc) {
+                        btnSave.disabled = false;
+                        return setHint("離開時間需晚於開始時間", "error");
+                    }
+                    const { totalAmount } = calcParkingFeeTotal(startMsForCalc, endMs);
+                    const totalAmountInt = Math.max(0, Math.floor(totalAmount));
+
+                    if (currentBookingId) {
+                        await updateDoc(doc(db, "communities", currentSlug, "parking_bookings", currentBookingId), {
+                            endTime: endMs,
+                            totalAmount: totalAmountInt,
+                            paymentMethod: paymethod,
+                            status: "completed",
+                            updatedAt: Date.now(),
+                            updatedBy: currentUserUid || ""
+                        });
+                    } else {
+                        const bookingsCol = collection(db, "communities", currentSlug, "parking_bookings");
+                        await addDoc(bookingsCol, {
+                            spotId,
+                            visitorPlate: plate,
+                            visitorNickname: nickname,
+                            visitorPhone: phone,
+                            visitType: selectedVisitType,
+                            visitHouseNo: selectedVisitType === "拜訪" ? visitHouseNo : "",
+                            visitNote,
+                            startTime: startMsForCalc || Date.now(),
+                            plannedMinutes: 0,
+                            plannedEndTime: 0,
+                            endTime: endMs,
+                            totalAmount: totalAmountInt,
+                            paymentMethod: paymethod,
+                            status: "completed",
+                            createdAt: Date.now(),
+                            createdBy: currentUserUid || ""
+                        });
+                    }
+
+                    try {
+                        await addDoc(collection(db, "communities", currentSlug, "parking_notifications"), {
+                            spotId,
+                            type: "left",
+                            bookingId: currentBookingId || "",
+                            visitorPlate: plate,
+                            startTime: startMsForCalc || 0,
+                            endTime: endMs,
+                            createdAt: Date.now()
+                        });
+                    } catch {}
+
+                    await setDoc(spotRef, {
+                        status: "shared",
+                        currentBookingId: "",
+                        currentVisitorPlate: "",
+                        currentVisitorNickname: "",
+                        currentVisitorPhone: "",
+                        currentBookingStartTime: 0,
+                        currentBookingPlannedEndTime: 0,
+                        updatedAt: Date.now(),
+                        updatedBy: currentUserUid || ""
+                    }, { merge: true });
+
+                    setHint("已記錄離場時間", "success");
+                    setTimeout(() => closeOverlay(), 350);
+                } catch (err) {
+                    btnSave.disabled = false;
+                    const code = typeof err?.code === "string" ? err.code : "";
+                    const msg = typeof err?.message === "string" ? err.message : "";
+                    const detail = code || msg || "請檢查網路或權限";
+                    setHint(`失敗：${detail}`, "error");
+                }
+            });
+        }
+
+        function subscribeSpaces() {
+            if (!currentSlug) return;
+            if (spotsUnsub) { spotsUnsub(); spotsUnsub = null; }
+            spotsUnsub = onSnapshot(collection(db, "communities", currentSlug, "parking_spots"), (snap) => {
+                spotCache = snap.docs.map(d => ({ ...(d.data() || {}), id: d.id }));
+                renderSpotGrid();
+                renderDashboard();
+            }, () => {
+                spotCache = [];
+                renderSpotGrid();
+                renderDashboard();
+            });
+        }
+
+        function renderResidents() {
+            const listEl = document.getElementById("parking-spots-list");
+            const emptyEl = document.getElementById("parking-spots-empty");
+            const countEl = document.getElementById("parking-resident-count");
+            if (!listEl || !emptyEl) return;
+
+            const q = String(document.getElementById("parking-user-search")?.value || "").trim().toLowerCase();
+            let list = residentsCache;
+            if (q) {
+                list = list.filter(r => {
+                    const name = String(r.name || "").toLowerCase();
+                    const plate = String(r.plate || "").toLowerCase();
+                    const floor = String(r.floor || "").toLowerCase();
+                    const spotNo = String(r.spotNo || "").toLowerCase();
+                    const spotId = String(r.spotId || "").toLowerCase();
+                    return name.includes(q) || plate.includes(q) || spotId.includes(q) || floor.includes(q) || spotNo.includes(q);
+                });
+            }
+            if (countEl) countEl.textContent = `${list.length} 筆`;
+
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            listEl.innerHTML = list.map(r => {
+                const name = escapeHtml(r.name || "");
+                const plate = escapeHtml(r.plate || "—");
+                const floor = String(r.floor || "");
+                const spotNo = String(r.spotNo || "");
+                const spotId = String(r.spotId || "");
+                const displaySpot = (() => {
+                    if (floor && spotNo) {
+                        const padded = String(spotNo).padStart(3, "0");
+                        return `${floor}-${padded}`;
+                    }
+                    if (spotId) return spotId;
+                    return "—";
+                })();
+                const initial = escapeHtml((r.name || r.plate || "住").trim().slice(0, 1));
+                return `
+                    <div class="border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-4">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold overflow-hidden">${initial}</div>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <div class="font-bold text-slate-900 truncate">${escapeHtml(displaySpot)}</div>
+                                </div>
+                                <div class="text-xs text-slate-500 font-semibold truncate">姓名：${name || "—"}　車牌：${plate}</div>
+                            </div>
+                        </div>
+                        <button type="button" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm hover:bg-slate-200 transition" data-resident-id="${escapeHtml(r.id)}">編輯</button>
+                    </div>
+                `;
+            }).join("");
+
+            listEl.querySelectorAll("[data-resident-id]").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const id = btn.getAttribute("data-resident-id") || "";
+                    const item = residentsCache.find(r => r.id === id);
+                    if (item) openResidentModal(item);
+                });
+            });
+        }
+
+        function openResidentModal(resident) {
+            const isNew = !resident || !resident.id;
+            const title = isNew ? "新增車位" : "編輯車位";
+            const uidVal = resident?.uid || "";
+            const nameVal = resident?.name || "";
+            const plateVal = resident?.plate || "";
+            const spotVal = resident?.spotId || "";
+            const parsedSpot = (() => {
+                const m = String(spotVal || "").toUpperCase().match(/^(B\d+)[- ]?(\d{1,4})$/);
+                if (m) return { floor: m[1], spotNo: m[2] };
+                return { floor: String(resident?.floor || "").toUpperCase(), spotNo: String(resident?.spotNo || "") };
+            })();
+            const phoneVal = resident?.phone || "";
+            const emailVal = resident?.email || "";
+
+            const floorOptions = (() => {
+                const list = (floorsCache || []).map(normalizeFloorLabel).filter(Boolean);
+                const uniq = Array.from(new Set(list.length ? list : ["B1", "B2"]));
+                return uniq.map(f => `<option value="${escapeHtml(f)}" ${parsedSpot.floor === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("");
+            })();
+
+            openOverlay(`
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div class="text-lg font-bold text-slate-900">${title}</div>
+                    <button type="button" class="text-slate-400 hover:text-slate-700 transition" data-close="1">✕</button>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">姓名</div>
+                        <input id="r-name" value="${escapeHtml(nameVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 王小明" />
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車牌</div>
+                            <input id="r-plate" value="${escapeHtml(plateVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="例如 ABC-1234" />
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">車位</div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <select id="r-floor" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                    <option value="">樓層</option>
+                                    ${floorOptions}
+                                </select>
+                                <input id="r-spot-no" value="${escapeHtml(parsedSpot.spotNo)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="車位號碼" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">手機</div>
+                            <input id="r-phone" value="${escapeHtml(phoneVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="可留空" />
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Email</div>
+                            <input id="r-email" value="${escapeHtml(emailVal)}" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="可留空" />
+                        </div>
+                    </div>
+                    <div id="r-hint" class="text-xs font-bold text-slate-500"></div>
+                </div>
+                <div class="p-6 border-t border-slate-100 flex items-center justify-between gap-3">
+                    <div>
+                        ${isNew ? "" : `<button id="r-delete" type="button" class="px-4 py-2 rounded-xl bg-red-50 text-red-700 font-bold hover:bg-red-100 transition">刪除</button>`}
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" class="px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold hover:bg-slate-200 transition" data-close="1">取消</button>
+                        <button id="r-save" type="button" class="px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition">儲存</button>
+                    </div>
+                </div>
+            `);
+
+            const root = document.getElementById("parking-modal");
+            const btnSave = root?.querySelector("#r-save");
+            const btnDelete = root?.querySelector("#r-delete");
+
+            if (btnSave) {
+                btnSave.addEventListener("click", async () => {
+                    const hintEl = root.querySelector("#r-hint");
+                    const setHint = (text, type = "info") => {
+                        if (!hintEl) return;
+                        hintEl.textContent = text || "";
+                        hintEl.className = type === "error"
+                            ? "text-xs font-bold text-red-600"
+                            : type === "success"
+                            ? "text-xs font-bold text-emerald-600"
+                            : "text-xs font-bold text-slate-500";
+                    };
+
+                    if (!currentSlug) return setHint("尚未選擇社區", "error");
+                    const name = String(root.querySelector("#r-name")?.value || "").trim();
+                    const plate = String(root.querySelector("#r-plate")?.value || "").trim().toUpperCase();
+                    const floor = String(root.querySelector("#r-floor")?.value || "").trim().toUpperCase();
+                    const spotNoRaw = String(root.querySelector("#r-spot-no")?.value || "").trim();
+                    const spotNo = spotNoRaw ? String(spotNoRaw).replace(/[^\d]/g, "") : "";
+                    const spotId = (floor && spotNo) ? `${floor}-${String(spotNo).padStart(3, "0")}` : "";
+                    const phone = String(root.querySelector("#r-phone")?.value || "").trim();
+                    const email = String(root.querySelector("#r-email")?.value || "").trim();
+                    if (!floor) return setHint("請選擇樓層", "error");
+                    if (!spotNo) return setHint("請輸入車位號碼", "error");
+
+                    const validFloors = (floorsCache || []).map(normalizeFloorLabel).filter(Boolean);
+                    if (validFloors.length && !validFloors.includes(floor)) {
+                        return setHint("樓層未建立，請先到「系統設定 → 停車場樓層」新增", "error");
+                    }
+
+                    const data = { uid: uidVal, name, plate, floor, spotNo: spotNo || "", spotId, phone, email, updatedAt: Date.now(), updatedBy: currentUserUid || "" };
+                    try {
+                        btnSave.disabled = true;
+                        setHint("儲存中...");
+                        
+                        // 同步更新 parking_residents
+                        if (isNew) {
+                            await setDoc(doc(db, "communities", currentSlug, "parking_residents", spotId), { ...data, createdAt: Date.now(), createdBy: currentUserUid || "" }, { merge: true });
+                        } else {
+                            const prevId = String(resident.id || "");
+                            if (prevId && prevId !== spotId) {
+                                await setDoc(doc(db, "communities", currentSlug, "parking_residents", spotId), { ...data, createdAt: resident.createdAt || Date.now(), createdBy: resident.createdBy || "" }, { merge: true });
+                                await deleteDoc(doc(db, "communities", currentSlug, "parking_residents", prevId));
+                            } else {
+                                await setDoc(doc(db, "communities", currentSlug, "parking_residents", prevId || spotId), data, { merge: true });
+                            }
+                        }
+
+                        // 同步更新 parking_spots (確保即時車位看得到)
+                        const spotRef = doc(db, "communities", currentSlug, "parking_spots", spotId);
+                        const spotSnap = await getDoc(spotRef);
+                        if (!spotSnap.exists()) {
+                            // 若車位文件不存在，建立一個預設為「自用中」的文件
+                            await setDoc(spotRef, {
+                                id: spotId,
+                                floor: floor,
+                                plate: plate,
+                                status: "private",
+                                updatedAt: Date.now()
+                            });
+                        } else {
+                            // 若已存在，僅更新車牌（狀態保留原樣，可能是住戶已開啟分享）
+                            await updateDoc(spotRef, {
+                                plate: plate,
+                                floor: floor,
+                                updatedAt: Date.now()
+                            });
+                        }
+
+                        closeOverlay();
+                    } catch (err) {
+                        btnSave.disabled = false;
+                        const code = typeof err?.code === "string" ? err.code : "";
+                        const msg = typeof err?.message === "string" ? err.message : "";
+                        const detail = code || msg || "請檢查網路或權限";
+                        setHint(`儲存失敗：${detail}`, "error");
+                    }
+                });
+            }
+            if (btnDelete && !isNew) {
+                btnDelete.addEventListener("click", async () => {
+                    try {
+                        // 刪除住戶資料
+                        await deleteDoc(doc(db, "communities", currentSlug, "parking_residents", resident.id));
+                        // 同步刪除即時車位監控資料 (或改為設為空車位)
+                        await deleteDoc(doc(db, "communities", currentSlug, "parking_spots", resident.id));
+                        closeOverlay();
+                    } catch {}
+                });
+            }
+        }
+
+        function subscribeResidents() {
+            if (!currentSlug) return;
+            if (residentsUnsub) { residentsUnsub(); residentsUnsub = null; }
+            residentsUnsub = onSnapshot(collection(db, "communities", currentSlug, "parking_residents"), (snap) => {
+                residentsCache = snap.docs.map(d => ({ ...(d.data() || {}), id: d.id }));
+                residentsCache.sort((a, b) => String(a.spotId || "").localeCompare(String(b.spotId || ""), "en"));
+                if (activeUsersTab === "spots") renderResidents();
+            }, () => {
+                residentsCache = [];
+                if (activeUsersTab === "spots") renderResidents();
+            });
+        }
+
+        function renderCommunityResidents() {
+            const listEl = document.getElementById("parking-community-residents-list");
+            const emptyEl = document.getElementById("parking-community-residents-empty");
+            const countEl = document.getElementById("parking-resident-count");
+            if (!listEl || !emptyEl) return;
+
+            const q = String(document.getElementById("parking-user-search")?.value || "").trim().toLowerCase();
+            let list = communityResidentsCache;
+            if (q) {
+                list = list.filter(r => {
+                    const name = String(r.displayName || "").toLowerCase();
+                    const houseNo = String(r.houseNo || "").toLowerCase();
+                    const email = String(r.email || "").toLowerCase();
+                    return name.includes(q) || houseNo.includes(q) || email.includes(q);
+                });
+            }
+            if (countEl) countEl.textContent = `${list.length} 筆`;
+
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            listEl.innerHTML = list.map(r => {
+                const name = escapeHtml(r.displayName || (r.email ? String(r.email).split("@")[0] : "") || "—");
+                const houseNo = escapeHtml(r.houseNo || "—");
+                const phone = escapeHtml(r.phone || "—");
+                return `
+                    <div class="border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-4">
+                        <div class="min-w-0">
+                            <div class="font-bold text-slate-900 truncate">${name}</div>
+                            <div class="text-xs text-slate-500 font-semibold truncate">戶號：${houseNo}　手機：${phone}</div>
+                        </div>
+                        <button type="button" class="px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition whitespace-nowrap" data-add-spot="${escapeHtml(r.id)}">新增車位</button>
+                    </div>
+                `;
+            }).join("");
+
+            listEl.querySelectorAll("[data-add-spot]").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const id = btn.getAttribute("data-add-spot") || "";
+                    const u = communityResidentsCache.find(x => x.id === id);
+                    if (!u) return;
+                    const firstFloor = (floorsCache && floorsCache.length) ? floorsCache[0] : "";
+                    openResidentModal({
+                        id: "",
+                        uid: u.id,
+                        name: u.displayName || (u.email ? String(u.email).split("@")[0] : "") || "",
+                        phone: u.phone || "",
+                        email: u.email || "",
+                        floor: firstFloor,
+                        spotNo: ""
+                    });
+                });
+            });
+        }
+
+        function subscribeCommunityResidents() {
+            if (!currentSlug) return;
+            if (communityResidentsUnsub) { communityResidentsUnsub(); communityResidentsUnsub = null; }
+            const q = query(
+                collection(db, "users"),
+                where("community", "==", currentSlug),
+                where("role", "==", "住戶")
+            );
+            communityResidentsUnsub = onSnapshot(q, (snap) => {
+                const list = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+                communityResidentsCache = list.filter(u => Number(u.subNo) === 1);
+                communityResidentsCache.sort((a, b) => String(a.houseNo || "").localeCompare(String(b.houseNo || ""), "en"));
+                if (activeUsersTab === "residents") renderCommunityResidents();
+            }, () => {
+                communityResidentsCache = [];
+                if (activeUsersTab === "residents") renderCommunityResidents();
+            });
+        }
+
+        function bindResidentsUi() {
+            const btnAdd = document.getElementById("parking-add-resident");
+            const search = document.getElementById("parking-user-search");
+            const tabSpots = document.getElementById("parking-tab-spots");
+            const tabResidents = document.getElementById("parking-tab-residents");
+            const spotsList = document.getElementById("parking-spots-list");
+            const spotsEmpty = document.getElementById("parking-spots-empty");
+            const residentsList = document.getElementById("parking-community-residents-list");
+            const residentsEmpty = document.getElementById("parking-community-residents-empty");
+
+            const setTab = (tab) => {
+                activeUsersTab = tab;
+                const isSpots = tab === "spots";
+                if (tabSpots) {
+                    tabSpots.className = isSpots
+                        ? "px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-sm"
+                        : "px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm";
+                }
+                if (tabResidents) {
+                    tabResidents.className = !isSpots
+                        ? "px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-sm"
+                        : "px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm";
+                }
+                if (spotsList) spotsList.classList.toggle("hidden", !isSpots);
+                if (spotsEmpty) spotsEmpty.classList.toggle("hidden", !isSpots);
+                if (residentsList) residentsList.classList.toggle("hidden", isSpots);
+                if (residentsEmpty) residentsEmpty.classList.toggle("hidden", isSpots);
+
+                if (search) search.placeholder = isSpots ? "搜尋車位 / 車牌 / 姓名" : "搜尋戶號 / 姓名 / Email";
+                if (btnAdd) {
+                    btnAdd.classList.toggle("hidden", !isSpots);
+                    btnAdd.textContent = "新增車位";
+                }
+
+                if (isSpots) {
+                    subscribeResidents();
+                    renderResidents();
+                } else {
+                    subscribeCommunityResidents();
+                    renderCommunityResidents();
+                }
+            };
+
+            if (tabSpots) tabSpots.onclick = () => setTab("spots");
+            if (tabResidents) tabResidents.onclick = () => setTab("residents");
+            if (btnAdd) btnAdd.onclick = () => openResidentModal({ id: "", name: "", plate: "", spotId: "", floor: "", spotNo: "", phone: "", email: "" });
+            if (search) search.addEventListener("input", () => {
+                if (activeUsersTab === "spots") renderResidents();
+                else renderCommunityResidents();
+            });
+
+            setTab(activeUsersTab);
+        }
+
+        function ensureParkingBindings() {
+            if (window.__parkingAdminBound) return;
+            window.__parkingAdminBound = true;
+            bindSpacesUi();
+            bindResidentsUi();
+            bindFloorsUi();
+            bindFeesUi();
+            bindPaymentMethodsUi();
+            bindGraceUi();
+            setInterval(() => {
+                try { updateSpaceOpenStatus(); } catch {}
+                try { renderDashboard(); } catch {}
+            }, 30 * 1000);
+            setInterval(() => {
+                try { updateDashboardRevenue(); } catch {}
+            }, 5 * 60 * 1000);
+            window.parkingOnTabChange = (tabId) => {
+                if (!currentSlug) return;
+                if (tabId === "spaces") {
+                    subscribeSpaces();
+                    updateSpaceOpenStatus();
+                    renderDashboard();
+                } else if (tabId === "users") {
+                    if (activeUsersTab === "spots") subscribeResidents();
+                    else subscribeCommunityResidents();
+                } else if (tabId === "finance") {
+                    ensureFinanceBindings();
+                    refreshFinance();
+                } else if (tabId === "settings") {
+                    subscribeFloors();
+                }
+            };
+        }
+
+        let financeBound = false;
+        let financeActiveSubtab = "daily";
+        let financeCacheKey = "";
+        let financeRowsCache = [];
+
+        function moneyLabel(n) {
+            const v = Number.isFinite(Number(n)) ? Math.max(0, Math.floor(Number(n))) : 0;
+            return `NT$ ${v.toLocaleString("zh-Hant-TW")}`;
+        }
+
+        function financeWeekdayLabel(ymd) {
+            try {
+                const d = new Date(`${ymd}T00:00:00`);
+                return d.toLocaleDateString("zh-Hant-TW", { weekday: "short" });
+            } catch {
+                return "";
+            }
+        }
+
+        function financeNormalizeRange(a, b) {
+            const start = String(a || "");
+            const end = String(b || "");
+            if (!start || !end) return { start, end };
+            return start <= end ? { start, end } : { start: end, end: start };
+        }
+
+        function financeDefaultRange() {
+            const end = ymdKey(new Date());
+            const d = new Date();
+            d.setDate(d.getDate() - 29);
+            const start = ymdKey(d);
+            return { start, end };
+        }
+
+        function setFinanceHint(text, type = "info") {
+            const el = document.getElementById("finance-hint");
+            if (!el) return;
+            el.textContent = text || "";
+            el.className = type === "error"
+                ? "text-xs font-bold text-red-600"
+                : type === "success"
+                ? "text-xs font-bold text-emerald-600"
+                : "text-xs font-bold text-slate-500";
+        }
+
+        function switchFinanceSubtab(next) {
+            const dailyBtn = document.getElementById("finance-subtab-daily");
+            const statsBtn = document.getElementById("finance-subtab-stats");
+            const dailyView = document.getElementById("finance-view-daily");
+            const statsView = document.getElementById("finance-view-stats");
+            if (!dailyBtn || !statsBtn || !dailyView || !statsView) return;
+            financeActiveSubtab = next === "stats" ? "stats" : "daily";
+
+            const setBtn = (btn, active) => {
+                btn.className = active
+                    ? "px-4 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm"
+                    : "px-4 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-sm";
+            };
+            setBtn(dailyBtn, financeActiveSubtab === "daily");
+            setBtn(statsBtn, financeActiveSubtab === "stats");
+            dailyView.classList.toggle("hidden", financeActiveSubtab !== "daily");
+            statsView.classList.toggle("hidden", financeActiveSubtab !== "stats");
+        }
+
+        function ensureFinanceBindings() {
+            if (financeBound) return;
+            financeBound = true;
+
+            const dailyBtn = document.getElementById("finance-subtab-daily");
+            const statsBtn = document.getElementById("finance-subtab-stats");
+            const startEl = document.getElementById("finance-date-start");
+            const endEl = document.getElementById("finance-date-end");
+            const applyEl = document.getElementById("finance-date-apply");
+
+            const def = financeDefaultRange();
+            if (startEl && !startEl.value) startEl.value = def.start;
+            if (endEl && !endEl.value) endEl.value = def.end;
+
+            if (dailyBtn) dailyBtn.onclick = () => {
+                switchFinanceSubtab("daily");
+                renderFinance();
+            };
+            if (statsBtn) statsBtn.onclick = () => {
+                switchFinanceSubtab("stats");
+                renderFinance();
+            };
+            if (applyEl) applyEl.onclick = () => refreshFinance(true);
+
+            switchFinanceSubtab(financeActiveSubtab);
+        }
+
+        async function loadFinanceRows(start, end) {
+            if (!currentSlug) return [];
+            const ref = collection(db, "communities", currentSlug, "parking_income_daily");
+            const snap = await getDocs(ref);
+            const list = snap.docs.map(d => {
+                const data = d.data() || {};
+                const total = Number(data.total || 0);
+                return { ymd: d.id, total: Number.isFinite(total) ? total : 0 };
+            });
+            const norm = financeNormalizeRange(start, end);
+            const filtered = list.filter(r => {
+                if (!r.ymd) return false;
+                if (norm.start && r.ymd < norm.start) return false;
+                if (norm.end && r.ymd > norm.end) return false;
+                return true;
+            });
+            filtered.sort((a, b) => String(b.ymd).localeCompare(String(a.ymd), "en"));
+            return filtered;
+        }
+
+        function renderFinanceDaily(rows, range) {
+            const totalEl = document.getElementById("finance-daily-total");
+            const daysEl = document.getElementById("finance-daily-days");
+            const avgEl = document.getElementById("finance-daily-avg");
+            const countEl = document.getElementById("finance-daily-count");
+            const bodyEl = document.getElementById("finance-daily-tbody");
+            const emptyEl = document.getElementById("finance-daily-empty");
+
+            const days = rows.length;
+            const sum = rows.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
+            const avg = days ? sum / days : 0;
+
+            if (totalEl) totalEl.textContent = moneyLabel(sum);
+            if (daysEl) daysEl.textContent = String(days);
+            if (avgEl) avgEl.textContent = moneyLabel(avg);
+            if (countEl) countEl.textContent = range?.start && range?.end ? `${range.start} ～ ${range.end}` : `${days} 筆`;
+
+            if (!bodyEl || !emptyEl) return;
+            if (!rows.length) {
+                bodyEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+            bodyEl.innerHTML = rows.map(r => {
+                const ymd = escapeHtml(r.ymd || "");
+                const wk = escapeHtml(financeWeekdayLabel(r.ymd || ""));
+                const total = moneyLabel(r.total || 0);
+                return `
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-6 py-4 font-bold text-slate-800 whitespace-nowrap">${ymd}</td>
+                        <td class="px-6 py-4 text-slate-500 font-semibold whitespace-nowrap">${wk}</td>
+                        <td class="px-6 py-4 font-bold text-slate-800 text-right whitespace-nowrap">${escapeHtml(total)}</td>
+                    </tr>
+                `;
+            }).join("");
+        }
+
+        function renderFinanceStats(rows, range) {
+            const totalEl = document.getElementById("finance-stats-total");
+            const avgEl = document.getElementById("finance-stats-avg");
+            const maxEl = document.getElementById("finance-stats-max");
+            const maxDateEl = document.getElementById("finance-stats-max-date");
+            const minEl = document.getElementById("finance-stats-min");
+            const minDateEl = document.getElementById("finance-stats-min-date");
+
+            const days = rows.length;
+            const sum = rows.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
+            const avg = days ? sum / days : 0;
+            const maxRow = rows.reduce((best, r) => best == null || (Number(r.total) || 0) > (Number(best.total) || 0) ? r : best, null);
+            const minRow = rows.reduce((best, r) => best == null || (Number(r.total) || 0) < (Number(best.total) || 0) ? r : best, null);
+
+            if (totalEl) totalEl.textContent = moneyLabel(sum);
+            if (avgEl) avgEl.textContent = moneyLabel(avg);
+            if (maxEl) maxEl.textContent = moneyLabel(maxRow?.total || 0);
+            if (maxDateEl) maxDateEl.textContent = maxRow?.ymd ? String(maxRow.ymd) : "";
+            if (minEl) minEl.textContent = moneyLabel(minRow?.total || 0);
+            if (minDateEl) minDateEl.textContent = minRow?.ymd ? String(minRow.ymd) : "";
+
+            const monthlyBody = document.getElementById("finance-monthly-tbody");
+            const monthlyEmpty = document.getElementById("finance-monthly-empty");
+            const monthlyCount = document.getElementById("finance-monthly-count");
+            if (monthlyBody && monthlyEmpty && monthlyCount) {
+                const map = new Map();
+                rows.forEach(r => {
+                    const ymd = String(r.ymd || "");
+                    const ym = ymd.slice(0, 7);
+                    if (!ym) return;
+                    map.set(ym, (map.get(ym) || 0) + (Number(r.total) || 0));
+                });
+                const items = Array.from(map.entries())
+                    .map(([ym, total]) => ({ ym, total }))
+                    .sort((a, b) => String(b.ym).localeCompare(String(a.ym), "en"));
+                monthlyCount.textContent = range?.start && range?.end ? `${range.start} ～ ${range.end}` : `${items.length} 筆`;
+                if (!items.length) {
+                    monthlyBody.innerHTML = "";
+                    monthlyEmpty.classList.remove("hidden");
+                } else {
+                    monthlyEmpty.classList.add("hidden");
+                    monthlyBody.innerHTML = items.map(x => `
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-6 py-4 font-bold text-slate-800 whitespace-nowrap">${escapeHtml(x.ym)}</td>
+                            <td class="px-6 py-4 font-bold text-slate-800 text-right whitespace-nowrap">${escapeHtml(moneyLabel(x.total))}</td>
+                        </tr>
+                    `).join("");
+                }
+            }
+
+            const chartEl = document.getElementById("finance-chart");
+            const chartEmpty = document.getElementById("finance-chart-empty");
+            const chartRange = document.getElementById("finance-chart-range");
+            if (chartEl && chartEmpty && chartRange) {
+                const asc = rows.slice().sort((a, b) => String(a.ymd).localeCompare(String(b.ymd), "en"));
+                const last = asc.slice(-14);
+                chartRange.textContent = last.length ? `${last[0].ymd} ～ ${last[last.length - 1].ymd}` : "";
+                const max = last.reduce((m, r) => Math.max(m, Number(r.total) || 0), 0);
+                if (!last.length) {
+                    chartEl.innerHTML = "";
+                    chartEmpty.classList.remove("hidden");
+                } else {
+                    chartEmpty.classList.add("hidden");
+                    chartEl.innerHTML = last.map(r => {
+                        const h = max ? Math.max(2, Math.round(((Number(r.total) || 0) / max) * 100)) : 2;
+                        const ymd = escapeHtml(r.ymd || "");
+                        const label = escapeHtml(String(r.ymd || "").slice(5));
+                        const value = escapeHtml(moneyLabel(r.total || 0));
+                        return `
+                            <div class="flex-1 min-w-[10px] group" title="${ymd} ${value}">
+                                <div class="w-full bg-emerald-600/80 rounded-lg transition-all group-hover:bg-emerald-600" style="height:${h}%;"></div>
+                                <div class="mt-2 text-[10px] text-slate-400 font-bold text-center whitespace-nowrap">${label}</div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+            }
+        }
+
+        function renderFinance() {
+            const startEl = document.getElementById("finance-date-start");
+            const endEl = document.getElementById("finance-date-end");
+            const norm = financeNormalizeRange(startEl?.value || "", endEl?.value || "");
+            if (financeActiveSubtab === "stats") renderFinanceStats(financeRowsCache || [], norm);
+            else renderFinanceDaily(financeRowsCache || [], norm);
+        }
+
+        async function refreshFinance(force = false) {
+            const startEl = document.getElementById("finance-date-start");
+            const endEl = document.getElementById("finance-date-end");
+            if (!startEl || !endEl) return;
+
+            const norm = financeNormalizeRange(startEl.value || "", endEl.value || "");
+            const key = `${currentSlug}|${norm.start}|${norm.end}`;
+            if (!force && key === financeCacheKey && Array.isArray(financeRowsCache)) {
+                renderFinance();
+                return;
+            }
+            financeCacheKey = key;
+            financeRowsCache = [];
+            setFinanceHint("載入中…");
+            try {
+                financeRowsCache = await loadFinanceRows(norm.start, norm.end);
+                setFinanceHint("");
+                renderFinance();
+            } catch {
+                financeRowsCache = [];
+                setFinanceHint("載入失敗，請稍後再試", "error");
+                renderFinance();
+            }
+        }
+
+        function toLogin() {
+            const redirect = encodeURIComponent(window.location.pathname + window.location.search + window.location.hash);
+            window.location.replace(`parking-login.html?redirect=${redirect}`);
+        }
+
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                toLogin();
+                return;
+            }
+            const role = normalizeRole(await getOrCreateUserRole(user.uid, user.email));
+            const ok = (role === "系統管理員" || role === "社區");
+            if (!ok) {
+                try { await signOut(auth); } catch {}
+                toLogin();
+                return;
+            }
+            currentRole = role;
+            currentUserUid = user.uid || "";
+
+            const profile = await getUserProfile(user.uid);
+            setUserUi({ displayName: profile.displayName, email: user.email, role, photoURL: profile.photoURL || user.photoURL });
+
+            const userCommunity = profile.community || "";
+            const reqSlug = getQueryParam("c") || localStorage.getItem("parkingCurrentCommunity") || "";
+
+            let slug = "";
+            if (role === "系統管理員") {
+                slug = reqSlug || userCommunity;
+                if (!slug) {
+                    const list = await listCommunities();
+                    slug = (list[0] && list[0].id) ? list[0].id : "";
+                }
+            } else {
+                slug = userCommunity || reqSlug || "";
+            }
+
+            if (!slug) return;
+            currentSlug = slug;
+            ensureParkingBindings();
+
+            if (role !== "系統管理員" && reqSlug && reqSlug !== slug) {
+                setCommunityInUrl(slug);
+            } else {
+                setCommunityInUrl(slug);
+            }
+            try { localStorage.setItem("parkingCurrentCommunity", slug); } catch {}
+
+            const cname = await getCommunityName(slug);
+            setCommunityLabel(cname);
+            try { document.title = `綠色停車系統｜${cname}`; } catch {}
+
+            const switcher = document.getElementById("parking-switcher");
+            if (switcher) switcher.classList.toggle("hidden", role !== "系統管理員");
+
+            if (role === "系統管理員") {
+                const select = document.getElementById("parking-community-select");
+                const apply = document.getElementById("parking-community-apply");
+                if (select) {
+                    const list = await listCommunities();
+                    select.innerHTML = list.map(c => {
+                        const label = c.name || c.id;
+                        const sel = c.id === slug ? " selected" : "";
+                        return `<option value="${c.id}"${sel}>${label}</option>`;
+                    }).join("");
+                }
+                if (apply) {
+                    apply.onclick = () => {
+                        const next = select ? select.value : "";
+                        if (!next || next === slug) return;
+                        try { localStorage.setItem("parkingCurrentCommunity", next); } catch {}
+                        const url = new URL(window.location.href);
+                        url.searchParams.set("c", next);
+                        window.location.href = url.toString();
+                    };
+                }
+            }
+            subscribeFloors();
+            subscribeSpaces();
+            renderDashboard();
+            updateDashboardRevenue();
+
+            try {
+                const activeView = document.querySelector(".tab-content.active");
+                const activeId = activeView ? (activeView.getAttribute("id") || "") : "";
+                if (activeId === "view-users") subscribeResidents();
+            } catch {}
+        });
+
+        const btnLogout = document.getElementById("parking-logout");
+        if (btnLogout) {
+            btnLogout.addEventListener("click", async () => {
+                try { await signOut(auth); } finally { window.location.href = "parking-login.html"; }
+            });
+        }
+
+        let deferredPrompt = null;
+        const logo = document.getElementById("parking-app-logo");
+        const updateInstallUi = () => {
+            const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+            if (logo) logo.style.cursor = (!isStandalone && deferredPrompt) ? "pointer" : "default";
+        };
+        window.addEventListener("beforeinstallprompt", (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            updateInstallUi();
+        });
+        window.addEventListener("appinstalled", () => {
+            deferredPrompt = null;
+            updateInstallUi();
+        });
+        if (logo) {
+            logo.addEventListener("click", async () => {
+                const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+                if (isStandalone || !deferredPrompt) return;
+                deferredPrompt.prompt();
+                try { await deferredPrompt.userChoice; } catch {}
+                deferredPrompt = null;
+                updateInstallUi();
+            });
+        }
+        if ("serviceWorker" in navigator) {
+            try { await navigator.serviceWorker.register("./sw.js"); } catch {}
+        }
+    </script>
+</body>
+</html>

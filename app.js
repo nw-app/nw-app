@@ -7062,7 +7062,7 @@ const adminSubMenus = {
   announce: [{ key: "announce_list", label: "社區園地" }],
   residents: ["住戶", "點數", "通知", "警報", "設定"],
   communities: ["列表"],
-  others: ["日誌", "班表", "通訊", "巡邏", "設定"]
+  others: ["日誌", "班表", "通訊", "巡邏", { key: "設定", label: "綠色停車" }]
 };
 
 async function renderAdminCommunities() {
@@ -12045,7 +12045,27 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
   }
   if (mainKey === "others") {
     if (sub === "日誌") {
-      adminNav.content.innerHTML = `<div class="card data-card"><div class="card-head"><h1 class="card-title">日誌</h1></div><div class="empty-hint">尚未建立內容</div></div>`;
+      (async () => {
+        let slug = window.currentAdminCommunitySlug || localStorage.getItem("adminCurrentCommunity") || getSlugFromPath() || getQueryParam("c") || "default";
+        if (slug === "default" && auth.currentUser) {
+          try {
+            slug = await getUserCommunity(auth.currentUser.uid);
+            window.currentAdminCommunitySlug = slug;
+            localStorage.setItem("adminCurrentCommunity", slug);
+          } catch {}
+        }
+        const url = `https://nw-com.github.io/nw-checkin-all-2026/schedule.html?=${encodeURIComponent(slug)}`;
+        adminNav.content.innerHTML = `
+          <div class="card data-card" style="height: calc(80vh - 24px); margin: 12px auto; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="card-head"><h1 class="card-title">日誌</h1></div>
+            <div style="flex: 1 1 auto; padding: 12px 16px 16px; overflow: hidden;">
+              <div style="width:100%; height:100%; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff;">
+                <iframe class="link-view-iframe" src="${url}" frameborder="0" allow="clipboard-read; clipboard-write; geolocation"></iframe>
+              </div>
+            </div>
+          </div>
+        `;
+      })();
       return;
     }
     if (sub === "班表") {

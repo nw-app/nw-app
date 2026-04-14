@@ -9,7 +9,11 @@ service cloud.firestore {
     function isAdmin() {
       return (request.auth != null && request.auth.token.email == "nwapp.eason@gmail.com")
         || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) 
-            && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == "系統管理員");
+            && (
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == "系統管理員"
+              || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == "系統管理者"
+            )
+          );
     }
 
     function isCommunityStaff() {
@@ -40,6 +44,14 @@ service cloud.firestore {
         isAdmin() || 
         (isCommunityStaff() && resource.data.community == getUserData().community)
       );
+
+      // 住戶錢包與收益
+      match /wallet/{walletId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+      match /parking_earnings/{docId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+      }
     }
     
     match /user_lookup/{phone} {
@@ -67,6 +79,31 @@ service cloud.firestore {
       match /settings/{settingId} {
         // 允許任何人讀取設定 (for 設施預覽頁面)
         allow read: if true;
+        allow write: if request.auth != null && (isAdmin() || (isCommunityStaff() && slug == getUserData().community));
+      }
+
+      match /parking_spots/{spotId} {
+        allow read: if request.auth != null && (isAdmin() || slug == getUserData().community);
+        // 允許管理員寫入，或允許該社區的住戶寫入自己的車位
+        allow write: if request.auth != null && (
+          isAdmin() || 
+          (isCommunityStaff() && slug == getUserData().community) || 
+          (slug == getUserData().community)
+        );
+      }
+
+      match /parking_residents/{docId} {
+        allow read, list: if request.auth != null && (isAdmin() || slug == getUserData().community || docId == request.auth.uid || resource.data.uid == request.auth.uid);
+        allow write: if request.auth != null && (isAdmin() || (isCommunityStaff() && slug == getUserData().community) || docId == request.auth.uid || resource.data.uid == request.auth.uid);
+      }
+
+      match /parking_income_daily/{dayId} {
+        allow read: if request.auth != null && (isAdmin() || (isCommunityStaff() && slug == getUserData().community));
+        allow write: if request.auth != null && (isAdmin() || (isCommunityStaff() && slug == getUserData().community));
+      }
+
+      match /parking_notifications/{nid} {
+        allow read, list: if request.auth != null && (isAdmin() || slug == getUserData().community);
         allow write: if request.auth != null && (isAdmin() || (isCommunityStaff() && slug == getUserData().community));
       }
 
@@ -133,6 +170,16 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (
           isAdmin() || (isCommunityStaff() && slug == getUserData().community)
         );
+      }
+
+      match /parking_schedules/{sid} {
+        allow read: if request.auth != null && (isAdmin() || slug == getUserData().community || resource.data.uid == request.auth.uid);
+        allow write: if request.auth != null && (isAdmin() || (slug == getUserData().community && (request.resource.data.uid == request.auth.uid || resource.data.uid == request.auth.uid)));
+      }
+
+      match /parking_bookings/{bid} {
+        allow read, list: if request.auth != null && (isAdmin() || slug == getUserData().community);
+        allow write: if request.auth != null && (isAdmin() || slug == getUserData().community);
       }
     }
 

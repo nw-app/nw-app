@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>綠色停車｜登入</title>
+  <link rel="manifest" href="parking-manifest.json">
+  <meta name="theme-color" content="#059669">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-100 flex items-center justify-center p-6 text-slate-900">
+  <main class="w-full max-w-md">
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+      <div class="p-8 border-b border-slate-100">
+        <div class="flex items-center gap-3">
+          <div id="parking-app-logo" class="bg-emerald-500 p-2 rounded-lg text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="w-6 h-6"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"></path><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"></path></svg>
+          </div>
+          <div>
+            <div class="text-lg font-bold text-slate-900">綠色停車</div>
+          </div>
+        </div>
+      </div>
+      <div class="p-8">
+        <form id="parking-login-form" class="space-y-5">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider">帳號（Email 或手機）</label>
+              <label class="flex items-center gap-2 text-xs font-bold text-slate-500 select-none cursor-pointer">
+                <input id="remember-me" type="checkbox" class="accent-emerald-600" />
+                記住我
+              </label>
+            </div>
+            <input id="login-input" type="text" autocomplete="username" class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="請輸入 Email 或手機號碼" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">密碼</label>
+            <div class="relative">
+              <input id="password-input" type="password" autocomplete="current-password" class="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-4 pr-12 py-3 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="請輸入密碼" />
+              <button id="toggle-password" type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition" aria-label="顯示密碼">
+                <svg id="eye-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+          </div>
+          <div id="hint" class="text-sm text-slate-500 min-h-[20px]"></div>
+          <button id="btn-login" type="submit" class="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 active:scale-[0.99] transition">
+            登入
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, setPersistence, browserLocalPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+    import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+    const defaultFirebaseConfig = {
+      apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+      authDomain: "nw-app-all.firebaseapp.com",
+      projectId: "nw-app-all",
+      storageBucket: "nw-app-all.firebasestorage.app",
+      messagingSenderId: "205108931232",
+      appId: "1:205108931232:web:ee7868f73ed883253577c5",
+      measurementId: "G-8F1WD772LP"
+    };
+
+    let firebaseConfig = defaultFirebaseConfig;
+    try {
+      const savedConfig = localStorage.getItem("nw_firebase_config");
+      if (savedConfig) firebaseConfig = { ...defaultFirebaseConfig, ...JSON.parse(savedConfig) };
+    } catch {}
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = initializeFirestore(app, { experimentalForceLongPolling: true, useFetchStreams: false });
+
+    const form = document.getElementById("parking-login-form");
+    const loginInputEl = document.getElementById("login-input");
+    const passwordEl = document.getElementById("password-input");
+    const hintEl = document.getElementById("hint");
+    const btnLogin = document.getElementById("btn-login");
+    const rememberMeEl = document.getElementById("remember-me");
+    const btnTogglePassword = document.getElementById("toggle-password");
+    const eyeIcon = document.getElementById("eye-icon");
+
+    const showHint = (text, type = "info") => {
+      hintEl.textContent = text || "";
+      hintEl.style.color = type === "error" ? "#b91c1c" : type === "success" ? "#059669" : "#64748b";
+    };
+
+    const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+    const normalizeRole = (role) => (role === "系統管理者" ? "系統管理員" : role);
+
+    const loadRememberState = () => {
+      try {
+        const remember = localStorage.getItem("parkingRememberMe") === "1";
+        if (rememberMeEl) rememberMeEl.checked = remember;
+        if (remember) {
+          const savedLogin = localStorage.getItem("parkingRememberLogin") || "";
+          if (savedLogin && loginInputEl && !loginInputEl.value) loginInputEl.value = savedLogin;
+        }
+      } catch {}
+    };
+
+    const saveRememberState = () => {
+      try {
+        const remember = !!(rememberMeEl && rememberMeEl.checked);
+        localStorage.setItem("parkingRememberMe", remember ? "1" : "0");
+        if (remember) localStorage.setItem("parkingRememberLogin", (loginInputEl && loginInputEl.value ? loginInputEl.value.trim() : ""));
+        else localStorage.removeItem("parkingRememberLogin");
+      } catch {}
+    };
+
+    loadRememberState();
+    if (rememberMeEl) rememberMeEl.addEventListener("change", saveRememberState);
+    if (loginInputEl) loginInputEl.addEventListener("blur", () => {
+      if (rememberMeEl && rememberMeEl.checked) saveRememberState();
+    });
+
+    if (btnTogglePassword && passwordEl) {
+      btnTogglePassword.addEventListener("click", () => {
+        const isHidden = passwordEl.type === "password";
+        passwordEl.type = isHidden ? "text" : "password";
+        btnTogglePassword.setAttribute("aria-label", isHidden ? "隱藏密碼" : "顯示密碼");
+        if (eyeIcon) {
+          eyeIcon.innerHTML = isHidden
+            ? '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-10-8-10-8a21.78 21.78 0 0 1 5.06-6.94"></path><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 10 8 10 8a21.78 21.78 0 0 1-2.6 4.06"></path><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"></path><path d="M1 1l22 22"></path>'
+            : '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle>';
+        }
+      });
+    }
+
+    async function getOrCreateUserRole(uid, email) {
+      const ref = doc(db, "users", uid);
+      try {
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const data = snap.data() || {};
+          if (email === "nwapp.eason@gmail.com") {
+            if (data.role !== "系統管理員" && data.role !== "系統管理者") {
+              try { await setDoc(ref, { role: "系統管理員", status: "啟用" }, { merge: true }); } catch {}
+            }
+            return "系統管理員";
+          }
+          if (data.status === "停用") return "停用";
+          const role = data.role || "住戶";
+          return normalizeRole(role);
+        }
+        try {
+          const base = { email, role: email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶", status: "啟用", createdAt: Date.now() };
+          await setDoc(ref, base, { merge: true });
+        } catch {}
+        return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
+      } catch {
+        return email === "nwapp.eason@gmail.com" ? "系統管理員" : "住戶";
+      }
+    }
+
+    async function getUserCommunity(uid) {
+      try {
+        const snap = await getDoc(doc(db, "users", uid));
+        if (snap.exists()) {
+          const d = snap.data() || {};
+          return d.community || "";
+        }
+      } catch {}
+      return "";
+    }
+
+    async function getFirstCommunitySlug() {
+      try {
+        const snap = await getDocs(collection(db, "communities"));
+        if (snap.docs && snap.docs.length) return snap.docs[0].id;
+      } catch {}
+      return "";
+    }
+
+    function getRedirect() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get("redirect");
+        if (!raw) return null;
+        const target = new URL(raw, window.location.origin);
+        if (target.origin !== window.location.origin) return null;
+        return target.pathname + target.search + target.hash;
+      } catch {
+        return null;
+      }
+    }
+
+    async function decideDestinationByRole(role, uid) {
+      const userSlug = uid ? await getUserCommunity(uid) : "";
+      const savedSlug = (() => {
+        try { return localStorage.getItem("parkingCurrentCommunity") || ""; } catch { return ""; }
+      })();
+      const fallbackSlug = (role === "系統管理員") ? (savedSlug || userSlug || await getFirstCommunitySlug()) : userSlug;
+
+      if (role === "住戶") return fallbackSlug ? `parking-p.html?c=${encodeURIComponent(fallbackSlug)}` : "parking-p.html";
+      if (role === "社區") return fallbackSlug ? `parking-c.html?c=${encodeURIComponent(fallbackSlug)}` : "parking-c.html";
+      if (role === "系統管理員") return fallbackSlug ? `parking-c.html?c=${encodeURIComponent(fallbackSlug)}` : "parking-c.html";
+      return null;
+    }
+
+    function isRoleAllowedForRedirect(role, redirectPath) {
+      role = normalizeRole(role);
+      if (!redirectPath) return true;
+      const path = redirectPath.toLowerCase();
+      if (path.includes("parking-c.html")) return role === "系統管理員" || role === "社區";
+      if (path.includes("parking-p.html")) return role === "住戶";
+      return true;
+    }
+
+    async function resolveEmail(loginInput) {
+      const input = String(loginInput || "").trim();
+      if (isEmail(input)) return input;
+      try {
+        const phoneDoc = await getDoc(doc(db, "user_lookup", input));
+        if (!phoneDoc.exists()) throw { code: "custom/user-not-found" };
+        const data = phoneDoc.data() || {};
+        if (!data.email) throw { code: "custom/user-not-found" };
+        return data.email;
+      } catch (e) {
+        throw e;
+      }
+    }
+
+    async function goAfterLogin(user) {
+      const role = await getOrCreateUserRole(user.uid, user.email);
+      if (role === "停用") {
+        showHint("帳號已停用，請聯繫管理員", "error");
+        await signOut(auth);
+        return;
+      }
+
+      const redirect = getRedirect();
+      if (!isRoleAllowedForRedirect(role, redirect)) {
+        showHint("權限不足", "error");
+        await signOut(auth);
+        return;
+      }
+
+      const destination = redirect || await decideDestinationByRole(role, user.uid);
+      if (!destination) {
+        showHint("權限不足", "error");
+        await signOut(auth);
+        return;
+      }
+
+      window.location.href = destination;
+    }
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        await goAfterLogin(user);
+      } catch {
+        try { await signOut(auth); } catch {}
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const loginInput = loginInputEl.value.trim();
+      const password = passwordEl.value;
+      if (!loginInput || !password) {
+        showHint("請輸入帳號密碼", "error");
+        return;
+      }
+
+      btnLogin.disabled = true;
+      const originalText = btnLogin.textContent;
+      btnLogin.textContent = "登入中...";
+      showHint("");
+
+      try {
+        try {
+          const remember = !!(rememberMeEl && rememberMeEl.checked);
+          await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+        } catch {}
+        saveRememberState();
+        const emailToAuth = await resolveEmail(loginInput);
+        const cred = await signInWithEmailAndPassword(auth, emailToAuth, password);
+        await goAfterLogin(cred.user);
+      } catch (err) {
+        let msg = "登入失敗";
+        if (err?.code === "auth/invalid-credential") msg = "帳號或密碼錯誤";
+        else if (err?.code === "auth/too-many-requests") msg = "嘗試次數過多，請稍後再試";
+        else if (err?.code === "custom/user-not-found") msg = "查無此手機號碼";
+        showHint(msg, "error");
+        btnLogin.disabled = false;
+        btnLogin.textContent = originalText;
+      }
+    });
+
+    let deferredPrompt = null;
+    const logo = document.getElementById("parking-app-logo");
+    const updateInstallUi = () => {
+      const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+      if (logo) logo.style.cursor = (!isStandalone && deferredPrompt) ? "pointer" : "default";
+    };
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      updateInstallUi();
+    });
+    window.addEventListener("appinstalled", () => {
+      deferredPrompt = null;
+      updateInstallUi();
+    });
+    if (logo) {
+      logo.addEventListener("click", async () => {
+        const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+        if (isStandalone || !deferredPrompt) return;
+        deferredPrompt.prompt();
+        try { await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+        updateInstallUi();
+      });
+    }
+    if ("serviceWorker" in navigator) {
+      try { await navigator.serviceWorker.register("./sw.js"); } catch {}
+    }
+  </script>
+</body>
+</html>

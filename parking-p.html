@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>社區綠色共享停車系統 - 住戶端</title>
+    <link rel="manifest" href="parking-manifest.json">
+    <meta name="theme-color" content="#059669">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .modal { display: none; }
+        .modal.active { display: flex; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        /* 隱藏原生時間輸入框的邊框 */
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 flex justify-center h-screen overflow-hidden">
+
+    <div class="bg-slate-50 w-full max-w-md h-full flex flex-col shadow-2xl relative">
+        <!-- Header -->
+        <header class="bg-white p-6 pb-2 flex items-center justify-between sticky top-0 z-20 shrink-0">
+            <div class="flex items-center gap-3">
+                <div id="parking-app-logo" class="w-10 h-10 bg-emerald-500 rounded-lg text-white shadow-sm flex items-center justify-center overflow-hidden">
+                    <i data-lucide="leaf" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 id="header-title" class="text-xl font-bold text-slate-800"></h1>
+                    <p id="header-spot" class="text-emerald-600 font-bold text-sm"></p>
+                </div>
+            </div>
+            <div id="notify-open" class="relative cursor-pointer">
+                <div class="bg-slate-100 p-2 rounded-full text-slate-600 hover:bg-slate-200 transition-colors">
+                    <i data-lucide="bell" class="w-5 h-5"></i>
+                </div>
+                <span id="notify-dot" class="absolute top-0 right-0 w-3 h-3 bg-red-500 border-2 border-white rounded-full hidden"></span>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main id="main-content" class="flex-1 overflow-y-auto px-5 pt-4 pb-24 text-slate-800">
+            
+            <!-- Home View -->
+            <div id="view-home" class="tab-content active animate-fade-in space-y-6">
+                <section id="sharing-card" class="p-6 rounded-3xl transition-all duration-500 shadow-lg bg-slate-200 text-slate-500">
+                    <div class="flex justify-between items-start mb-6">
+                        <div>
+                            <p class="text-sm opacity-90 font-medium uppercase tracking-wider">共享狀態</p>
+                            <h2 id="sharing-status-text" class="text-3xl font-bold mt-1">已關閉</h2>
+                        </div>
+                        <button id="sharing-toggle-btn" onclick="toggleGlobalSharing()" class="p-4 rounded-2xl shadow-inner transition-all bg-white/20 hover:bg-white/30">
+                            <i data-lucide="power" class="w-6 h-6 text-white"></i>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-2 text-sm bg-black/5 p-3 rounded-xl border border-black/5">
+                        <i data-lucide="info" class="w-4 h-4"></i>
+                        <span id="sharing-hint">車位目前僅供自用，不對外開放</span>
+                    </div>
+                </section>
+
+                <section class="grid grid-cols-2 gap-4">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                        <div class="bg-blue-50 w-10 h-10 rounded-xl flex items-center justify-center text-blue-600 mb-3">
+                            <i data-lucide="wallet" class="w-5 h-5"></i>
+                        </div>
+                        <p class="text-slate-500 text-xs">累計收益</p>
+                        <p class="text-xl font-bold text-slate-800" id="accumulated-earnings">NT$ 0</p>
+                    </div>
+                    <div class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                        <div class="bg-emerald-50 w-10 h-10 rounded-xl flex items-center justify-center text-emerald-600 mb-3">
+                            <i data-lucide="leaf" class="w-5 h-5"></i>
+                        </div>
+                        <p class="text-slate-500 text-xs">減碳貢獻</p>
+                        <p class="text-xl font-bold text-slate-800" id="carbon-reduction">0 kg</p>
+                    </div>
+                </section>
+
+                <section id="upcoming-bookings-section">
+                    <div class="flex items-center justify-between gap-3 mb-3 px-1">
+                        <h3 id="daily-share-title" class="font-bold text-slate-800">— 分享紀錄</h3>
+                        <div class="flex items-center gap-2">
+                            <button id="daily-share-prev" type="button" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm text-slate-500 font-bold hover:bg-slate-50 transition">‹</button>
+                            <button id="daily-share-next" type="button" class="w-9 h-9 rounded-xl bg-white border border-slate-200 shadow-sm text-slate-500 font-bold hover:bg-slate-50 transition">›</button>
+                        </div>
+                    </div>
+                    <div id="upcoming-bookings-header" class="space-y-3 px-1"></div>
+                    <div id="upcoming-bookings-empty" class="text-center text-slate-400 font-bold py-8 hidden">尚無每日分享紀錄</div>
+                </section>
+
+                <section class="bg-orange-50 p-4 rounded-2xl border border-orange-100 flex items-center justify-between">
+                    <div class="flex items-center gap-3 text-orange-700">
+                        <i data-lucide="alert-circle" class="w-5 h-5"></i>
+                        <span class="text-sm font-bold">要提早回家？</span>
+                    </div>
+                    <button id="emergency-recall-btn" class="text-xs font-bold text-orange-700 bg-white px-3 py-1.5 rounded-lg border border-orange-200 active:scale-95 transition-transform">
+                        緊急收回車位
+                    </button>
+                </section>
+            </div>
+
+            <!-- Schedule View -->
+            <div id="view-schedule" class="tab-content animate-fade-in space-y-6">
+                <div class="bg-emerald-600 p-6 rounded-3xl text-white shadow-lg">
+                    <h3 class="text-lg font-bold">自動化排程</h3>
+                    <p class="text-emerald-100 text-xs mt-1">設定您不在家的固定時段，系統將自動開啟共享。</p>
+                </div>
+                <div id="schedule-list" class="space-y-4">
+                    <!-- Schedule Items will be injected here -->
+                </div>
+                <button onclick="openModal()" class="w-full py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 font-bold flex items-center justify-center gap-2 hover:border-emerald-200 hover:text-emerald-500 transition-colors">
+                    <i data-lucide="plus" class="w-5 h-5"></i> 新增排程
+                </button>
+            </div>
+
+            <!-- Wallet View -->
+            <div id="view-wallet" class="tab-content animate-fade-in space-y-6">
+                <div class="bg-slate-900 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+                    <div class="absolute top-0 right-0 p-8 opacity-10 text-white">
+                        <i data-lucide="wallet" class="w-24 h-24"></i>
+                    </div>
+                    <p class="text-slate-400 text-sm">可提領餘額</p>
+                    <h2 id="wallet-balance" class="text-4xl font-bold mt-2">NT$ 0</h2>
+                    <div class="mt-8 flex gap-3">
+                        <button class="flex-1 bg-emerald-500 py-3 rounded-xl font-bold text-sm shadow-lg shadow-emerald-500/20 active:scale-95 transition-transform">立即提領</button>
+                        <button class="flex-1 bg-white/10 py-3 rounded-xl font-bold text-sm border border-white/10 active:scale-95 transition-transform text-white">查看明細</button>
+                    </div>
+                </div>
+                <section>
+                    <div class="flex justify-between items-center mb-4 px-1">
+                        <h3 class="font-bold text-slate-800">最近收益</h3>
+                        <i data-lucide="history" class="w-4 h-4 text-slate-400"></i>
+                    </div>
+                    <div id="recent-earnings-list" class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden text-slate-800">
+                        <!-- Recent earnings will be injected here -->
+                    </div>
+                    <div id="recent-earnings-empty" class="text-center text-slate-400 font-bold py-8 hidden">尚無最近收益</div>
+                </section>
+            </div>
+
+            <!-- Settings View -->
+            <div id="view-settings" class="tab-content animate-fade-in space-y-6">
+                <div class="flex items-center gap-4 px-2 py-4">
+                    <div id="settings-user-avatar" class="w-16 h-16 rounded-2xl bg-slate-200 border-4 border-white shadow-sm flex items-center justify-center overflow-hidden bg-cover bg-center">
+                        <i data-lucide="user" class="w-8 h-8 text-slate-400"></i>
+                    </div>
+                    <div>
+                        <h3 id="settings-user-name" class="font-bold text-lg text-slate-800"></h3>
+                        <p id="settings-user-spot" class="text-xs text-slate-500"></p>
+                    </div>
+                </div>
+                <section class="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden text-slate-800">
+                    <div class="p-4 border-b border-slate-50 flex items-center justify-between cursor-pointer active:bg-slate-50">
+                        <div class="flex items-center gap-3"><i data-lucide="shield-check" class="w-5 h-5 text-slate-400"></i><span class="text-sm font-medium">帳號安全</span></div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                    </div>
+                    <div class="p-4 border-b border-slate-50 flex items-center justify-between cursor-pointer active:bg-slate-50">
+                        <div class="flex items-center gap-3"><i data-lucide="credit-card" class="w-5 h-5 text-slate-400"></i><span class="text-sm font-medium">提領帳戶綁定</span></div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                    </div>
+                    <div class="p-4 flex items-center justify-between cursor-pointer active:bg-slate-50">
+                        <div class="flex items-center gap-3"><i data-lucide="file-text" class="w-5 h-5 text-slate-400"></i><span class="text-sm font-medium">社區共享規範</span></div>
+                        <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+                    </div>
+                </section>
+                <button id="parking-logout" class="w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold flex items-center justify-center gap-2 mt-4 active:scale-95 transition-transform">
+                    <i data-lucide="log-out" class="w-5 h-5"></i> 登出系統
+                </button>
+            </div>
+
+        </main>
+
+        <!-- Navigation -->
+        <nav class="h-20 bg-white/80 backdrop-blur-lg border-t border-slate-100 flex items-center justify-around px-4 pb-4 fixed bottom-0 w-full max-w-md z-20">
+            <button onclick="switchTab('home')" class="nav-btn active flex flex-col items-center gap-1 px-4 text-emerald-600 transition-all">
+                <i data-lucide="leaf" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">主頁</span>
+            </button>
+            <button onclick="switchTab('schedule')" class="nav-btn flex flex-col items-center gap-1 px-4 text-slate-400 hover:text-slate-600 transition-all">
+                <i data-lucide="calendar" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">排程</span>
+            </button>
+            <button onclick="switchTab('wallet')" class="nav-btn flex flex-col items-center gap-1 px-4 text-slate-400 hover:text-slate-600 transition-all">
+                <i data-lucide="wallet" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">錢包</span>
+            </button>
+            <button onclick="switchTab('settings')" class="nav-btn flex flex-col items-center gap-1 px-4 text-slate-400 hover:text-slate-600 transition-all">
+                <i data-lucide="settings" class="w-6 h-6"></i>
+                <span class="text-[10px] font-bold">設定</span>
+            </button>
+        </nav>
+
+        <!-- Modal -->
+        <div id="modal" class="modal fixed inset-0 z-[100] items-end sm:items-center justify-center px-4 py-6">
+            <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal()"></div>
+            <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 relative animate-slide-up text-slate-800">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 id="modal-title" class="text-lg font-bold text-slate-800">新增排程</h3>
+                    <button onclick="closeModal()" class="p-2 text-slate-400 hover:text-slate-600 transition-colors">
+                        <i data-lucide="x" class="w-6 h-6"></i>
+                    </button>
+                </div>
+                <div class="space-y-6">
+                    <div>
+                        <label class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">選擇時段</label>
+                        <div class="grid grid-cols-2 gap-2" id="day-options">
+                            <button onclick="setDay('weekday')" class="day-opt py-3 px-2 rounded-xl text-sm font-bold border-2 transition-all border-emerald-500 bg-emerald-50 text-emerald-700">平日</button>
+                            <button onclick="setDay('holiday')" class="day-opt py-3 px-2 rounded-xl text-sm font-bold border-2 transition-all border-slate-100 text-slate-500">假日</button>
+                            <button onclick="setDay('all')" class="day-opt py-3 px-2 rounded-xl text-sm font-bold border-2 transition-all border-slate-100 text-slate-500">每天</button>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">開始時間</label>
+                            <input id="start-time" type="time" class="w-full bg-slate-50 border-none rounded-xl p-4 font-bold text-slate-700 focus:ring-2 focus:ring-emerald-500" value="09:00">
+                        </div>
+                        <div>
+                            <label class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">結束時間</label>
+                            <input id="end-time" type="time" class="w-full bg-slate-50 border-none rounded-xl p-4 font-bold text-slate-700 focus:ring-2 focus:ring-emerald-500" value="18:00">
+                        </div>
+                    </div>
+                    <div class="pt-4 flex flex-col gap-3">
+                        <button onclick="saveSchedule()" class="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold shadow-lg active:scale-95 transition-transform">確認儲存</button>
+                        <button id="delete-btn" onclick="deleteCurrentSchedule()" class="hidden w-full py-4 bg-red-50 text-red-600 rounded-2xl font-bold flex items-center justify-center gap-2">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i> 刪除此排程
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="notify-modal" class="modal fixed inset-0 z-[110] items-center justify-center px-4 py-6">
+            <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" data-notify-close="1"></div>
+            <div class="bg-white w-full max-w-md h-[80vh] rounded-3xl shadow-2xl overflow-hidden relative animate-slide-up text-slate-800 flex flex-col">
+                <div class="p-5 border-b border-slate-100 flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-slate-800">推撥通知</h3>
+                    <button type="button" class="p-2 text-slate-400 hover:text-slate-600 transition-colors" data-notify-close="1">
+                        <i data-lucide="x" class="w-6 h-6"></i>
+                    </button>
+                </div>
+                <div class="p-5 flex-1 overflow-y-auto">
+                    <div id="notify-list" class="space-y-3"></div>
+                    <div id="notify-empty" class="text-center text-slate-400 font-bold py-10 hidden">尚無通知</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
+        import { initializeFirestore, doc, getDoc, updateDoc, collection, query, where, getDocs, onSnapshot, setDoc, deleteDoc, addDoc, writeBatch, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
+            authDomain: "nw-app-all.firebaseapp.com",
+            projectId: "nw-app-all",
+            storageBucket: "nw-app-all.firebasestorage.app",
+            messagingSenderId: "205108931232",
+            appId: "1:205108931232:web:ee7868f73ed883253577c5",
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = initializeFirestore(app, {
+            experimentalForceLongPolling: true,
+            useFetchStreams: false,
+        });
+
+        const headerTitleEl = document.getElementById('header-title');
+        const headerSpotEl = document.getElementById('header-spot');
+        const settingsUserNameEl = document.getElementById('settings-user-name');
+        const settingsUserSpotEl = document.getElementById('settings-user-spot');
+        const walletBalanceEl = document.getElementById('wallet-balance');
+        const recentEarningsListEl = document.getElementById('recent-earnings-list');
+        const recentEarningsEmptyEl = document.getElementById('recent-earnings-empty');
+
+        // --- 台灣法定假日 (2026範例) ---
+        const TAIWAN_HOLIDAYS_2026 = [
+            '2026-01-01', // 元旦
+            '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', // 春節
+            '2026-02-28', // 228
+            '2026-04-03', '2026-04-04', '2026-04-05', // 清明
+            '2026-05-01', // 勞動節
+            '2026-06-19', // 端午
+            '2026-09-25', // 中秋
+            '2026-10-10', // 國慶
+        ];
+
+        function isTaiwanHoliday(date = new Date()) {
+            const day = date.getDay();
+            const dateStr = date.toISOString().split('T')[0];
+            return day === 0 || day === 6 || TAIWAN_HOLIDAYS_2026.includes(dateStr);
+        }
+
+        const normalizeRole = (role) => (role === "系統管理者" ? "系統管理員" : role);
+
+        function escapeHtml(s) {
+            return String(s ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        async function getUserData(uid) {
+            try {
+                const docRef = doc(db, "users", uid);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    return docSnap.data();
+                }
+            } catch (e) {
+                console.error("Error getting user data:", e);
+            }
+            return null;
+        }
+
+        async function getResidentData(communitySlug, uid) {
+            try {
+                const docRef = doc(db, "communities", communitySlug, "parking_residents", uid);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    return docSnap.data();
+                }
+            } catch (e) {
+                console.error("Error getting resident data:", e);
+            }
+            return null;
+        }
+
+        async function updateHeader(user) {
+            if (!user) {
+                headerTitleEl.innerText = "您好~";
+                headerSpotEl.innerText = "";
+                return;
+            }
+
+            const userData = await getUserData(user.uid);
+            const userName = userData?.displayName || user.email?.split('@')[0] || "訪客";
+            headerTitleEl.innerText = `您好~${userName}`;
+            settingsUserNameEl.innerText = `您好~${userName}`;
+            
+            const avatarEl = document.getElementById("settings-user-avatar");
+            
+            if (userData?.photoURL) {
+                if (avatarEl) {
+                    avatarEl.style.backgroundImage = `url('${userData.photoURL}')`;
+                    avatarEl.innerHTML = "";
+                }
+            } else {
+                if (avatarEl) {
+                    avatarEl.style.backgroundImage = "";
+                    avatarEl.innerHTML = `<i data-lucide="user" class="w-8 h-8 text-slate-400"></i>`;
+                }
+                lucide.createIcons();
+            }
+        }
+
+        // --- 狀態管理 ---
+        let state = {
+            isSharing: true,
+            activeTab: 'home',
+            schedules: [], // 從 Firestore 載入
+            editingId: null,
+            selectedDay: 'weekday',
+            notifications: [],
+            unreadCount: 0,
+            notifyUnsub: null,
+            notifyLastSeenAt: 0,
+            dailyShareDate: "",
+            communityName: ""
+        };
+
+        async function getCommunityName(slug) {
+            const id = String(slug || "").trim();
+            if (!id) return "";
+            try {
+                const snap = await getDoc(doc(db, "communities", id));
+                if (snap.exists()) {
+                    const d = snap.data() || {};
+                    return String(d.name || id);
+                }
+            } catch {}
+            return id;
+        }
+
+        function toDateSafe(v) {
+            if (!v) return null;
+            if (v instanceof Date) return v;
+            if (typeof v === "number") {
+                const d = new Date(v);
+                return Number.isNaN(d.getTime()) ? null : d;
+            }
+            if (typeof v === "string") {
+                const d = new Date(v);
+                return Number.isNaN(d.getTime()) ? null : d;
+            }
+            if (typeof v?.toDate === "function") {
+                try {
+                    const d = v.toDate();
+                    return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+                } catch {
+                    return null;
+                }
+            }
+            if (typeof v?.seconds === "number") {
+                const d = new Date(v.seconds * 1000);
+                return Number.isNaN(d.getTime()) ? null : d;
+            }
+            return null;
+        }
+
+        function formatYmdHm(v) {
+            const d = toDateSafe(v);
+            if (!d) return "—";
+            const ymd = d.toLocaleDateString('zh-TW');
+            const hm = d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+            return `${ymd} ${hm}`;
+        }
+
+        function formatHm24(v) {
+            const d = toDateSafe(v);
+            if (!d) return "—";
+            return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function setDailyShareHeader({ plate, startTime, endTime, status }) {
+            const plateEl = document.getElementById("daily-share-plate");
+            const startEl = document.getElementById("daily-share-start");
+            const endEl = document.getElementById("daily-share-end");
+            const statusEl = document.getElementById("daily-share-status");
+            if (plateEl) plateEl.textContent = plate || "—";
+            if (startEl) startEl.textContent = startTime || "—";
+            if (endEl) endEl.textContent = endTime || "—";
+            if (statusEl) {
+                statusEl.textContent = status || "—";
+                statusEl.className = status === "使用中"
+                    ? "text-sm font-bold text-blue-600 mt-1"
+                    : status === "已完成"
+                    ? "text-sm font-bold text-emerald-600 mt-1"
+                    : "text-sm font-bold text-slate-700 mt-1";
+            }
+        }
+
+        function ymdKey(date = new Date()) {
+            const d = date instanceof Date ? date : new Date(date);
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            return `${y}-${m}-${dd}`;
+        }
+
+        function shiftYmd(dateKey, deltaDays) {
+            const base = String(dateKey || ymdKey(new Date()));
+            const d = new Date(`${base}T00:00:00`);
+            d.setDate(d.getDate() + (Number(deltaDays) || 0));
+            return ymdKey(d);
+        }
+
+        function refreshDailyShareTitle() {
+            const el = document.getElementById("daily-share-title");
+            if (!el) return;
+            const key = String(state.dailyShareDate || ymdKey(new Date()));
+            el.textContent = `${key} 分享紀錄`;
+        }
+
+        function renderDailyShareRecords() {
+            const wrap = document.getElementById("upcoming-bookings-header");
+            const emptyEl = document.getElementById("upcoming-bookings-empty");
+            if (!wrap || !emptyEl) return;
+            const key = String(state.dailyShareDate || ymdKey(new Date()));
+
+            const items = (state.notifications || [])
+                .filter(n => {
+                    const d = toDateSafe(n.createdAt);
+                    if (!d) return false;
+                    return ymdKey(d) === key;
+                })
+                .slice()
+                .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+
+            const cb = state.currentBooking && state.currentBooking.mode === "occupied" ? state.currentBooking : null;
+            if (cb && ymdKey(toDateSafe(cb.startTime || Date.now()) || new Date()) === key) {
+                const hasSame = items.some(x => {
+                    if (String(x?.type || "") !== "occupied") return false;
+                    if (String(x?.visitorPlate || "") !== String(cb.plate || "")) return false;
+                    const a = Number(x?.startTime || 0);
+                    const b = Number(cb.startTime || 0);
+                    return a && b && a === b;
+                });
+                if (!hasSame) {
+                    items.unshift({
+                        type: "occupied",
+                        visitorPlate: cb.plate || "",
+                        startTime: cb.startTime || 0,
+                        plannedEndTime: cb.plannedEndTime || 0,
+                        createdAt: cb.startTime || Date.now()
+                    });
+                }
+            }
+
+            if (!items.length) {
+                wrap.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            wrap.innerHTML = items.map(n => {
+                const type = String(n.type || "");
+                const isUsing = type === "occupied";
+                const plate = escapeHtml(n.visitorPlate || "—");
+                const start = formatHm24(n.startTime || n.createdAt);
+                const end = formatHm24(isUsing ? (n.plannedEndTime || 0) : (n.endTime || 0));
+
+                const border = isUsing ? "border-blue-500" : "border-emerald-500";
+                const badgeCls = isUsing ? "bg-blue-50 text-blue-600" : "bg-emerald-50 text-emerald-600";
+                const badgeText = isUsing ? "使用中" : "已完成";
+
+                return `
+                    <div class="bg-white p-4 rounded-2xl border-l-4 ${border} shadow-sm flex items-center justify-between">
+                        <div class="flex gap-4 items-center min-w-0">
+                            <div class="bg-slate-100 p-2 rounded-lg text-slate-600">
+                                <i data-lucide="navigation" class="w-5 h-5"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="font-bold text-slate-800 truncate">${plate}</p>
+                                <p class="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
+                                    <span>臨停時間：${escapeHtml(start)}</span>
+                                    <span>${isUsing ? "預計離開" : "離開時間"}：${escapeHtml(end)}</span>
+                                </p>
+                            </div>
+                        </div>
+                        <span class="shrink-0 text-[10px] ${badgeCls} px-2 py-1 rounded-full font-bold">${badgeText}</span>
+                    </div>
+                `;
+            }).join("");
+            try { lucide.createIcons(); } catch {}
+        }
+
+        function renderNotifyDot() {
+            const dot = document.getElementById("notify-dot");
+            if (!dot) return;
+            dot.classList.toggle("hidden", !(state.unreadCount > 0));
+        }
+
+        function renderNotifyList() {
+            const listEl = document.getElementById("notify-list");
+            const emptyEl = document.getElementById("notify-empty");
+            if (!listEl || !emptyEl) return;
+            const list = Array.isArray(state.notifications) ? state.notifications : [];
+            if (!list.length) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+            listEl.innerHTML = list.map(n => {
+                const type = String(n.type || "");
+                const createdAt = formatYmdHm(n.createdAt);
+                const plate = escapeHtml(n.visitorPlate || "—");
+                const leave = escapeHtml(formatYmdHm(n.plannedEndTime || n.endTime));
+                const badge = type === "occupied"
+                    ? `<span class="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-full font-bold">使用中</span>`
+                    : `<span class="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full font-bold">已離場</span>`;
+                const title = type === "occupied" ? "臨停車輛使用您的車位" : "臨停車輛已離開您的車位";
+                const sub = type === "occupied"
+                    ? `臨停車牌：${plate}　預計離開：${leave}`
+                    : `臨停車牌：${plate}`;
+                return `
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="font-bold text-slate-800">${escapeHtml(title)}</div>
+                            ${badge}
+                        </div>
+                        <div class="text-xs font-bold text-slate-500 mt-2">${escapeHtml(sub)}</div>
+                        <div class="text-[10px] font-bold text-slate-400 mt-2">${escapeHtml(createdAt)}</div>
+                    </div>
+                `;
+            }).join("");
+            try { lucide.createIcons(); } catch {}
+        }
+
+        function openNotifyModal() {
+            const modal = document.getElementById("notify-modal");
+            if (!modal) return;
+            modal.classList.add("active");
+            const now = Date.now();
+            state.notifyLastSeenAt = now;
+            try { localStorage.setItem("parking_notify_last_seen", String(now)); } catch {}
+            state.unreadCount = 0;
+            renderNotifyDot();
+            renderNotifyList();
+            try { lucide.createIcons(); } catch {}
+        }
+
+        function closeNotifyModal() {
+            const modal = document.getElementById("notify-modal");
+            if (!modal) return;
+            modal.classList.remove("active");
+        }
+
+        function bindNotifyUi() {
+            const btn = document.getElementById("notify-open");
+            const modal = document.getElementById("notify-modal");
+            if (btn) btn.addEventListener("click", () => openNotifyModal());
+            if (modal) {
+                modal.querySelectorAll("[data-notify-close='1']").forEach((el) => {
+                    el.addEventListener("click", () => closeNotifyModal());
+                });
+            }
+        }
+
+        function subscribeNotifications(communitySlug, spotId) {
+            if (!communitySlug || !spotId) return;
+            if (state.notifyUnsub) { try { state.notifyUnsub(); } catch {} state.notifyUnsub = null; }
+            try {
+                const lastSeenRaw = localStorage.getItem("parking_notify_last_seen") || "0";
+                state.notifyLastSeenAt = Number(lastSeenRaw) || 0;
+            } catch {
+                state.notifyLastSeenAt = 0;
+            }
+            const ref = collection(db, "communities", communitySlug, "parking_notifications");
+            const qn = query(ref, where("spotId", "==", spotId), orderBy("createdAt", "desc"), limit(200));
+            state.notifyUnsub = onSnapshot(qn, (snap) => {
+                const items = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+                state.notifications = items;
+                const unread = items.filter(n => {
+                    const t = Number(n.createdAt || 0);
+                    return Number.isFinite(t) && t > state.notifyLastSeenAt;
+                }).length;
+                state.unreadCount = Math.max(0, unread);
+                renderNotifyDot();
+                renderNotifyList();
+                renderDailyShareRecords();
+            }, () => {});
+        }
+
+        // --- 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            bindNotifyUi();
+            state.dailyShareDate = ymdKey(new Date());
+            refreshDailyShareTitle();
+            renderDailyShareRecords();
+
+            const prevBtn = document.getElementById("daily-share-prev");
+            const nextBtn = document.getElementById("daily-share-next");
+            if (prevBtn) prevBtn.addEventListener("click", () => {
+                state.dailyShareDate = shiftYmd(state.dailyShareDate, -1);
+                refreshDailyShareTitle();
+                renderDailyShareRecords();
+            });
+            if (nextBtn) nextBtn.addEventListener("click", () => {
+                const todayKey = ymdKey(new Date());
+                const cur = String(state.dailyShareDate || todayKey);
+                if (cur >= todayKey) return;
+                state.dailyShareDate = shiftYmd(cur, 1);
+                refreshDailyShareTitle();
+                renderDailyShareRecords();
+            });
+
+            
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    await updateHeader(user);
+                    const communitySlug = new URLSearchParams(window.location.search).get('c');
+                    if (communitySlug) {
+                        state.communityName = await getCommunityName(communitySlug);
+                        // 改用 Query 查詢 uid 符合的住戶紀錄
+                        const residentsCol = collection(db, "communities", communitySlug, "parking_residents");
+                        const q = query(residentsCol, where("uid", "==", user.uid));
+                        
+                        onSnapshot(q, (snapshot) => {
+                            if (!snapshot.empty) {
+                                const docSnap = snapshot.docs[0];
+                                const data = docSnap.data();
+                                // 儲存目前的車位資料到全域 state 方便 toggle 使用
+                                state.currentResidentData = { id: docSnap.id, ...data };
+                                 
+                                const spotKey = String(data.spotId || docSnap.id || "").trim();
+                                const communityLabel = String(data.communityName || state.communityName || "").trim();
+                                const left = communityLabel ? `${communityLabel}　` : "";
+                                headerSpotEl.innerText = spotKey ? `${left}車位：${spotKey}` : `${left}尚未綁定車位`;
+                                settingsUserSpotEl.innerText = spotKey ? `${spotKey} 車位持有人` : "";
+                                 
+                                 renderSharingStatus(data.status);
+                                document.getElementById('accumulated-earnings').innerText = `NT$ ${data.accumulated_earnings || 0}`;
+                                document.getElementById('carbon-reduction').innerText = `${data.carbon_reduction || 0} kg`;
+                                if (spotKey) {
+                                    renderBookings(communitySlug, spotKey);
+                                    subscribeNotifications(communitySlug, spotKey);
+                                }
+                            } else {
+                                // 找不到資料時的處理
+                                renderSharingStatus("available");
+                                headerSpotEl.innerText = "尚未綁定車位";
+                            }
+                        });
+
+                        // 監聽排程... (其餘不變)
+                        const schedulesColRef = collection(db, "communities", communitySlug, "parking_schedules");
+                        const qSchedules = query(schedulesColRef, where("uid", "==", user.uid));
+                        onSnapshot(qSchedules, (snapshot) => {
+                            state.schedules = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                            renderSchedules();
+                        });
+
+                        // 監聽錢包餘額
+                        const walletRef = doc(db, "users", user.uid, "wallet", "parking");
+                        onSnapshot(walletRef, (docSnap) => {
+                            if (docSnap.exists()) {
+                                const data = docSnap.data();
+                                walletBalanceEl.innerText = `NT$ ${data.balance || 0}`;
+                            } else {
+                                walletBalanceEl.innerText = `NT$ 0`;
+                            }
+                        });
+
+                        // 監聽最近收益
+                        const earningsColRef = collection(db, "users", user.uid, "parking_earnings");
+                        const qEarnings = query(earningsColRef, orderBy("timestamp", "desc"), limit(5)); // 最近5筆
+                        onSnapshot(qEarnings, (snapshot) => {
+                            if (snapshot.empty) {
+                                recentEarningsEmptyEl.classList.remove('hidden');
+                                recentEarningsListEl.innerHTML = '';
+                            } else {
+                                recentEarningsEmptyEl.classList.add('hidden');
+                                recentEarningsListEl.innerHTML = snapshot.docs.map(doc => {
+                                    const earning = doc.data();
+                                    const date = new Date(earning.timestamp).toLocaleDateString('zh-TW');
+                                    return `
+                                        <div class="p-4 flex items-center justify-between border-b border-slate-50">
+                                            <div class="flex gap-3 items-center">
+                                                <div class="bg-emerald-50 p-2 rounded-lg text-emerald-600"><i data-lucide="arrow-up-right" class="w-4 h-4"></i></div>
+                                                <div><p class="font-bold text-slate-800 text-sm">停車分成 - ${earning.licensePlate || '未知車牌'}</p><p class="text-[10px] text-slate-400">${date}</p></div>
+                                            </div>
+                                            <p class="font-bold text-emerald-600">+ NT$ ${earning.amount}</p>
+                                        </div>
+                                    `;
+                                }).join('');
+                            }
+                            lucide.createIcons();
+                        });
+
+                    }
+                } else {
+                    window.location.href = `parking-login.html?redirect=${encodeURIComponent(window.location.href)}`;
+                }
+            });
+
+            const emergencyRecallBtn = document.getElementById('emergency-recall-btn');
+            if (emergencyRecallBtn) {
+                emergencyRecallBtn.addEventListener('click', async () => {
+                    const user = auth.currentUser;
+                    if (!user || !state.currentResidentData) return;
+
+                    const communitySlug = new URLSearchParams(window.location.search).get('c');
+                    if (!communitySlug) return;
+
+                    const residentData = state.currentResidentData;
+                    const residentRef = doc(db, "communities", communitySlug, "parking_residents", residentData.id);
+
+                    try {
+                        if (state.currentBooking && state.currentBooking.mode === "occupied") {
+                            const plate = state.currentBooking.plate || "—";
+                            const leave = state.currentBooking.leaveLabel || "—";
+                            alert(`目前臨停使用中\n車牌：${plate}\n預計離開：${leave}`);
+                            return;
+                        }
+                        await updateDoc(residentRef, { status: "available" });
+                        
+                        if (residentData.spotId) {
+                            const spotRef = doc(db, "communities", communitySlug, "parking_spots", residentData.spotId);
+                            await updateDoc(spotRef, { status: "available" });
+                        }
+                        console.log("Emergency recall successful.");
+
+                        // 取消所有進行中的預約
+                        const bookingsColRef = collection(db, "communities", communitySlug, "parking_bookings");
+                        const qBookings = query(bookingsColRef, where("spotId", "==", residentData.spotId), where("status", "==", "active"));
+                        const querySnapshot = await getDocs(qBookings);
+                        const batch = writeBatch(db);
+                        querySnapshot.forEach((doc) => {
+                            batch.update(doc.ref, { status: "cancelled" });
+                        });
+                        await batch.commit();
+                        console.log("Active bookings cancelled.");
+                        alert("車位已緊急收回，目前僅供自用。");
+
+                    } catch (e) {
+                        console.error("Error during emergency recall:", e);
+                        alert("緊急收回失敗，請檢查網路或權限 (" + e.message + ")");
+                    }
+                });
+            }
+        });
+
+        // --- 分頁功能 ---
+        function switchTab(tabId) {
+            state.activeTab = tabId;
+            // 更新 UI Content
+            document.querySelectorAll('.tab-content').forEach(view => view.classList.remove('active'));
+            document.getElementById(`view-${tabId}`).classList.add('active');
+            
+            // 無論哪個分頁，都保留顯示原本的姓名標題與車位資訊
+            headerSpotEl.style.display = 'block';
+
+            // 更新 Nav Button 樣式
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('text-emerald-600', 'active');
+                btn.classList.add('text-slate-400');
+            });
+            const activeBtn = Array.from(document.querySelectorAll('.nav-btn')).find(btn => btn.innerText.includes(
+                tabId === 'home' ? '主頁' : (tabId === 'schedule' ? '排程' : (tabId === 'wallet' ? '錢包' : '設定'))
+            ));
+            if (activeBtn) {
+                activeBtn.classList.add('text-emerald-600', 'active');
+                activeBtn.classList.remove('text-slate-400');
+            }
+        }
+
+        // --- 全局共享切換 ---
+        async function toggleGlobalSharing() {
+            const user = auth.currentUser;
+            if (!user || !state.currentResidentData) {
+                alert("找不到您的車位資料，請聯繫管理員");
+                return;
+            }
+            if (state.currentBooking && state.currentBooking.mode === "occupied") {
+                const plate = state.currentBooking.plate || "—";
+                const leave = state.currentBooking.leaveLabel || "—";
+                alert(`目前臨停使用中\n車牌：${plate}\n預計離開：${leave}`);
+                return;
+            }
+
+            const communitySlug = new URLSearchParams(window.location.search).get('c');
+            if (!communitySlug) return;
+
+            const residentData = state.currentResidentData;
+            const currentStatus = residentData.status;
+            const newStatus = currentStatus === "shared" ? "available" : "shared";
+
+            try {
+                // 使用正確的文檔 ID (spotId) 進行更新
+                const residentRef = doc(db, "communities", communitySlug, "parking_residents", residentData.id);
+                await updateDoc(residentRef, { status: newStatus });
+                
+                if (residentData.spotId) {
+                    const spotRef = doc(db, "communities", communitySlug, "parking_spots", residentData.spotId);
+                    await updateDoc(spotRef, { status: newStatus });
+                }
+                console.log("Sharing status updated to:", newStatus);
+            } catch (e) {
+                console.error("Error updating sharing status:", e);
+                alert("切換失敗，請檢查網路或權限 (" + e.message + ")");
+            }
+        }
+
+        // --- 渲染共享狀態 UI ---
+        function renderSharingStatus(status) {
+            const card = document.getElementById('sharing-card');
+            const statusText = document.getElementById('sharing-status-text');
+            const hint = document.getElementById('sharing-hint');
+            const shareBtn = document.getElementById("sharing-toggle-btn");
+            const bookingsSection = document.getElementById('upcoming-bookings-section');
+            const badgeEl = document.getElementById('upcoming-bookings-badge');
+            const descEl = document.getElementById('upcoming-bookings-desc');
+
+            const occupied = state.currentBooking && state.currentBooking.mode === "occupied";
+            if (occupied) {
+                if (card) card.className = "p-6 rounded-3xl transition-all duration-500 shadow-lg bg-gradient-to-br from-blue-500 to-sky-600 text-white";
+                if (statusText) statusText.innerText = "使用中";
+                if (hint) {
+                    const plate = escapeHtml(state.currentBooking.plate || "—");
+                    const leave = escapeHtml(state.currentBooking.leaveLabel || "—");
+                    hint.innerHTML = `臨停車牌：${plate}<br>預計離開：${leave}`;
+                }
+                if (shareBtn) {
+                    shareBtn.disabled = true;
+                    shareBtn.className = "p-4 rounded-2xl shadow-inner transition-all bg-white/20 opacity-60 cursor-not-allowed";
+                }
+                if (bookingsSection) bookingsSection.classList.remove('hidden');
+                if (badgeEl) {
+                    badgeEl.textContent = "使用中";
+                    badgeEl.className = "text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-full font-bold";
+                }
+                if (descEl) descEl.textContent = `臨停車牌：${state.currentBooking.plate || "—"}　預計離開：${state.currentBooking.leaveLabel || "—"}`;
+                return;
+            }
+
+            if (shareBtn) {
+                shareBtn.disabled = false;
+                shareBtn.className = "p-4 rounded-2xl shadow-inner transition-all bg-white/20 hover:bg-white/30";
+            }
+            if (status === "shared") {
+                card.className = "p-6 rounded-3xl transition-all duration-500 shadow-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white";
+                statusText.innerText = "分享中";
+                hint.innerText = "系統已開啟，附近車主可搜尋您的車位";
+                bookingsSection.classList.remove('hidden');
+                if (badgeEl) {
+                    badgeEl.textContent = "出租中";
+                    badgeEl.className = "text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full font-bold";
+                }
+                if (descEl) descEl.textContent = "";
+            } else {
+                card.className = "p-6 rounded-3xl transition-all duration-500 shadow-lg bg-slate-200 text-slate-500";
+                statusText.innerText = "已關閉";
+                hint.innerText = "車位目前僅供自用，不對外開放";
+                bookingsSection.classList.add('hidden');
+                if (badgeEl) {
+                    badgeEl.textContent = "—";
+                    badgeEl.className = "text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded-full font-bold";
+                }
+                if (descEl) descEl.textContent = "";
+            }
+        }
+
+        // --- 渲染即時預約 ---
+        function formatHm(v) {
+            const d = toDateSafe(v);
+            if (!d) return "—";
+            return d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function renderBookings(communitySlug, spotId) {
+            const bookingsListEl = document.getElementById('upcoming-bookings-list');
+            if (bookingsListEl) bookingsListEl.innerHTML = '';
+
+            const q = query(
+                collection(db, "communities", communitySlug, "parking_bookings"),
+                where("spotId", "==", spotId),
+                where("status", "==", "active") // 只顯示進行中的預約
+            );
+            const querySnapshot = await getDocs(q);
+
+            if (querySnapshot.empty) {
+                state.currentBooking = null;
+                if (state.currentResidentData) renderSharingStatus(state.currentResidentData.status);
+                renderDailyShareRecords();
+            } else {
+                let picked = null;
+                querySnapshot.forEach((d) => {
+                    if (picked) return;
+                    picked = d.data() || {};
+                });
+                const plate = String(
+                    picked?.visitorPlate
+                    || picked?.licensePlate
+                    || picked?.plate
+                    || picked?.carPlate
+                    || picked?.carNo
+                    || picked?.carNumber
+                    || ""
+                ).trim() || "—";
+                const leaveLabel = formatYmdHm(
+                    picked?.plannedEndTime
+                    || picked?.plannedEndAt
+                    || picked?.endTime
+                    || picked?.endAt
+                    || picked?.leaveAt
+                );
+                state.currentBooking = {
+                    mode: "occupied",
+                    plate,
+                    leaveLabel,
+                    startTime: picked?.startTime || picked?.startAt || picked?.arrivedAt || 0,
+                    plannedEndTime: picked?.plannedEndTime || picked?.plannedEndAt || picked?.endTime || picked?.endAt || picked?.leaveAt || 0
+                };
+                if (state.currentResidentData) renderSharingStatus(state.currentResidentData.status);
+                renderDailyShareRecords();
+            }
+            lucide.createIcons();
+        }
+
+
+        // --- 排程渲染 ---
+        function renderSchedules() {
+            const list = document.getElementById('schedule-list');
+            list.innerHTML = state.schedules.map(item => `
+                <div class="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm animate-fade-in">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl flex items-center justify-center ${item.active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-50 text-slate-400'}">
+                                <i data-lucide="calendar" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <p class="font-bold text-slate-800">${item.dayType === 'weekday' ? '平日' : item.dayType === 'holiday' ? '假日' : '每天'}</p>
+                                <p class="text-xs text-slate-400">${item.startTime} - ${item.endTime}</p>
+                            </div>
+                        </div>
+                        <button onclick="toggleItemActive('${item.id}')" class="w-12 h-6 rounded-full transition-all relative ${item.active ? 'bg-emerald-500' : 'bg-slate-300'}">
+                            <div class="absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${item.active ? 'right-1' : 'left-1'}"></div>
+                        </button>
+                    </div>
+                    <div class="flex gap-2 border-t border-slate-50 pt-3 mt-3">
+                        <button onclick="openModal('${item.id}')" class="text-xs font-bold text-slate-400 flex items-center gap-1 flex-1 justify-center py-1">
+                            <i data-lucide="settings" class="w-3 h-3"></i> 編輯時段
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        async function toggleItemActive(id) {
+            const user = auth.currentUser;
+            if (!user) return;
+            const communitySlug = new URLSearchParams(window.location.search).get('c');
+            if (!communitySlug) return;
+
+            const scheduleRef = doc(db, "communities", communitySlug, "parking_schedules", id);
+            const item = state.schedules.find(s => s.id === id);
+            if (item) {
+                try {
+                    await updateDoc(scheduleRef, { active: !item.active });
+                } catch (e) {
+                    console.error("Error toggling schedule active status:", e);
+                }
+            }
+        }
+
+        // --- Modal 功能 ---
+        function openModal(id = null) {
+            state.editingId = id;
+            const modal = document.getElementById('modal');
+            const title = document.getElementById('modal-title');
+            const deleteBtn = document.getElementById('delete-btn');
+            const dayOptions = document.querySelectorAll('.day-opt');
+            
+            if (id) {
+                const item = state.schedules.find(s => s.id === id);
+                title.innerText = "編輯排程";
+                setDay(item.dayType);
+                document.getElementById('start-time').value = item.startTime;
+                document.getElementById('end-time').value = item.endTime;
+                deleteBtn.classList.remove('hidden');
+            } else {
+                title.innerText = "新增排程";
+                setDay('weekday');
+                document.getElementById('start-time').value = '09:00';
+                document.getElementById('end-time').value = '18:00';
+                deleteBtn.classList.add('hidden');
+            }
+            modal.classList.add('active');
+            lucide.createIcons();
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        function setDay(dayType) {
+            state.selectedDay = dayType;
+            document.querySelectorAll('.day-opt').forEach(btn => {
+                btn.classList.remove('border-emerald-500', 'bg-emerald-50', 'text-emerald-700');
+                btn.classList.add('border-slate-100', 'text-slate-500');
+                if (btn.getAttribute('onclick').includes(`'${dayType}'`)) {
+                    btn.classList.add('border-emerald-500', 'bg-emerald-50', 'text-emerald-700');
+                    btn.classList.remove('border-slate-100', 'text-slate-500');
+                }
+            });
+        }
+
+        async function saveSchedule() {
+            const user = auth.currentUser;
+            if (!user) return;
+            const communitySlug = new URLSearchParams(window.location.search).get('c');
+            if (!communitySlug) return;
+
+            const startTime = document.getElementById('start-time').value;
+            const endTime = document.getElementById('end-time').value;
+
+            if (!startTime || !endTime) {
+                alert('請選擇開始時間和結束時間');
+                return;
+            }
+
+            const scheduleData = {
+                uid: user.uid,
+                dayType: state.selectedDay,
+                startTime: startTime,
+                endTime: endTime,
+                active: true,
+                createdAt: Date.now()
+            };
+
+            try {
+                if (state.editingId) {
+                    const scheduleRef = doc(db, "communities", communitySlug, "parking_schedules", state.editingId);
+                    await updateDoc(scheduleRef, scheduleData);
+                } else {
+                    const schedulesColRef = collection(db, "communities", communitySlug, "parking_schedules");
+                    await addDoc(schedulesColRef, scheduleData);
+                }
+                closeModal();
+            } catch (e) {
+                console.error("Error saving schedule:", e);
+                alert("儲存排程失敗");
+            }
+        }
+
+        async function deleteCurrentSchedule() {
+            if (state.editingId) {
+                const user = auth.currentUser;
+                if (!user) return;
+                const communitySlug = new URLSearchParams(window.location.search).get('c');
+                if (!communitySlug) return;
+
+                const scheduleRef = doc(db, "communities", communitySlug, "parking_schedules", state.editingId);
+                try {
+                    await deleteDoc(scheduleRef);
+                    closeModal();
+                } catch (e) {
+                    console.error("Error deleting schedule:", e);
+                    alert("刪除排程失敗");
+                }
+            }
+        }
+
+        // --- 登出功能 ---
+        const btnLogout = document.getElementById("parking-logout");
+        if (btnLogout) {
+            btnLogout.addEventListener("click", async () => {
+                try { await signOut(auth); } finally { window.location.href = "parking-login.html"; }
+            });
+        }
+
+        // --- 導出到全域作用域以供 HTML onclick 使用 ---
+        window.switchTab = switchTab;
+        window.toggleGlobalSharing = toggleGlobalSharing;
+        window.openModal = openModal;
+        window.closeModal = closeModal;
+        window.setDay = setDay;
+        window.saveSchedule = saveSchedule;
+        window.deleteCurrentSchedule = deleteCurrentSchedule;
+        window.toggleItemActive = toggleItemActive;
+
+        // --- PWA 安裝提示 ---
+        let deferredPrompt = null;
+        const logo = document.getElementById("parking-app-logo");
+        const updateInstallUi = () => {
+            const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+            if (logo) logo.style.cursor = (!isStandalone && deferredPrompt) ? "pointer" : "default";
+        };
+        window.addEventListener("beforeinstallprompt", (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            updateInstallUi();
+        });
+        window.addEventListener("appinstalled", () => {
+            deferredPrompt = null;
+            updateInstallUi();
+        });
+        if (logo) {
+            logo.addEventListener("click", async () => {
+                const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+                if (isStandalone || !deferredPrompt) return;
+                deferredPrompt.prompt();
+                try { await deferredPrompt.userChoice; } catch {}
+                deferredPrompt = null;
+                updateInstallUi();
+            });
+        }
+        if ("serviceWorker" in navigator) {
+            try { navigator.serviceWorker.register("./sw.js"); } catch {}
+        }
+    </script>
+</body>
+</html>
