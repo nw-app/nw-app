@@ -114,11 +114,11 @@
     const btnClose = document.getElementById("pwa-install-close");
     const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || "");
     const isStandalone = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
-    const canShowInstall = () => !isStandalone() && (!!deferredPrompt || isIos());
+    const canShowInstall = () => !isStandalone();
     const showBanner = () => {
       if (!banner) return;
       banner.classList.toggle("hidden", !canShowInstall());
-      if (btnInstall) btnInstall.textContent = deferredPrompt ? "安裝" : (isIos() ? "加入主畫面" : "安裝");
+      if (btnInstall) btnInstall.textContent = (isIos() && !deferredPrompt) ? "加入主畫面" : "安裝";
     };
     const hideBanner = () => { if (banner) banner.classList.add("hidden"); };
 
@@ -142,8 +142,10 @@
         hideBanner();
         return;
       }
-      if (isIos() && !isStandalone()) {
+      if (isIos()) {
         alert("iPhone/iPad 請使用 Safari 右下角「分享」→「加入主畫面」完成安裝。");
+      } else {
+        alert("請點選瀏覽器右上角選單，選擇「加到主畫面」或「安裝應用程式」完成安裝。");
       }
     });
     showBanner();
