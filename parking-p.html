@@ -398,7 +398,9 @@
             notifyUnsub: null,
             notifyLastSeenAt: 0,
             dailyShareDate: "",
-            communityName: ""
+            communityName: "",
+            currentCommunitySlug: "",
+            currentSpotId: ""
         };
 
         async function getCommunityName(slug) {
@@ -494,59 +496,21 @@
             el.textContent = `${key} 分享紀錄`;
         }
 
-        function renderDailyShareRecords() {
+        async function renderDailyShareRecords() {
             const wrap = document.getElementById("upcoming-bookings-header");
             const emptyEl = document.getElementById("upcoming-bookings-empty");
             if (!wrap || !emptyEl) return;
             const key = String(state.dailyShareDate || ymdKey(new Date()));
 
-            const items = (state.notifications || [])
-                .filter(n => {
-                    const d = toDateSafe(n.createdAt);
-                    if (!d) return false;
-                    return ymdKey(d) === key;
-                })
-                .slice()
-                .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+            const startMs = new Date(`${key}T00:00:00`).getTime();
+            const endMs = startMs + 24 * 60 * 60 * 1000;
 
-            const cb = state.currentBooking && state.currentBooking.mode === "occupied" ? state.currentBooking : null;
-            if (cb && ymdKey(toDateSafe(cb.startTime || Date.now()) || new Date()) === key) {
-                const hasSame = items.some(x => {
-                    if (String(x?.type || "") !== "occupied") return false;
-                    if (String(x?.visitorPlate || "") !== String(cb.plate || "")) return false;
-                    const a = Number(x?.startTime || 0);
-                    const b = Number(cb.startTime || 0);
-                    return a && b && a === b;
-                });
-                if (!hasSame) {
-                    items.unshift({
-                        type: "occupied",
-                        visitorPlate: cb.plate || "",
-                        startTime: cb.startTime || 0,
-                        plannedEndTime: cb.plannedEndTime || 0,
-                        createdAt: cb.startTime || Date.now()
-                    });
-                }
-            }
-
-            if (!items.length) {
-                wrap.innerHTML = "";
-                emptyEl.classList.remove("hidden");
-                return;
-            }
-            emptyEl.classList.add("hidden");
-
-            wrap.innerHTML = items.map(n => {
-                const type = String(n.type || "");
-                const isUsing = type === "occupied";
-                const plate = escapeHtml(n.visitorPlate || "—");
-                const start = formatHm24(n.startTime || n.createdAt);
-                const end = formatHm24(isUsing ? (n.plannedEndTime || 0) : (n.endTime || 0));
-
+            const buildRow = ({ plate, startTime, endTime, isUsing }) => {
                 const border = isUsing ? "border-blue-500" : "border-emerald-500";
                 const badgeCls = isUsing ? "bg-blue-50 text-blue-600" : "bg-emerald-50 text-emerald-600";
                 const badgeText = isUsing ? "使用中" : "已完成";
-
+                const start = formatHm24(startTime);
+                const end = formatHm24(endTime);
                 return `
                     <div class="bg-white p-4 rounded-2xl border-l-4 ${border} shadow-sm flex items-center justify-between">
                         <div class="flex gap-4 items-center min-w-0">
@@ -554,7 +518,7 @@
                                 <i data-lucide="navigation" class="w-5 h-5"></i>
                             </div>
                             <div class="min-w-0">
-                                <p class="font-bold text-slate-800 truncate">${plate}</p>
+                                <p class="font-bold text-slate-800 truncate">${escapeHtml(plate || "—")}</p>
                                 <p class="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
                                     <span>臨停時間：${escapeHtml(start)}</span>
                                     <span>${isUsing ? "預計離開" : "離開時間"}：${escapeHtml(end)}</span>
@@ -564,7 +528,70 @@
                         <span class="shrink-0 text-[10px] ${badgeCls} px-2 py-1 rounded-full font-bold">${badgeText}</span>
                     </div>
                 `;
-            }).join("");
+            };
+
+            const rows = [];
+
+            try {
+                if (state.currentCommunitySlug && state.currentSpotId) {
+                    const ref = collection(db, "communities", state.currentCommunitySlug, "parking_bookings");
+                    const qn = query(ref, where("spotId", "==", state.currentSpotId), orderBy("startTime", "desc"), limit(200));
+                    const snap = await getDocs(qn);
+                    snap.docs.forEach((d) => {
+                        const b = d.data() || {};
+                        const st = Number(b.startTime || 0);
+                        if (!Number.isFinite(st) || st < startMs || st >= endMs) return;
+                        const status = String(b.status || "");
+                        const isUsing = status === "active";
+                        const plate = String(b.visitorPlate || b.licensePlate || b.plate || b.carPlate || b.carNo || b.carNumber || "").trim() || "—";
+                        const et = Number(isUsing ? (b.plannedEndTime || b.plannedEndAt || b.endTime || b.endAt || 0) : (b.endTime || b.endAt || b.leaveAt || 0));
+                        rows.push({ plate, startTime: st, endTime: et, isUsing });
+                    });
+                }
+            } catch {
+                rows.length = 0;
+            }
+
+            if (!rows.length) {
+                const items = (state.notifications || [])
+                    .filter(n => {
+                        const d = toDateSafe(n.createdAt);
+                        if (!d) return false;
+                        return ymdKey(d) === key;
+                    })
+                    .slice()
+                    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+                items.forEach((n) => {
+                    const type = String(n.type || "");
+                    const isUsing = type === "occupied";
+                    const plate = String(n.visitorPlate || "").trim() || "—";
+                    rows.push({
+                        plate,
+                        startTime: Number(n.startTime || n.createdAt || 0),
+                        endTime: Number(isUsing ? (n.plannedEndTime || 0) : (n.endTime || 0)),
+                        isUsing
+                    });
+                });
+            }
+
+            const cb = state.currentBooking && state.currentBooking.mode === "occupied" ? state.currentBooking : null;
+            if (cb) {
+                const st = Number(cb.startTime || 0);
+                if (Number.isFinite(st) && st >= startMs && st < endMs) {
+                    const has = rows.some(r => r.isUsing && String(r.plate || "") === String(cb.plate || "") && Number(r.startTime || 0) === st);
+                    if (!has) rows.unshift({ plate: cb.plate || "—", startTime: st, endTime: Number(cb.plannedEndTime || 0), isUsing: true });
+                }
+            }
+
+            rows.sort((a, b) => Number(b.startTime || 0) - Number(a.startTime || 0));
+
+            if (!rows.length) {
+                wrap.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+            wrap.innerHTML = rows.map(r => buildRow(r)).join("");
             try { lucide.createIcons(); } catch {}
         }
 
@@ -674,6 +701,38 @@
             refreshDailyShareTitle();
             renderDailyShareRecords();
 
+            const main = document.getElementById("main-content");
+            if (main) {
+                let startY = 0;
+                let pulling = false;
+                let shouldReload = false;
+                main.addEventListener("touchstart", (e) => {
+                    if (!(e.touches && e.touches.length)) return;
+                    if (main.scrollTop > 0) return;
+                    startY = e.touches[0].clientY;
+                    pulling = true;
+                    shouldReload = false;
+                }, { passive: true });
+                main.addEventListener("touchmove", (e) => {
+                    if (!pulling) return;
+                    if (!(e.touches && e.touches.length)) return;
+                    if (main.scrollTop > 0) { pulling = false; return; }
+                    const dy = e.touches[0].clientY - startY;
+                    if (dy > 90) shouldReload = true;
+                }, { passive: true });
+                main.addEventListener("touchend", () => {
+                    if (shouldReload) {
+                        try { window.location.reload(); } catch {}
+                    }
+                    pulling = false;
+                    shouldReload = false;
+                }, { passive: true });
+                main.addEventListener("touchcancel", () => {
+                    pulling = false;
+                    shouldReload = false;
+                }, { passive: true });
+            }
+
             const prevBtn = document.getElementById("daily-share-prev");
             const nextBtn = document.getElementById("daily-share-next");
             if (prevBtn) prevBtn.addEventListener("click", () => {
@@ -708,13 +767,16 @@
                                 // 儲存目前的車位資料到全域 state 方便 toggle 使用
                                 state.currentResidentData = { id: docSnap.id, ...data };
                                  
+                                state.currentCommunitySlug = String(communitySlug || "").trim();
                                 const spotKey = String(data.spotId || docSnap.id || "").trim();
+                                state.currentSpotId = spotKey;
                                 const communityLabel = String(data.communityName || state.communityName || "").trim();
                                 const left = communityLabel ? `${communityLabel}　` : "";
                                 headerSpotEl.innerText = spotKey ? `${left}車位：${spotKey}` : `${left}尚未綁定車位`;
                                 settingsUserSpotEl.innerText = spotKey ? `${spotKey} 車位持有人` : "";
                                  
                                  renderSharingStatus(data.status);
+                                renderDailyShareRecords();
                                 document.getElementById('accumulated-earnings').innerText = `NT$ ${data.accumulated_earnings || 0}`;
                                 document.getElementById('carbon-reduction').innerText = `${data.carbon_reduction || 0} kg`;
                                 if (spotKey) {

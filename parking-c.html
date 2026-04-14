@@ -265,11 +265,11 @@
                         <p id="finance-daily-total" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
                     </div>
                     <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">天數</h3>
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">筆數</h3>
                         <p id="finance-daily-days" class="text-2xl font-bold mt-1 text-slate-800">0</p>
                     </div>
                     <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">日均收入</h3>
+                        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider">平均每筆</h3>
                         <p id="finance-daily-avg" class="text-2xl font-bold mt-1 text-slate-800">NT$ 0</p>
                     </div>
                 </section>
@@ -283,9 +283,12 @@
                         <table class="min-w-full text-sm">
                             <thead class="bg-slate-50">
                                 <tr class="text-left text-slate-500">
-                                    <th class="px-6 py-3 font-bold">日期</th>
-                                    <th class="px-6 py-3 font-bold">星期</th>
-                                    <th class="px-6 py-3 font-bold text-right">收入</th>
+                                    <th class="px-6 py-3 font-bold whitespace-nowrap">車位號碼</th>
+                                    <th class="px-6 py-3 font-bold whitespace-nowrap">臨停日期時間</th>
+                                    <th class="px-6 py-3 font-bold whitespace-nowrap">離開日期時間</th>
+                                    <th class="px-6 py-3 font-bold whitespace-nowrap">停留時間</th>
+                                    <th class="px-6 py-3 font-bold text-right whitespace-nowrap">收入</th>
+                                    <th class="px-6 py-3 font-bold text-right whitespace-nowrap">操作</th>
                                 </tr>
                             </thead>
                             <tbody id="finance-daily-tbody" class="divide-y divide-slate-50"></tbody>
@@ -561,7 +564,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-auth.js";
-        import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, onSnapshot, query, where, updateDoc } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
+        import { initializeFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, startAfter, updateDoc } from "https://www.gstatic.com/firebasejs/10.14.0/firebase-firestore.js";
 
         const defaultFirebaseConfig = {
             apiKey: "AIzaSyDJKCa2QtJXLiXPsy0P7He_yuZEN__iQ6E",
@@ -589,6 +592,9 @@
         let residentsUnsub = null;
         let communityResidentsUnsub = null;
         let floorsUnsub = null;
+        let incomeUnsub = null;
+        let incomeKey = "";
+        let incomeDayTimer = null;
         let activeFloor = "all";
         let activeUsersTab = "spots";
         let residentsCache = [];
@@ -1108,6 +1114,28 @@
             }
         }
 
+        function subscribeDashboardRevenue() {
+            const el = document.getElementById("dashboard-revenue");
+            if (!el || !currentSlug) return;
+            if (incomeUnsub) { incomeUnsub(); incomeUnsub = null; }
+            incomeKey = ymdKey(new Date());
+            const ref = doc(db, "communities", currentSlug, "parking_income_daily", incomeKey);
+            incomeUnsub = onSnapshot(ref, (snap) => {
+                const total = snap.exists() ? Number((snap.data() || {}).total || 0) : 0;
+                const v = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
+                el.textContent = `NT$ ${v.toLocaleString("zh-Hant-TW")}`;
+            }, () => {
+                el.textContent = "NT$ 0";
+            });
+
+            if (incomeDayTimer) { clearInterval(incomeDayTimer); incomeDayTimer = null; }
+            incomeDayTimer = setInterval(() => {
+                if (!currentSlug) return;
+                const k = ymdKey(new Date());
+                if (k !== incomeKey) subscribeDashboardRevenue();
+            }, 60 * 1000);
+        }
+
         function dayTypeLabel(v) {
             if (v === "weekday") return "平日";
             if (v === "holiday") return "假日";
@@ -1384,14 +1412,16 @@
             }
 
             grid.innerHTML = list.map(s => {
-                const tone = spotTone(s.status);
-                const interactive = (s.status === "shared" || s.status === "occupied");
+                const inferredOccupied = !!(s.currentVisitorPlate || s.currentBookingId || s.currentBookingStartTime);
+                const effectiveStatus = (String(s.status || "") === "occupied" || inferredOccupied) ? "occupied" : String(s.status || "");
+                const tone = spotTone(effectiveStatus);
+                const interactive = (effectiveStatus === "shared" || effectiveStatus === "occupied");
                 let plate = "---";
-                if (s.status === "occupied" && s.currentVisitorPlate) {
+                if (effectiveStatus === "occupied" && s.currentVisitorPlate) {
                     plate = escapeHtml(s.currentVisitorPlate);
-                } else if (s.status === "shared") {
+                } else if (effectiveStatus === "shared") {
                     plate = "&nbsp;";
-                } else if (s.status === "private" && s.plate) {
+                } else if (effectiveStatus === "private" && s.plate) {
                     plate = escapeHtml(s.plate);
                 }
                 
@@ -1409,7 +1439,9 @@
                     const id = btn.getAttribute("data-spot-id") || "";
                     const item = spotCache.find(s => s.id === id);
                     if (!item) return;
-                    if (item.status === "shared" || item.status === "occupied") return openBookingModal(item);
+                    const inferredOccupied = !!(item.currentVisitorPlate || item.currentBookingId || item.currentBookingStartTime);
+                    const effectiveStatus = (String(item.status || "") === "occupied" || inferredOccupied) ? "occupied" : String(item.status || "");
+                    if (effectiveStatus === "shared" || effectiveStatus === "occupied") return openBookingModal({ ...item, status: effectiveStatus });
                 });
             });
         }
@@ -1977,6 +2009,18 @@
                         });
                     } catch {}
 
+                    try {
+                        const key = ymdKey(new Date(endMs));
+                        const dailyRef = doc(db, "communities", currentSlug, "parking_income_daily", key);
+                        const dailySnap = await getDoc(dailyRef);
+                        const oldTotal = dailySnap.exists() ? (Number(dailySnap.data().total) || 0) : 0;
+                        await setDoc(dailyRef, {
+                            total: oldTotal + totalAmountInt,
+                            updatedAt: Date.now()
+                        }, { merge: true });
+                        updateDashboardRevenue();
+                    } catch {}
+
                     await setDoc(spotRef, {
                         status: "shared",
                         currentBookingId: "",
@@ -2406,9 +2450,6 @@
                 try { updateSpaceOpenStatus(); } catch {}
                 try { renderDashboard(); } catch {}
             }, 30 * 1000);
-            setInterval(() => {
-                try { updateDashboardRevenue(); } catch {}
-            }, 5 * 60 * 1000);
             window.parkingOnTabChange = (tabId) => {
                 if (!currentSlug) return;
                 if (tabId === "spaces") {
@@ -2430,11 +2471,138 @@
         let financeBound = false;
         let financeActiveSubtab = "daily";
         let financeCacheKey = "";
-        let financeRowsCache = [];
+        let financeDailyRowsCache = [];
+        let financeBookingRowsCache = [];
 
         function moneyLabel(n) {
             const v = Number.isFinite(Number(n)) ? Math.max(0, Math.floor(Number(n))) : 0;
             return `NT$ ${v.toLocaleString("zh-Hant-TW")}`;
+        }
+
+        function financeToMs(v) {
+            if (!v) return 0;
+            if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+            if (typeof v === "string") {
+                const ms = new Date(v).getTime();
+                return Number.isFinite(ms) ? ms : 0;
+            }
+            if (typeof v?.toDate === "function") {
+                try {
+                    const d = v.toDate();
+                    const ms = d instanceof Date ? d.getTime() : NaN;
+                    return Number.isFinite(ms) ? ms : 0;
+                } catch {
+                    return 0;
+                }
+            }
+            if (typeof v?.seconds === "number") {
+                const ms = v.seconds * 1000;
+                return Number.isFinite(ms) ? ms : 0;
+            }
+            return 0;
+        }
+
+        function financeYmdHm(ms) {
+            const t = financeToMs(ms);
+            if (!t) return "—";
+            const d = new Date(t);
+            const hm = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+            return `${ymdKey(d)} ${hm}`;
+        }
+
+        function financeStayLabel(startMs, endMs) {
+            const s = financeToMs(startMs);
+            const e = financeToMs(endMs);
+            if (!s || !e || e <= s) return "—";
+            const mins = Math.floor((e - s) / 60000);
+            const h = Math.floor(mins / 60);
+            const m = mins % 60;
+            if (h <= 0) return `${m}分`;
+            if (m <= 0) return `${h}小時`;
+            return `${h}小時${m}分`;
+        }
+
+        async function financeAdjustDailyIncome(key, delta) {
+            if (!currentSlug) return;
+            const k = String(key || "").trim();
+            const d = Number(delta || 0);
+            if (!k || !Number.isFinite(d) || d === 0) return;
+            const ref = doc(db, "communities", currentSlug, "parking_income_daily", k);
+            const snap = await getDoc(ref);
+            const oldTotal = snap.exists() ? (Number((snap.data() || {}).total) || 0) : 0;
+            const next = Math.max(0, oldTotal + d);
+            await setDoc(ref, { total: next, updatedAt: Date.now() }, { merge: true });
+        }
+
+        async function financeEditBooking(id) {
+            if (!currentSlug) return;
+            const bid = String(id || "").trim();
+            const booking = (financeBookingRowsCache || []).find(b => String(b.id || "") === bid);
+            if (!booking) return;
+
+            const endInput = prompt("離開日期時間", booking.endTime ? toDatetimeLocalValue(booking.endTime) : "");
+            if (endInput == null) return;
+            const nextEnd = parseDatetimeLocalValue(endInput);
+            if (!nextEnd) return;
+
+            const amountInput = prompt("收入（NT$）", String(Number(booking.totalAmount || 0)));
+            if (amountInput == null) return;
+            const nextAmount = Math.max(0, Math.floor(Number(amountInput)));
+            if (!Number.isFinite(nextAmount)) return;
+
+            const oldEnd = Number(booking.endTime || 0);
+            const oldAmount = Math.max(0, Math.floor(Number(booking.totalAmount || 0)));
+            const oldKey = oldEnd ? ymdKey(new Date(oldEnd)) : "";
+            const nextKey = ymdKey(new Date(nextEnd));
+
+            try {
+                await updateDoc(doc(db, "communities", currentSlug, "parking_bookings", bid), {
+                    endTime: nextEnd,
+                    totalAmount: nextAmount,
+                    status: "completed",
+                    updatedAt: Date.now(),
+                    updatedBy: currentUserUid || ""
+                });
+            } catch {
+                return;
+            }
+
+            try {
+                if (oldKey && nextKey && oldKey === nextKey) {
+                    await financeAdjustDailyIncome(oldKey, nextAmount - oldAmount);
+                } else {
+                    if (oldKey) await financeAdjustDailyIncome(oldKey, -oldAmount);
+                    if (nextKey) await financeAdjustDailyIncome(nextKey, nextAmount);
+                }
+                updateDashboardRevenue();
+            } catch {}
+
+            refreshFinance(true);
+        }
+
+        async function financeDeleteBooking(id) {
+            if (!currentSlug) return;
+            const bid = String(id || "").trim();
+            const booking = (financeBookingRowsCache || []).find(b => String(b.id || "") === bid);
+            if (!booking) return;
+            if (!confirm(`刪除這筆紀錄？\n車位：${booking.spotId || "—"}\n車牌：${booking.visitorPlate || "—"}`)) return;
+
+            const oldEnd = Number(booking.endTime || 0);
+            const oldAmount = Math.max(0, Math.floor(Number(booking.totalAmount || 0)));
+            const oldKey = oldEnd ? ymdKey(new Date(oldEnd)) : "";
+
+            try {
+                await deleteDoc(doc(db, "communities", currentSlug, "parking_bookings", bid));
+            } catch {
+                return;
+            }
+
+            try {
+                if (oldKey) await financeAdjustDailyIncome(oldKey, -oldAmount);
+                updateDashboardRevenue();
+            } catch {}
+
+            refreshFinance(true);
         }
 
         function financeWeekdayLabel(ymd) {
@@ -2518,27 +2686,71 @@
             switchFinanceSubtab(financeActiveSubtab);
         }
 
-        async function loadFinanceRows(start, end) {
+        async function loadFinanceBookings(start, end) {
             if (!currentSlug) return [];
-            const ref = collection(db, "communities", currentSlug, "parking_income_daily");
-            const snap = await getDocs(ref);
-            const list = snap.docs.map(d => {
-                const data = d.data() || {};
-                const total = Number(data.total || 0);
-                return { ymd: d.id, total: Number.isFinite(total) ? total : 0 };
-            });
             const norm = financeNormalizeRange(start, end);
-            const filtered = list.filter(r => {
-                if (!r.ymd) return false;
-                if (norm.start && r.ymd < norm.start) return false;
-                if (norm.end && r.ymd > norm.end) return false;
-                return true;
-            });
-            filtered.sort((a, b) => String(b.ymd).localeCompare(String(a.ymd), "en"));
-            return filtered;
+            if (!norm.start || !norm.end) return [];
+            const startMs = new Date(`${norm.start}T00:00:00`).getTime();
+            const endMs = new Date(`${norm.end}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1;
+            const ref = collection(db, "communities", currentSlug, "parking_bookings");
+            const out = [];
+            let cursor = null;
+            for (let i = 0; i < 10; i++) {
+                const q = cursor != null
+                    ? query(ref, orderBy("endTime", "desc"), startAfter(cursor), limit(500))
+                    : query(ref, orderBy("endTime", "desc"), limit(500));
+                const snap = await getDocs(q);
+                if (snap.empty) break;
+
+                snap.docs.forEach((d) => {
+                    const b = d.data() || {};
+                    if (String(b.status || "") !== "completed") return;
+                    const et = financeToMs(b.endTime || 0);
+                    if (!et || et < startMs || et > endMs) return;
+                    const st = financeToMs(b.startTime || 0);
+                    out.push({
+                        id: d.id,
+                        spotId: String(b.spotId || ""),
+                        visitorPlate: String(b.visitorPlate || b.licensePlate || b.plate || b.carPlate || b.carNo || b.carNumber || ""),
+                        startTime: st,
+                        endTime: et,
+                        totalAmount: Math.max(0, Math.floor(Number(b.totalAmount || 0)))
+                    });
+                });
+
+                let nextCursor = null;
+                for (let j = snap.docs.length - 1; j >= 0; j--) {
+                    const raw = (snap.docs[j].data() || {}).endTime;
+                    const ms = financeToMs(raw || 0);
+                    if (ms) {
+                        nextCursor = raw;
+                        break;
+                    }
+                }
+                if (nextCursor == null) break;
+                cursor = nextCursor;
+                const cursorMs = financeToMs(cursor);
+                if (cursorMs && cursorMs < startMs) break;
+                if (snap.size < 500) break;
+            }
+            out.sort((a, b) => Number(b.endTime || 0) - Number(a.endTime || 0));
+            return out;
         }
 
-        function renderFinanceDaily(rows, range) {
+        function buildFinanceDailyRows(bookings) {
+            const map = new Map();
+            (bookings || []).forEach(b => {
+                const end = Number(b.endTime || 0);
+                if (!Number.isFinite(end) || end <= 0) return;
+                const k = ymdKey(new Date(end));
+                map.set(k, (map.get(k) || 0) + (Number(b.totalAmount) || 0));
+            });
+            return Array.from(map.entries())
+                .map(([ymd, total]) => ({ ymd, total }))
+                .sort((a, b) => String(b.ymd).localeCompare(String(a.ymd), "en"));
+        }
+
+        function renderFinanceDaily(bookings, range) {
             const totalEl = document.getElementById("finance-daily-total");
             const daysEl = document.getElementById("finance-daily-days");
             const avgEl = document.getElementById("finance-daily-avg");
@@ -2546,34 +2758,53 @@
             const bodyEl = document.getElementById("finance-daily-tbody");
             const emptyEl = document.getElementById("finance-daily-empty");
 
-            const days = rows.length;
-            const sum = rows.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
-            const avg = days ? sum / days : 0;
+            const count = Array.isArray(bookings) ? bookings.length : 0;
+            const sum = (bookings || []).reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0);
+            const avg = count ? sum / count : 0;
 
             if (totalEl) totalEl.textContent = moneyLabel(sum);
-            if (daysEl) daysEl.textContent = String(days);
+            if (daysEl) daysEl.textContent = String(count);
             if (avgEl) avgEl.textContent = moneyLabel(avg);
-            if (countEl) countEl.textContent = range?.start && range?.end ? `${range.start} ～ ${range.end}` : `${days} 筆`;
+            if (countEl) countEl.textContent = range?.start && range?.end ? `${range.start} ～ ${range.end} / ${count} 筆` : `${count} 筆`;
 
             if (!bodyEl || !emptyEl) return;
-            if (!rows.length) {
+            if (!count) {
                 bodyEl.innerHTML = "";
                 emptyEl.classList.remove("hidden");
                 return;
             }
             emptyEl.classList.add("hidden");
-            bodyEl.innerHTML = rows.map(r => {
-                const ymd = escapeHtml(r.ymd || "");
-                const wk = escapeHtml(financeWeekdayLabel(r.ymd || ""));
-                const total = moneyLabel(r.total || 0);
+            bodyEl.innerHTML = (bookings || []).map(b => {
+                const spotId = escapeHtml(b.spotId || "");
+                const start = escapeHtml(financeYmdHm(b.startTime || 0));
+                const end = escapeHtml(financeYmdHm(b.endTime || 0));
+                const stay = escapeHtml(financeStayLabel(b.startTime || 0, b.endTime || 0));
+                const total = escapeHtml(moneyLabel(b.totalAmount || 0));
+                const bid = escapeHtml(b.id || "");
                 return `
                     <tr class="hover:bg-slate-50">
-                        <td class="px-6 py-4 font-bold text-slate-800 whitespace-nowrap">${ymd}</td>
-                        <td class="px-6 py-4 text-slate-500 font-semibold whitespace-nowrap">${wk}</td>
-                        <td class="px-6 py-4 font-bold text-slate-800 text-right whitespace-nowrap">${escapeHtml(total)}</td>
+                        <td class="px-6 py-4 font-bold text-slate-800 whitespace-nowrap">${spotId}</td>
+                        <td class="px-6 py-4 text-slate-600 font-semibold whitespace-nowrap">${start}</td>
+                        <td class="px-6 py-4 text-slate-600 font-semibold whitespace-nowrap">${end}</td>
+                        <td class="px-6 py-4 text-slate-500 font-semibold whitespace-nowrap">${stay}</td>
+                        <td class="px-6 py-4 font-bold text-slate-800 text-right whitespace-nowrap">${total}</td>
+                        <td class="px-6 py-4 text-right whitespace-nowrap">
+                            <button type="button" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs hover:bg-slate-200 transition" data-finance-edit="${bid}">編輯</button>
+                            <button type="button" class="ml-2 px-3 py-2 rounded-xl bg-rose-50 text-rose-700 font-bold text-xs hover:bg-rose-100 transition" data-finance-delete="${bid}">刪除</button>
+                        </td>
                     </tr>
                 `;
             }).join("");
+
+            if (!bodyEl.dataset.bound) {
+                bodyEl.dataset.bound = "1";
+                bodyEl.addEventListener("click", (e) => {
+                    const edit = e.target?.closest?.("[data-finance-edit]");
+                    if (edit) return financeEditBooking(edit.getAttribute("data-finance-edit") || "");
+                    const del = e.target?.closest?.("[data-finance-delete]");
+                    if (del) return financeDeleteBooking(del.getAttribute("data-finance-delete") || "");
+                });
+            }
         }
 
         function renderFinanceStats(rows, range) {
@@ -2659,8 +2890,8 @@
             const startEl = document.getElementById("finance-date-start");
             const endEl = document.getElementById("finance-date-end");
             const norm = financeNormalizeRange(startEl?.value || "", endEl?.value || "");
-            if (financeActiveSubtab === "stats") renderFinanceStats(financeRowsCache || [], norm);
-            else renderFinanceDaily(financeRowsCache || [], norm);
+            if (financeActiveSubtab === "stats") renderFinanceStats(financeDailyRowsCache || [], norm);
+            else renderFinanceDaily(financeBookingRowsCache || [], norm);
         }
 
         async function refreshFinance(force = false) {
@@ -2670,20 +2901,26 @@
 
             const norm = financeNormalizeRange(startEl.value || "", endEl.value || "");
             const key = `${currentSlug}|${norm.start}|${norm.end}`;
-            if (!force && key === financeCacheKey && Array.isArray(financeRowsCache)) {
+            if (!force && key === financeCacheKey && Array.isArray(financeDailyRowsCache) && Array.isArray(financeBookingRowsCache)) {
                 renderFinance();
                 return;
             }
             financeCacheKey = key;
-            financeRowsCache = [];
+            financeDailyRowsCache = [];
+            financeBookingRowsCache = [];
             setFinanceHint("載入中…");
             try {
-                financeRowsCache = await loadFinanceRows(norm.start, norm.end);
+                financeBookingRowsCache = await loadFinanceBookings(norm.start, norm.end);
+                financeDailyRowsCache = buildFinanceDailyRows(financeBookingRowsCache);
                 setFinanceHint("");
                 renderFinance();
-            } catch {
-                financeRowsCache = [];
-                setFinanceHint("載入失敗，請稍後再試", "error");
+            } catch (err) {
+                financeDailyRowsCache = [];
+                financeBookingRowsCache = [];
+                const code = typeof err?.code === "string" ? err.code : "";
+                const msg = typeof err?.message === "string" ? err.message : "";
+                const detail = code || msg || "請稍後再試";
+                setFinanceHint(`載入失敗：${detail}`, "error");
                 renderFinance();
             }
         }
@@ -2768,7 +3005,7 @@
             subscribeFloors();
             subscribeSpaces();
             renderDashboard();
-            updateDashboardRevenue();
+            subscribeDashboardRevenue();
 
             try {
                 const activeView = document.querySelector(".tab-content.active");
