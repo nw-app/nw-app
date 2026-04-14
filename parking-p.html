@@ -119,6 +119,14 @@
                     <h3 class="text-lg font-bold">自動化排程</h3>
                     <p class="text-emerald-100 text-xs mt-1">設定您不在家的固定時段，系統將自動開啟共享。</p>
                 </div>
+                <section class="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                    <div class="flex items-center justify-between gap-3">
+                        <h3 class="font-bold text-slate-800">社區開放時段與費率</h3>
+                        <span id="community-fees-badge" class="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full font-bold">—</span>
+                    </div>
+                    <div id="community-fees-list" class="mt-4 space-y-3"></div>
+                    <div id="community-fees-empty" class="text-center text-slate-400 font-bold py-6 hidden">尚未設定開放時段</div>
+                </section>
                 <div id="schedule-list" class="space-y-4">
                     <!-- Schedule Items will be injected here -->
                 </div>
@@ -321,6 +329,211 @@
             return day === 0 || day === 6 || TAIWAN_HOLIDAYS_2026.includes(dateStr);
         }
 
+        function feeCalcLabel(f) {
+            const mode = String(f?.calcMode || "per_time");
+            const unitMinutesRaw = Number(f?.unitMinutes || 60);
+            const unitMinutes = unitMinutesRaw === 30 ? 30 : 60;
+            if (mode === "per_time") return `${unitMinutes} 分`;
+            if (mode === "per_entry") return "每次";
+            return "計費";
+        }
+
+        function parseTimeToMinutes(v) {
+            const m = String(v || "").match(/^(\d{1,2}):(\d{2})$/);
+            if (!m) return null;
+            const hh = Number(m[1]);
+            const mm = Number(m[2]);
+            if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+            if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+            return hh * 60 + mm;
+        }
+
+        function minutesToTime(mins) {
+            const m = Number(mins);
+            if (!Number.isFinite(m) || m < 0) return "00:00";
+            const hh = String(Math.floor(m / 60)).padStart(2, "0");
+            const mm = String(m % 60).padStart(2, "0");
+            return `${hh}:${mm}`;
+        }
+
+        function getCommunityFeeListFor(dayType) {
+            const dt = String(dayType || "weekday");
+            const list = (state.communityFees || [])
+                .filter(x => x && x.start && x.end && Number.isFinite(Number(x.price)))
+                .filter(x => {
+                    const t = String(x.dayType || "all");
+                    return t === "all" || t === dt;
+                })
+                .map(x => ({
+                    ...x,
+                    _s: parseTimeToMinutes(x.start),
+                    _e: parseTimeToMinutes(x.end)
+                }))
+                .filter(x => x._s !== null && x._e !== null && x._s < x._e)
+                .sort((a, b) => a._s - b._s);
+            return list;
+        }
+
+        function renderCommunityFees() {
+            const listEl = document.getElementById("community-fees-list");
+            const emptyEl = document.getElementById("community-fees-empty");
+            const badgeEl = document.getElementById("community-fees-badge");
+            if (!listEl || !emptyEl) return;
+
+            const weekday = getCommunityFeeListFor("weekday");
+            const holiday = getCommunityFeeListFor("holiday");
+            const count = weekday.length + holiday.length;
+            if (badgeEl) badgeEl.textContent = count ? `${count} 組` : "—";
+
+            if (!count) {
+                listEl.innerHTML = "";
+                emptyEl.classList.remove("hidden");
+                return;
+            }
+            emptyEl.classList.add("hidden");
+
+            const renderGroup = (title, items) => {
+                if (!items.length) return "";
+                const rows = items.map(f => {
+                    const start = escapeHtml(f.start);
+                    const end = escapeHtml(f.end);
+                    const price = Math.round(Number(f.price));
+                    const calc = escapeHtml(feeCalcLabel(f));
+                    return `
+                        <div class="flex items-center justify-between px-4 py-3 rounded-2xl bg-slate-50 border border-slate-100">
+                            <div class="text-sm font-bold text-slate-800">${start} - ${end}</div>
+                            <div class="text-sm font-bold text-emerald-700">NT$ ${price} / ${calc}</div>
+                        </div>
+                    `;
+                }).join("");
+                return `
+                    <div class="space-y-2">
+                        <div class="text-xs font-bold text-slate-400">${escapeHtml(title)}</div>
+                        ${rows}
+                    </div>
+                `;
+            };
+
+            listEl.innerHTML = [
+                renderGroup("平日", weekday),
+                renderGroup("假日", holiday)
+            ].filter(Boolean).join('<div class="h-2"></div>');
+        }
+
+        function scheduleAllowedIntervals(dayType) {
+            return getCommunityFeeListFor(dayType).map(x => ({ s: x._s, e: x._e }));
+        }
+
+        function scheduleInAny(intervals, s, e) {
+            return (intervals || []).some(x => Number.isFinite(x.s) && Number.isFinite(x.e) && x.s <= s && e <= x.e);
+        }
+
+        function scheduleAllowedMessage(dayType) {
+            const build = (label, intervals) => {
+                if (!intervals.length) return `${label}：尚未設定`;
+                const text = intervals.map(x => `${minutesToTime(x.s)}-${minutesToTime(x.e)}`).join("、");
+                return `${label}：${text}`;
+            };
+            if (dayType === "all") {
+                return `社區可排程時段\n${build("平日", scheduleAllowedIntervals("weekday"))}\n${build("假日", scheduleAllowedIntervals("holiday"))}`;
+            }
+            return `社區可排程時段\n${build(dayType === "holiday" ? "假日" : "平日", scheduleAllowedIntervals(dayType))}`;
+        }
+
+        function validateScheduleWithinCommunity(dayType, startTime, endTime) {
+            const s = parseTimeToMinutes(startTime);
+            const e = parseTimeToMinutes(endTime);
+            if (s === null || e === null || e <= s) return { ok: false, message: "開始時間需早於結束時間" };
+            if (!Array.isArray(state.communityFees) || !state.communityFees.length) {
+                return { ok: false, message: "社區尚未設定開放時段，無法新增排程" };
+            }
+            if (dayType === "all") {
+                const okW = scheduleInAny(scheduleAllowedIntervals("weekday"), s, e);
+                const okH = scheduleInAny(scheduleAllowedIntervals("holiday"), s, e);
+                return okW && okH ? { ok: true } : { ok: false, message: scheduleAllowedMessage("all") };
+            }
+            const ok = scheduleInAny(scheduleAllowedIntervals(dayType), s, e);
+            return ok ? { ok: true } : { ok: false, message: scheduleAllowedMessage(dayType) };
+        }
+
+        function getTodayDayType(date = new Date()) {
+            return isTaiwanHoliday(date) ? "holiday" : "weekday";
+        }
+
+        function shouldShareByScheduleNow(date = new Date()) {
+            const nowMins = date.getHours() * 60 + date.getMinutes();
+            const todayType = getTodayDayType(date);
+            const list = Array.isArray(state.schedules) ? state.schedules : [];
+            return list.some(s => {
+                if (!s || !s.active) return false;
+                const dt = String(s.dayType || "weekday");
+                const applies = dt === "all" || dt === todayType;
+                if (!applies) return false;
+                const sm = parseTimeToMinutes(s.startTime);
+                const em = parseTimeToMinutes(s.endTime);
+                if (sm === null || em === null || em <= sm) return false;
+                const allowed = validateScheduleWithinCommunity(dt, s.startTime, s.endTime);
+                if (!allowed.ok) return false;
+                return sm <= nowMins && nowMins < em;
+            });
+        }
+
+        async function runSharingAutomation() {
+            const user = auth.currentUser;
+            if (!user) return;
+            const communitySlug = String(new URLSearchParams(window.location.search).get('c') || "").trim();
+            if (!communitySlug) return;
+            const residentData = state.currentResidentData;
+            if (!residentData) return;
+            if (state.currentBooking && state.currentBooking.mode === "occupied") return;
+
+            const shouldShare = shouldShareByScheduleNow(new Date());
+            const curStatus = String(residentData.status || "");
+            const rawSource = String(residentData.sharingSource || "");
+            const source = rawSource || ((curStatus === "shared" && !shouldShare) ? "manual" : "schedule");
+
+            if (shouldShare && curStatus !== "shared") {
+                try {
+                    const residentRef = doc(db, "communities", communitySlug, "parking_residents", residentData.id);
+                    await updateDoc(residentRef, { status: "shared", sharingSource: "schedule", updatedAt: Date.now() });
+                    if (residentData.spotId) {
+                        const spotRef = doc(db, "communities", communitySlug, "parking_spots", residentData.spotId);
+                        await updateDoc(spotRef, { status: "shared", updatedAt: Date.now() });
+                    }
+                } catch {}
+                return;
+            }
+
+            if (!shouldShare && curStatus === "shared" && source === "schedule") {
+                try {
+                    const residentRef = doc(db, "communities", communitySlug, "parking_residents", residentData.id);
+                    await updateDoc(residentRef, { status: "available", sharingSource: "schedule", updatedAt: Date.now() });
+                    if (residentData.spotId) {
+                        const spotRef = doc(db, "communities", communitySlug, "parking_spots", residentData.spotId);
+                        await updateDoc(spotRef, { status: "available", updatedAt: Date.now() });
+                    }
+                } catch {}
+            }
+        }
+
+        function subscribeCommunitySettings(communitySlug) {
+            if (state.communitySettingsUnsub) {
+                try { state.communitySettingsUnsub(); } catch {}
+                state.communitySettingsUnsub = null;
+            }
+            const slug = String(communitySlug || "").trim();
+            if (!slug) return;
+            const ref = doc(db, "communities", slug, "settings", "parking");
+            state.communitySettingsUnsub = onSnapshot(ref, (snap) => {
+                const data = snap.exists() ? (snap.data() || {}) : {};
+                state.communityFees = Array.isArray(data.fees) ? data.fees : [];
+                renderCommunityFees();
+            }, () => {
+                state.communityFees = [];
+                renderCommunityFees();
+            });
+        }
+
         const normalizeRole = (role) => (role === "系統管理者" ? "系統管理員" : role);
 
         function escapeHtml(s) {
@@ -400,7 +613,10 @@
             dailyShareDate: "",
             communityName: "",
             currentCommunitySlug: "",
-            currentSpotId: ""
+            currentSpotId: "",
+            communityFees: [],
+            communitySettingsUnsub: null,
+            autoShareTimer: null
         };
 
         async function getCommunityName(slug) {
@@ -749,6 +965,12 @@
                 renderDailyShareRecords();
             });
 
+            if (!state.autoShareTimer) {
+                state.autoShareTimer = setInterval(() => {
+                    try { runSharingAutomation(); } catch {}
+                }, 60 * 1000);
+            }
+
             
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
@@ -756,6 +978,7 @@
                     const communitySlug = new URLSearchParams(window.location.search).get('c');
                     if (communitySlug) {
                         state.communityName = await getCommunityName(communitySlug);
+                        subscribeCommunitySettings(communitySlug);
                         // 改用 Query 查詢 uid 符合的住戶紀錄
                         const residentsCol = collection(db, "communities", communitySlug, "parking_residents");
                         const q = query(residentsCol, where("uid", "==", user.uid));
@@ -796,6 +1019,7 @@
                         onSnapshot(qSchedules, (snapshot) => {
                             state.schedules = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                             renderSchedules();
+                            runSharingAutomation();
                         });
 
                         // 監聽錢包餘額
@@ -936,11 +1160,11 @@
             try {
                 // 使用正確的文檔 ID (spotId) 進行更新
                 const residentRef = doc(db, "communities", communitySlug, "parking_residents", residentData.id);
-                await updateDoc(residentRef, { status: newStatus });
+                await updateDoc(residentRef, { status: newStatus, sharingSource: "manual", updatedAt: Date.now() });
                 
                 if (residentData.spotId) {
                     const spotRef = doc(db, "communities", communitySlug, "parking_spots", residentData.spotId);
-                    await updateDoc(spotRef, { status: newStatus });
+                    await updateDoc(spotRef, { status: newStatus, updatedAt: Date.now() });
                 }
                 console.log("Sharing status updated to:", newStatus);
             } catch (e) {
@@ -1130,8 +1354,14 @@
             } else {
                 title.innerText = "新增排程";
                 setDay('weekday');
-                document.getElementById('start-time').value = '09:00';
-                document.getElementById('end-time').value = '18:00';
+                const intervals = scheduleAllowedIntervals("weekday");
+                if (intervals.length) {
+                    document.getElementById('start-time').value = minutesToTime(intervals[0].s);
+                    document.getElementById('end-time').value = minutesToTime(intervals[0].e);
+                } else {
+                    document.getElementById('start-time').value = '09:00';
+                    document.getElementById('end-time').value = '18:00';
+                }
                 deleteBtn.classList.add('hidden');
             }
             modal.classList.add('active');
@@ -1165,6 +1395,12 @@
 
             if (!startTime || !endTime) {
                 alert('請選擇開始時間和結束時間');
+                return;
+            }
+
+            const valid = validateScheduleWithinCommunity(state.selectedDay, startTime, endTime);
+            if (!valid.ok) {
+                alert(valid.message || "排程時間不符合社區開放時段");
                 return;
             }
 
