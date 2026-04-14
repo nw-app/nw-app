@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>社區綠色共享停車系統 - 住戶端</title>
+    <link rel="icon" type="image/svg+xml" href="parking-favicon.svg">
+    <link rel="icon" type="image/png" sizes="192x192" href="parking-icon-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="parking-apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-title" content="綠色停車">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="parking-manifest.json">
     <meta name="theme-color" content="#059669">
     <script src="https://cdn.tailwindcss.com"></script>
@@ -32,7 +37,7 @@
         <header class="bg-white p-6 pb-2 flex items-center justify-between sticky top-0 z-20 shrink-0">
             <div class="flex items-center gap-3">
                 <div id="parking-app-logo" class="w-10 h-10 bg-emerald-500 rounded-lg text-white shadow-sm flex items-center justify-center overflow-hidden">
-                    <i data-lucide="leaf" class="w-5 h-5"></i>
+                    <img src="parking-favicon.svg" alt="綠色停車" class="w-6 h-6">
                 </div>
                 <div>
                     <h1 id="header-title" class="text-xl font-bold text-slate-800"></h1>
@@ -252,6 +257,20 @@
                     <div id="notify-empty" class="text-center text-slate-400 font-bold py-10 hidden">尚無通知</div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div id="pwa-install-banner" class="fixed left-0 right-0 bottom-4 px-4 hidden z-[120]">
+        <div class="mx-auto w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl p-4 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <img src="parking-favicon.svg" alt="綠色停車" class="w-6 h-6">
+            </div>
+            <div class="min-w-0">
+                <div class="font-bold text-slate-900">安裝綠色停車</div>
+                <div class="text-xs font-bold text-slate-500">加入主畫面，快速開啟</div>
+            </div>
+            <button id="pwa-install-btn" type="button" class="ml-auto px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-sm hover:bg-emerald-700 transition">安裝</button>
+            <button id="pwa-install-close" type="button" class="px-3 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200 transition">關閉</button>
         </div>
     </div>
 
@@ -1150,29 +1169,37 @@
         // --- PWA 安裝提示 ---
         let deferredPrompt = null;
         const logo = document.getElementById("parking-app-logo");
-        const updateInstallUi = () => {
-            const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
-            if (logo) logo.style.cursor = (!isStandalone && deferredPrompt) ? "pointer" : "default";
+        const banner = document.getElementById("pwa-install-banner");
+        const btnInstall = document.getElementById("pwa-install-btn");
+        const btnClose = document.getElementById("pwa-install-close");
+        const isStandalone = () => window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+        const showBanner = () => {
+            if (banner) banner.classList.toggle("hidden", !deferredPrompt || isStandalone());
+            if (logo) logo.style.cursor = (!isStandalone() && deferredPrompt) ? "pointer" : "default";
+        };
+        const hideBanner = () => {
+            if (banner) banner.classList.add("hidden");
+            if (logo) logo.style.cursor = (!isStandalone() && deferredPrompt) ? "pointer" : "default";
+        };
+        const promptInstall = async () => {
+            if (isStandalone() || !deferredPrompt) return;
+            deferredPrompt.prompt();
+            try { await deferredPrompt.userChoice; } catch {}
+            deferredPrompt = null;
+            hideBanner();
         };
         window.addEventListener("beforeinstallprompt", (e) => {
             e.preventDefault();
             deferredPrompt = e;
-            updateInstallUi();
+            showBanner();
         });
         window.addEventListener("appinstalled", () => {
             deferredPrompt = null;
-            updateInstallUi();
+            hideBanner();
         });
-        if (logo) {
-            logo.addEventListener("click", async () => {
-                const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
-                if (isStandalone || !deferredPrompt) return;
-                deferredPrompt.prompt();
-                try { await deferredPrompt.userChoice; } catch {}
-                deferredPrompt = null;
-                updateInstallUi();
-            });
-        }
+        if (btnClose) btnClose.addEventListener("click", () => hideBanner());
+        if (btnInstall) btnInstall.addEventListener("click", () => promptInstall());
+        if (logo) logo.addEventListener("click", () => promptInstall());
         if ("serviceWorker" in navigator) {
             try { navigator.serviceWorker.register("./sw.js"); } catch {}
         }
