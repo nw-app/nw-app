@@ -610,6 +610,7 @@
             unreadCount: 0,
             notifyUnsub: null,
             notifyLastSeenAt: 0,
+            notifyReady: false,
             dailyShareDate: "",
             communityName: "",
             currentCommunitySlug: "",
@@ -618,6 +619,23 @@
             communitySettingsUnsub: null,
             autoShareTimer: null
         };
+
+        async function maybeRequestNotifyPermission() {
+            if (!("Notification" in window)) return;
+            try {
+                if (Notification.permission === "default") {
+                    await Notification.requestPermission();
+                }
+            } catch {}
+        }
+
+        function showNativeNotify(title, body) {
+            if (!("Notification" in window)) return;
+            if (Notification.permission !== "granted") return;
+            try {
+                new Notification(title, { body });
+            } catch {}
+        }
 
         async function getCommunityName(slug) {
             const id = String(slug || "").trim();
@@ -897,15 +915,30 @@
             const qn = query(ref, where("spotId", "==", spotId), orderBy("createdAt", "desc"), limit(200));
             state.notifyUnsub = onSnapshot(qn, (snap) => {
                 const items = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+                const prevReady = state.notifyReady;
                 state.notifications = items;
-                const unread = items.filter(n => {
+                const unreadItems = items.filter(n => {
                     const t = Number(n.createdAt || 0);
                     return Number.isFinite(t) && t > state.notifyLastSeenAt;
-                }).length;
+                });
+                const unread = unreadItems.length;
                 state.unreadCount = Math.max(0, unread);
                 renderNotifyDot();
                 renderNotifyList();
                 renderDailyShareRecords();
+                if (prevReady) {
+                    unreadItems.forEach(n => {
+                        const type = String(n.type || "");
+                        const plate = String(n.visitorPlate || "—");
+                        const leave = formatYmdHm(n.plannedEndTime || n.endTime);
+                        const title = type === "occupied" ? "臨停車輛使用您的車位" : "臨停車輛已離開您的車位";
+                        const body = type === "occupied"
+                            ? `臨停車牌：${plate}，預計離開：${leave}`
+                            : `臨停車牌：${plate}`;
+                        showNativeNotify(title, body);
+                    });
+                }
+                state.notifyReady = true;
             }, () => {});
         }
 
@@ -913,6 +946,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
             bindNotifyUi();
+            maybeRequestNotifyPermission();
             state.dailyShareDate = ymdKey(new Date());
             refreshDailyShareTitle();
             renderDailyShareRecords();
