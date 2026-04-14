@@ -112,8 +112,14 @@
     const banner = document.getElementById("pwa-install-banner");
     const btnInstall = document.getElementById("pwa-install-btn");
     const btnClose = document.getElementById("pwa-install-close");
-    const isStandalone = () => window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
-    const showBanner = () => { if (banner) banner.classList.toggle("hidden", !deferredPrompt || isStandalone()); };
+    const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    const isStandalone = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    const canShowInstall = () => !isStandalone() && (!!deferredPrompt || isIos());
+    const showBanner = () => {
+      if (!banner) return;
+      banner.classList.toggle("hidden", !canShowInstall());
+      if (btnInstall) btnInstall.textContent = deferredPrompt ? "安裝" : (isIos() ? "加入主畫面" : "安裝");
+    };
     const hideBanner = () => { if (banner) banner.classList.add("hidden"); };
 
     window.addEventListener("beforeinstallprompt", (e) => {
@@ -129,12 +135,18 @@
       hideBanner();
     });
     if (btnInstall) btnInstall.addEventListener("click", async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      try { await deferredPrompt.userChoice; } catch {}
-      deferredPrompt = null;
-      hideBanner();
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        try { await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+        hideBanner();
+        return;
+      }
+      if (isIos() && !isStandalone()) {
+        alert("iPhone/iPad 請使用 Safari 右下角「分享」→「加入主畫面」完成安裝。");
+      }
     });
+    showBanner();
 
     if ("serviceWorker" in navigator) {
       try { navigator.serviceWorker.register("./sw.js"); } catch {}

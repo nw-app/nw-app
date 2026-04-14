@@ -1172,9 +1172,12 @@
         const banner = document.getElementById("pwa-install-banner");
         const btnInstall = document.getElementById("pwa-install-btn");
         const btnClose = document.getElementById("pwa-install-close");
-        const isStandalone = () => window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+        const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+        const isStandalone = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+        const canShowInstall = () => !isStandalone() && (!!deferredPrompt || isIos());
         const showBanner = () => {
-            if (banner) banner.classList.toggle("hidden", !deferredPrompt || isStandalone());
+            if (banner) banner.classList.toggle("hidden", !canShowInstall());
+            if (btnInstall) btnInstall.textContent = deferredPrompt ? "安裝" : (isIos() ? "加入主畫面" : "安裝");
             if (logo) logo.style.cursor = (!isStandalone() && deferredPrompt) ? "pointer" : "default";
         };
         const hideBanner = () => {
@@ -1182,11 +1185,15 @@
             if (logo) logo.style.cursor = (!isStandalone() && deferredPrompt) ? "pointer" : "default";
         };
         const promptInstall = async () => {
-            if (isStandalone() || !deferredPrompt) return;
-            deferredPrompt.prompt();
-            try { await deferredPrompt.userChoice; } catch {}
-            deferredPrompt = null;
-            hideBanner();
+            if (isStandalone()) return;
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                try { await deferredPrompt.userChoice; } catch {}
+                deferredPrompt = null;
+                hideBanner();
+                return;
+            }
+            if (isIos()) alert("iPhone/iPad 請使用 Safari 右下角「分享」→「加入主畫面」完成安裝。");
         };
         window.addEventListener("beforeinstallprompt", (e) => {
             e.preventDefault();
@@ -1200,6 +1207,7 @@
         if (btnClose) btnClose.addEventListener("click", () => hideBanner());
         if (btnInstall) btnInstall.addEventListener("click", () => promptInstall());
         if (logo) logo.addEventListener("click", () => promptInstall());
+        showBanner();
         if ("serviceWorker" in navigator) {
             try { navigator.serviceWorker.register("./sw.js"); } catch {}
         }
