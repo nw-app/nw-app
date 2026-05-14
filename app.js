@@ -3340,6 +3340,47 @@ async function loadPersonalData(slug) {
           let sosUnsub = null;
           const activeAlertsState = new Map(); // Key: docId, Value: { data, snoozeTimer, visualInterval, modal, badge }
 
+          function getSosAlarmAudioContext() {
+             if (window.__sosAlarmAudioContext) return window.__sosAlarmAudioContext;
+             try {
+               window.__sosAlarmAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+             } catch (e) {
+               console.error("AudioContext not supported", e);
+               return null;
+             }
+             return window.__sosAlarmAudioContext;
+          }
+
+          function unlockSosAlarmAudio() {
+             const ctx = getSosAlarmAudioContext();
+             if (!ctx) return;
+             if (ctx.state === "suspended") {
+               ctx.resume().catch(err => console.log("AudioContext resume failed", err));
+             }
+          }
+
+          function installSosAlarmAudioUnlock() {
+             if (window.__sosAlarmAudioUnlockInstalled) return;
+             window.__sosAlarmAudioUnlockInstalled = true;
+
+             const handler = () => {
+               unlockSosAlarmAudio();
+               const ctx = getSosAlarmAudioContext();
+               if (ctx && ctx.state === "running") {
+                 window.removeEventListener("pointerdown", handler);
+                 window.removeEventListener("touchstart", handler);
+                 window.removeEventListener("keydown", handler);
+               }
+             };
+
+             window.addEventListener("pointerdown", handler, { passive: true });
+             window.addEventListener("touchstart", handler, { passive: true });
+             window.addEventListener("keydown", handler);
+             document.addEventListener("visibilitychange", () => {
+               if (!document.hidden && window.sosAlarmTimer) unlockSosAlarmAudio();
+             });
+          }
+
           function checkGlobalSound() {
              const ringing = Array.from(activeAlertsState.values()).some(state => state.modal !== null);
              if (ringing) {
@@ -3354,19 +3395,14 @@ async function loadPersonalData(slug) {
                clearInterval(window.sosAlarmTimer);
                window.sosAlarmTimer = null;
              }
-             // Optional: close audio context if needed
           }
           
           function startAlarm() {
              if(window.sosAlarmTimer) return;
              
-             let ctx;
-             try {
-               ctx = new (window.AudioContext || window.webkitAudioContext)();
-             } catch(e) {
-               console.error("AudioContext not supported", e);
-               return;
-             }
+             installSosAlarmAudioUnlock();
+             const ctx = getSosAlarmAudioContext();
+             if (!ctx) return;
              
              const beep = () => {
                if(ctx.state === 'suspended') {
