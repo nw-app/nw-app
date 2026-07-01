@@ -380,6 +380,39 @@ function escapeHtmlSafe(s) {
   }[ch]));
 }
 
+function installPasswordColumnToggle(root) {
+  const scope = root || document;
+  const ths = scope.querySelectorAll("th.js-password-toggle");
+  ths.forEach((th) => {
+    if (th.dataset.bound === "1") return;
+    th.dataset.bound = "1";
+    th.style.cursor = "pointer";
+    th.style.userSelect = "none";
+    th.addEventListener("click", () => {
+      const table = th.closest("table");
+      if (!table) return;
+      const trHead = th.closest("tr");
+      if (!trHead) return;
+      const idx = Array.from(trHead.children).indexOf(th);
+      if (idx < 0) return;
+      const shown = table.dataset.passwordShown === "1";
+      const nextShown = !shown;
+      table.dataset.passwordShown = nextShown ? "1" : "0";
+      const rows = table.tBodies && table.tBodies[0] ? Array.from(table.tBodies[0].rows) : [];
+      rows.forEach((tr) => {
+        const td = tr.children && tr.children[idx] ? tr.children[idx] : null;
+        if (!td) return;
+        const raw = td.getAttribute("data-password") || "";
+        if (!raw) {
+          td.textContent = nextShown ? "（不可取得）" : "••••••";
+          return;
+        }
+        td.textContent = nextShown ? raw : "••••••";
+      });
+    });
+  });
+}
+
 function mapApplyRoleToTitle(roleLabel) {
   const v = String(roleLabel || "").trim();
   if (v === "區分權所有人") return "區權人";
@@ -1257,6 +1290,7 @@ async function openPendingAccountsModal(slug) {
         status: "啟用",
         displayName,
         phone,
+        initPassword: password || "",
         address,
         houseNo,
         title,
@@ -5527,6 +5561,7 @@ if (sysNav.subContainer) {
           status: status || "停用",
           displayName,
           phone,
+          initPassword: password || "",
           photoURL,
           seq,
           houseNo,
@@ -5852,7 +5887,7 @@ if (sysNav.subContainer) {
                                 email, role: "住戶", status, displayName, phone, photoURL,
                                 community: selectedSlug, seq, houseNo,
                                 ...(subNoRaw !== undefined && subNoRaw !== "" ? { subNo: parseInt(subNoRaw, 10) } : {}),
-                                qrCodeText, address, area, ownershipRatio, createdAt: Date.now()
+                                qrCodeText, address, area, ownershipRatio, initPassword: password || "", createdAt: Date.now()
                             };
                             return { docRef, payload, oldPhone, newPhone: phone, email };
                         }
@@ -7607,6 +7642,10 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
     const customVal = isCustom ? existingAuthor : "";
     const showCustom = isCustom ? "block" : "none";
 
+    const initialImageUrl = item && item.imageUrl ? String(item.imageUrl) : "";
+    const initialFileUrl = item && item.fileUrl ? String(item.fileUrl) : "";
+    const initialFileName = item && item.fileName ? String(item.fileName) : "";
+    const initialAttachType = initialFileUrl ? "file" : "image";
     const body = `
       <div class="modal-dialog">
         <div class="modal-head"><div class="modal-title">${title}</div></div>
@@ -7631,11 +7670,30 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
              <div class="input-wrap"><textarea id="ann-content" rows="5" style="width:100%;border:1px solid #ddd;padding:8px;border-radius:8px;">${item ? (item.content || "") : ""}</textarea></div>
            </label>
            <label class="field">
-             <div class="field-head">圖片</div>
+             <div class="field-head">附件</div>
              <div class="input-wrap">
-               <input type="file" id="ann-image" accept="image/*">
-               <div id="ann-image-preview" style="margin-top:10px;">
-                 ${item && item.imageUrl ? `<div style="position:relative;display:inline-block;"><img src="${item.imageUrl}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>` : ""}
+               <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                   <input type="radio" name="ann-attach-type" value="image" ${initialAttachType === "image" ? "checked" : ""} style="width:14px;height:14px;">
+                   <span>圖片 (JPG/PNG)</span>
+                 </label>
+                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                   <input type="radio" name="ann-attach-type" value="file" ${initialAttachType === "file" ? "checked" : ""} style="width:14px;height:14px;">
+                   <span>檔案 (PDF)</span>
+                 </label>
+               </div>
+               <input type="file" id="ann-attachment">
+               <div id="ann-attachment-preview" style="margin-top:10px;">
+                 ${initialFileUrl
+                    ? `<div style="position:relative;display:inline-block;max-width:100%;">
+                         <a href="${escapeHtmlSafe(initialFileUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;max-width:100%;word-break:break-all;text-decoration:underline;">
+                           ${escapeHtmlSafe(initialFileName || "檔案")}
+                         </a>
+                         <button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button>
+                       </div>`
+                    : (initialImageUrl
+                        ? `<div style="position:relative;display:inline-block;"><img src="${escapeHtmlSafe(initialImageUrl)}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`
+                        : "")}
                </div>
              </div>
            </label>
@@ -7672,27 +7730,93 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
             });
         }
 
-        const imgInp = document.getElementById("ann-image");
-        const imgPrev = document.getElementById("ann-image-preview");
-        if(imgInp && imgPrev) {
-            imgInp.addEventListener("change", (e) => {
-                const f = e.target.files[0];
-                if(f) {
-                    const reader = new FileReader();
-                    reader.onload = (re) => {
-                        imgPrev.innerHTML = `<div style="position:relative;display:inline-block;"><img src="${re.target.result}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
-                    };
-                    reader.readAsDataURL(f);
-                }
-            });
+        let currentAttachType = initialAttachType;
+        let keptImageUrl = initialImageUrl;
+        let keptFileUrl = initialFileUrl;
+        let keptFileName = initialFileName;
 
-            imgPrev.addEventListener("click", (e) => {
-                if(e.target.closest(".btn-remove-img")) {
-                    e.stopPropagation(); // Prevent bubbling if needed
-                    imgPrev.innerHTML = "";
-                    imgInp.value = "";
-                }
-            });
+        const attachInp = document.getElementById("ann-attachment");
+        const attachPrev = document.getElementById("ann-attachment-preview");
+        const attachTypeRadios = Array.from(document.querySelectorAll('input[name="ann-attach-type"]'));
+
+        const setAttachmentInputAccept = (type) => {
+          if (!attachInp) return;
+          attachInp.value = "";
+          if (type === "file") attachInp.setAttribute("accept", "application/pdf");
+          else attachInp.setAttribute("accept", "image/jpeg,image/png");
+        };
+
+        const renderAttachmentPreview = (type) => {
+          if (!attachPrev) return;
+          if (type === "file") {
+            if (keptFileUrl) {
+              const safeUrl = escapeHtmlSafe(keptFileUrl);
+              const safeName = escapeHtmlSafe(keptFileName || "檔案");
+              attachPrev.innerHTML = `<div style="position:relative;display:inline-block;max-width:100%;"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;max-width:100%;word-break:break-all;text-decoration:underline;">${safeName}</a><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
+            } else {
+              attachPrev.innerHTML = "";
+            }
+          } else {
+            if (keptImageUrl) {
+              const safeUrl = escapeHtmlSafe(keptImageUrl);
+              attachPrev.innerHTML = `<div style="position:relative;display:inline-block;"><img src="${safeUrl}" style="max-width:100%;max-height:200px;border-radius:4px;display:block;"><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
+            } else {
+              attachPrev.innerHTML = "";
+            }
+          }
+        };
+
+        setAttachmentInputAccept(currentAttachType);
+        renderAttachmentPreview(currentAttachType);
+
+        attachTypeRadios.forEach((radio) => {
+          radio.addEventListener("change", () => {
+            const next = radio.checked ? radio.value : currentAttachType;
+            if (next === currentAttachType) return;
+            currentAttachType = next;
+            if (currentAttachType === "file") {
+              keptImageUrl = "";
+            } else {
+              keptFileUrl = "";
+              keptFileName = "";
+            }
+            setAttachmentInputAccept(currentAttachType);
+            renderAttachmentPreview(currentAttachType);
+          });
+        });
+
+        if (attachInp && attachPrev) {
+          attachInp.addEventListener("change", (e) => {
+            const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+            if (!f) return;
+            if (currentAttachType === "file") {
+              keptFileUrl = "";
+              keptFileName = f.name || "檔案";
+              const safeName = escapeHtmlSafe(keptFileName);
+              attachPrev.innerHTML = `<div style="position:relative;display:inline-block;max-width:100%;"><span style="display:inline-block;max-width:100%;word-break:break-all;">${safeName}</span><button type="button" class="btn-remove-img" style="position:absolute;top:-8px;right:-8px;background:#ef4444;color:white;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
+            } else {
+              const reader = new FileReader();
+              reader.onload = (re) => {
+                keptImageUrl = String(re.target && re.target.result ? re.target.result : "");
+                renderAttachmentPreview("image");
+              };
+              reader.readAsDataURL(f);
+            }
+          });
+
+          attachPrev.addEventListener("click", (e) => {
+            if (e.target.closest(".btn-remove-img")) {
+              e.stopPropagation();
+              attachPrev.innerHTML = "";
+              if (attachInp) attachInp.value = "";
+              if (currentAttachType === "file") {
+                keptFileUrl = "";
+                keptFileName = "";
+              } else {
+                keptImageUrl = "";
+              }
+            }
+          });
         }
 
         const btnSave = document.getElementById("btn-save-announce");
@@ -7712,31 +7836,34 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
 
                 btnSave.disabled = true;
                 btnSave.textContent = "儲存中...";
-                showLoading("正在儲存公告並上傳圖片...");
+                showLoading("正在儲存公告並上傳附件...");
 
-                let imageUrl = "";
-                // If no new file is selected, check if we should keep the existing image
-                if (!imgInp || !imgInp.files[0]) {
-                    if (imgPrev && imgPrev.querySelector("img")) {
-                        // Image is still in preview, so keep the existing URL
-                        if (item && item.imageUrl) {
-                            imageUrl = item.imageUrl;
-                        }
-                    }
-                    // If preview is empty, imageUrl remains "" (deleted)
-                }
+                let imageUrl = currentAttachType === "image" ? keptImageUrl : "";
+                let fileUrl = currentAttachType === "file" ? keptFileUrl : "";
+                let fileName = currentAttachType === "file" ? keptFileName : "";
 
-                if (imgInp && imgInp.files[0]) {
-                    const f = imgInp.files[0];
+                if (attachInp && attachInp.files && attachInp.files[0]) {
+                    const f = attachInp.files[0];
                     try {
-                        const ext = f.name.split('.').pop();
+                        const isPdf = currentAttachType === "file";
+                        const safeExt = isPdf ? "pdf" : String(f.name || "").split(".").pop();
+                        const ext = safeExt ? safeExt.toLowerCase() : (isPdf ? "pdf" : "jpg");
                         const fname = `${Date.now()}_${Math.random().toString(36).substring(2)}.${ext}`;
                         const sRef = storageRef(storage, `communities/${slug}/announcements/${fname}`);
-                        await uploadBytes(sRef, f);
-                        imageUrl = await getDownloadURL(sRef);
+                        await uploadBytes(sRef, f, { contentType: f.type || (isPdf ? "application/pdf" : "image/jpeg") });
+                        const url = await getDownloadURL(sRef);
+                        if (isPdf) {
+                            fileUrl = url;
+                            fileName = f.name || fileName || "檔案";
+                            imageUrl = "";
+                        } else {
+                            imageUrl = url;
+                            fileUrl = "";
+                            fileName = "";
+                        }
                     } catch(err) {
                         console.error("Upload failed", err);
-                        alert("圖片上傳失敗，但仍會儲存公告");
+                        alert(currentAttachType === "file" ? "檔案上傳失敗，但仍會儲存公告" : "圖片上傳失敗，但仍會儲存公告");
                     }
                 }
 
@@ -7754,6 +7881,8 @@ function openAnnounceModal(item, displayTitle, slug, dbCategory) {
                         status: statusVal,
                         author: authorVal,
                         imageUrl: imageUrl,
+                        fileUrl: fileUrl,
+                        fileName: fileName,
                         updatedAt: Date.now()
                     };
 
@@ -10652,6 +10781,8 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
           const nm = a.displayName || (a.email || "").split("@")[0] || "住戶";
           const av = a.photoURL ? `<img class="avatar" src="${a.photoURL}" alt="avatar">` : `<span class="avatar">${(nm || a.email || "住")[0]}</span>`;
           const qrText = a.qrCodeText || "—";
+          const rawPwd = typeof a.initPassword === "string" ? a.initPassword : (typeof a.password === "string" ? a.password : "");
+          const pwdAttr = escapeHtmlSafe(rawPwd);
           return `
             <tr data-uid="${a.id}">
               <td><input type="checkbox" class="check-resident" value="${a.id}"></td>
@@ -10666,7 +10797,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
               <td>${a.ownershipRatio || ""}</td>
               <td>${a.phone || ""}</td>
               <td>${a.email || ""}</td>
-              <td>••••••</td>
+              <td class="js-password-cell" data-password="${pwdAttr}">••••••</td>
               <td>
                 <label class="switch">
                   <input type="checkbox" class="status-toggle-resident" ${a.status === "停用" ? "checked" : ""}>
@@ -10714,7 +10845,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
                     <th>區分權比</th>
                     <th>手機號碼</th>
                     <th>電子郵件</th>
-                    <th>密碼</th>
+                    <th class="js-password-toggle">密碼</th>
                     <th>狀態</th>
                     <th>操作</th>
                   </tr>
@@ -10725,6 +10856,7 @@ function renderAdminContent(mainKey, subKeyOrLabel, subLabelOverride) {
             </div>
           </div>
         `;
+        installPasswordColumnToggle(adminNav.content);
 
         const toggles = adminNav.content.querySelectorAll(".status-toggle-resident");
         toggles.forEach(toggle => {

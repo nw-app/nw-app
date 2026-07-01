@@ -133,6 +133,33 @@
       background: #9ca3af; /* Gray for Read */
       color: #fff;
     }
+
+    .attach-row { margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .btn-file {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #f9fafb;
+      color: #111827;
+      cursor: pointer;
+      max-width: 100%;
+    }
+    .btn-file:active { opacity: 0.75; }
+    .file-icon { width: 18px; height: 18px; flex: 0 0 auto; color: #ef4444; }
+    .file-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+
+    .pdf-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 1100; padding: 16px; box-sizing: border-box; }
+    .pdf-modal.active { display: flex; align-items: center; justify-content: center; }
+    .pdf-dialog { width: 100%; max-width: 920px; height: 100%; max-height: 92vh; background: #fff; border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+    .pdf-head { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e5e7eb; background: #f9fafb; gap: 10px; }
+    .pdf-title { font-size: 14px; font-weight: 800; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pdf-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+    .pdf-btn { border: 1px solid #e5e7eb; background: #fff; border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 800; cursor: pointer; }
+    .pdf-btn.primary { background: #ef4444; border-color: #ef4444; color: #fff; }
+    .pdf-frame { flex: 1; width: 100%; border: none; background: #fff; }
   </style>
 </head>
 <body>
@@ -153,6 +180,19 @@
     </div>
     <button class="gallery-nav gallery-next" id="gallery-next" onclick="changeGalleryImage(1); event.stopPropagation();">❯</button>
     <div id="gallery-info" class="gallery-info"></div>
+  </div>
+
+  <div id="pdf-modal" class="pdf-modal" onclick="closePdf()">
+    <div class="pdf-dialog" onclick="event.stopPropagation()">
+      <div class="pdf-head">
+        <div class="pdf-title" id="pdf-title">PDF</div>
+        <div class="pdf-actions">
+          <a class="pdf-btn" id="pdf-open-new" target="_blank" rel="noopener noreferrer">另開</a>
+          <button class="pdf-btn primary" type="button" onclick="closePdf()">關閉</button>
+        </div>
+      </div>
+      <iframe id="pdf-frame" class="pdf-frame" src=""></iframe>
+    </div>
   </div>
 
   <script type="module">
@@ -228,6 +268,9 @@
       window.openGallery = openGallery;
       window.closeGallery = closeGallery;
       window.changeGalleryImage = changeGalleryImage;
+      window.openPdf = openPdf;
+      window.openPdfEncoded = openPdfEncoded;
+      window.closePdf = closePdf;
 
       onAuthStateChanged(auth, async (user) => {
           if (!user) {
@@ -291,6 +334,8 @@
             const dateStr = item.createdAt ? formatDate(item.createdAt) : "";
             const author = item.author || "管理員";
             const imgUrl = item.imageUrl || "";
+            const fileUrl = item.fileUrl || "";
+            const fileName = item.fileName || "PDF 檔案";
             const isRead = readList.includes(item.id);
             const statusText = isRead ? "已讀" : "未讀";
             const readClass = isRead ? "read" : "";
@@ -309,7 +354,18 @@
                 </div>
                 <div class="card-body">
                   <div class="card-content">內容 : ${item.content}</div>
-                  ${imgUrl ? `<button class="btn-thumb" type="button" onclick="window.openGallery('${item.id}'); event.stopPropagation();"><img src="${imgUrl}"></button>` : ""}
+                  <div class="attach-row">
+                    ${imgUrl ? `<button class="btn-thumb" type="button" onclick="window.openGallery('${item.id}'); event.stopPropagation();"><img src="${imgUrl}"></button>` : ""}
+                    ${fileUrl ? `<button class="btn-file" type="button" onclick="window.openPdfEncoded('${encodeURIComponent(String(fileUrl))}','${encodeURIComponent(String(fileName))}'); event.stopPropagation();">
+                        <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                          <path d="M14 2v6h6"></path>
+                          <path d="M9 13h6"></path>
+                          <path d="M9 17h6"></path>
+                        </svg>
+                        <span class="file-name">${escapeHtml(fileName)}</span>
+                      </button>` : ""}
+                  </div>
                   <div class="card-footer">
                      <span>發布：${escapeHtml(author)}</span>
                   </div>
@@ -360,6 +416,35 @@
     function closeGallery() {
         document.getElementById("gallery-modal").classList.remove("active");
         document.body.style.overflow = "";
+    }
+
+    function openPdf(url, name) {
+      const modal = document.getElementById("pdf-modal");
+      const frame = document.getElementById("pdf-frame");
+      const titleEl = document.getElementById("pdf-title");
+      const openNew = document.getElementById("pdf-open-new");
+      if (!modal || !frame || !openNew) return;
+      const safeUrl = String(url || "").trim();
+      if (!safeUrl) return;
+      if (titleEl) titleEl.textContent = String(name || "PDF 檔案");
+      openNew.setAttribute("href", safeUrl);
+      frame.setAttribute("src", safeUrl);
+      modal.classList.add("active");
+    }
+
+    function openPdfEncoded(urlEnc, nameEnc) {
+      let url = "";
+      let name = "";
+      try { url = decodeURIComponent(String(urlEnc || "")); } catch { url = String(urlEnc || ""); }
+      try { name = decodeURIComponent(String(nameEnc || "")); } catch { name = String(nameEnc || ""); }
+      openPdf(url, name);
+    }
+
+    function closePdf() {
+      const modal = document.getElementById("pdf-modal");
+      const frame = document.getElementById("pdf-frame");
+      if (frame) frame.setAttribute("src", "");
+      if (modal) modal.classList.remove("active");
     }
 
     function changeGalleryImage(step) {
