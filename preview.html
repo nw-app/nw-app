@@ -426,6 +426,26 @@
       if (!modal || !frame || !openNew) return;
       const safeUrl = String(url || "").trim();
       if (!safeUrl) return;
+
+      const isMobileLike = window.matchMedia("(max-width: 768px)").matches
+        || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "")
+        || (navigator.maxTouchPoints || 0) > 1;
+
+      if (isMobileLike) {
+        try {
+          const popup = window.open(safeUrl, "_blank", "noopener,noreferrer");
+          if (popup) return;
+        } catch {}
+        try {
+          if (window.top && window.top !== window) {
+            window.top.location.href = safeUrl;
+            return;
+          }
+        } catch {}
+        window.location.href = safeUrl;
+        return;
+      }
+
       if (titleEl) titleEl.textContent = String(name || "PDF 檔案");
       openNew.setAttribute("href", safeUrl);
       frame.setAttribute("src", safeUrl);
