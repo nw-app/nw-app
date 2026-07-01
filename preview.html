@@ -270,6 +270,7 @@
       window.changeGalleryImage = changeGalleryImage;
       window.openPdf = openPdf;
       window.openPdfEncoded = openPdfEncoded;
+      window.openPdfNewEncoded = openPdfNewEncoded;
       window.closePdf = closePdf;
 
       onAuthStateChanged(auth, async (user) => {
@@ -356,7 +357,7 @@
                   <div class="card-content">內容 : ${item.content}</div>
                   <div class="attach-row">
                     ${imgUrl ? `<button class="btn-thumb" type="button" onclick="window.openGallery('${item.id}'); event.stopPropagation();"><img src="${imgUrl}"></button>` : ""}
-                    ${fileUrl ? `<button class="btn-file" type="button" onclick="window.openPdfEncoded('${encodeURIComponent(String(fileUrl))}','${encodeURIComponent(String(fileName))}'); event.stopPropagation();">
+                    ${fileUrl ? `<button class="btn-file" type="button" onclick="window.openPdfNewEncoded('${encodeURIComponent(String(fileUrl))}'); event.stopPropagation();">
                         <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                           <path d="M14 2v6h6"></path>
@@ -426,14 +427,9 @@
       if (!modal || !frame || !openNew) return;
       const safeUrl = String(url || "").trim();
       if (!safeUrl) return;
-      const isMobileLike = window.matchMedia("(max-width: 768px)").matches
-        || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
-      const embedUrl = isMobileLike
-        ? `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(safeUrl)}`
-        : safeUrl;
       if (titleEl) titleEl.textContent = String(name || "PDF 檔案");
       openNew.setAttribute("href", safeUrl);
-      frame.setAttribute("src", embedUrl);
+      frame.setAttribute("src", safeUrl);
       modal.classList.add("active");
     }
 
@@ -443,6 +439,18 @@
       try { url = decodeURIComponent(String(urlEnc || "")); } catch { url = String(urlEnc || ""); }
       try { name = decodeURIComponent(String(nameEnc || "")); } catch { name = String(nameEnc || ""); }
       openPdf(url, name);
+    }
+
+    function openPdfNewEncoded(urlEnc) {
+      let url = "";
+      try { url = decodeURIComponent(String(urlEnc || "")); } catch { url = String(urlEnc || ""); }
+      const safeUrl = String(url || "").trim();
+      if (!safeUrl) return;
+      try {
+        window.open(safeUrl, "_blank", "noopener,noreferrer");
+      } catch {
+        window.location.href = safeUrl;
+      }
     }
 
     function closePdf() {
