@@ -95,52 +95,87 @@
   </div>
 
   <script>
-    // Register Service Worker
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').then(registration => {
-          console.log('SW registered: ', registration);
-        }).catch(registrationError => {
-          console.log('SW registration failed: ', registrationError);
-        });
-      });
-    }
-
-    // PWA Install Prompt
-    let deferredPrompt;
+    let deferredPrompt = null;
     const pwaModal = document.getElementById('pwa-install-modal');
     const btnInstall = document.getElementById('btn-pwa-install');
     const btnCancel = document.getElementById('btn-pwa-cancel');
+    const pwaTitle = document.querySelector('#pwa-install-modal h3');
+    const pwaDesc = document.querySelector('#pwa-install-modal p');
+    const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    const isStandalone = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    const canShowInstall = () => !isStandalone() && (isIos() || !!deferredPrompt);
+
+    const updatePwaModal = () => {
+      if (!pwaModal) return;
+      if (pwaTitle) pwaTitle.textContent = isIos() && !deferredPrompt ? "加入主畫面" : "安裝應用程式";
+      if (pwaDesc) {
+        pwaDesc.textContent = isIos() && !deferredPrompt
+          ? "在 iPhone / iPad 上請使用 Safari 的分享選單，點選「加入主畫面」。"
+          : "將「西北e生活」安裝到您的裝置，享受更流暢的原生體驗！";
+      }
+      if (btnInstall) btnInstall.textContent = isIos() && !deferredPrompt ? "查看安裝方式" : "立即安裝";
+    };
+
+    const showPwaModal = () => {
+      if (!pwaModal || !canShowInstall()) return;
+      updatePwaModal();
+      pwaModal.classList.add('show');
+    };
+
+    const hidePwaModal = () => {
+      if (pwaModal) pwaModal.classList.remove('show');
+    };
 
     window.addEventListener('beforeinstallprompt', (e) => {
-      // Prevent the mini-infobar from appearing on mobile
       e.preventDefault();
-      // Stash the event so it can be triggered later.
       deferredPrompt = e;
-      // Show the install prompt automatically
-      console.log('beforeinstallprompt fired, showing modal');
-      pwaModal.classList.add('show');
+      showPwaModal();
     });
 
-    btnInstall.addEventListener('click', async () => {
-      if (deferredPrompt) {
-        deferredPrompt.prompt();
-        const { outcome } = await deferredPrompt.userChoice;
-        console.log(`User response to the install prompt: ${outcome}`);
-        deferredPrompt = null;
-      }
-      pwaModal.classList.remove('show');
-    });
+    if (btnInstall) {
+      btnInstall.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          try { await deferredPrompt.userChoice; } catch {}
+          deferredPrompt = null;
+          hidePwaModal();
+          return;
+        }
+        if (isIos()) {
+          alert("iPhone/iPad 請使用 Safari 右下角「分享」→「加入主畫面」完成安裝。");
+        }
+      });
+    }
 
-    btnCancel.addEventListener('click', () => {
-      pwaModal.classList.remove('show');
-    });
+    if (btnCancel) btnCancel.addEventListener('click', hidePwaModal);
 
-    // Optional: Detect if app is launched in standalone mode
     window.addEventListener('appinstalled', () => {
-      console.log('App installed successfully');
-      pwaModal.classList.remove('show');
+      deferredPrompt = null;
+      hidePwaModal();
     });
+
+    updatePwaModal();
+    if (isIos() && !isStandalone()) showPwaModal();
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(() => navigator.serviceWorker.ready)
+          .then(() => {
+            if (!navigator.serviceWorker.controller) {
+              try {
+                if (sessionStorage.getItem('pwa_sw_reload') !== '1') {
+                  sessionStorage.setItem('pwa_sw_reload', '1');
+                  window.location.reload();
+                }
+              } catch {}
+            }
+          })
+          .catch((err) => {
+            console.log('SW registration failed: ', err);
+          });
+      });
+    }
   </script>
 </body>
 </html>
